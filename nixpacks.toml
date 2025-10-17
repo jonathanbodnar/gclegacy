@@ -1,0 +1,17 @@
+[phases.setup]
+nixPkgs = ["nodejs_18", "npm-9_x", "python3", "postgresql", "vips"]
+
+[phases.install]
+cmds = ["npm ci --include=dev"]
+
+[phases.build]
+cmds = [
+  "npx prisma generate",
+  "npm run build"
+]
+
+[start]
+cmd = "npm run start:prod"
+
+[variables]
+NODE_ENV = "production"

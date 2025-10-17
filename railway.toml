@@ -1,0 +1,29 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+[[services]]
+name = "plantakeoff-api"
+source = "."
+
+[services.variables]
+NODE_ENV = "production"
+PORT = "${{ PORT }}"
+
+[[services]]
+name = "postgres"
+source = "postgres:15"
+
+[services.variables]
+POSTGRES_DB = "plantakeoff"
+POSTGRES_USER = "plantakeoff"
+POSTGRES_PASSWORD = "${{ POSTGRES_PASSWORD }}"
+
+[[services]]
+name = "redis"
+source = "redis:7"

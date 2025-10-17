@@ -1,0 +1,166 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+model File {
+  id        String   @id @default(cuid())
+  filename  String
+  mime      String
+  pages     Int?
+  checksum  String   @unique
+  size      BigInt
+  projectId String?
+  tags      String[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // File storage info
+  storageKey String
+  storageUrl String?
+
+  // Relations
+  jobs Job[]
+
+  @@map("files")
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  fileId      String
+  status      JobStatus @default(QUEUED)
+  disciplines String[]  // ["A","P","M","E"]
+  targets     String[]  // ["rooms","walls","doors","windows","pipes","ducts","fixtures"]
+  
+  // Configuration
+  materialsRuleSetId String?
+  webhookUrl         String?
+  options            Json?   // bimPreferred, inferScale, etc.
+  
+  // Execution info
+  startedAt  DateTime?
+  finishedAt DateTime?
+  progress   Float     @default(0.0)
+  error      String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  file      File       @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  sheets    Sheet[]
+  features  Feature[]
+  materials Material[]
+
+  @@map("jobs")
+}
+
+model Sheet {
+  id         String  @id @default(cuid())
+  jobId      String
+  index      Int     // Page/sheet number
+  name       String? // Sheet name/title
+  discipline String? // A, P, M, E
+  scale      String? // "1/4\"=1'-0\""
+  units      String? // "ft", "m"
+  
+  // Spatial reference
+  srid       Int?    @default(4326)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  job      Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  features Feature[]
+
+  @@unique([jobId, index])
+  @@map("sheets")
+}
+
+model Feature {
+  id      String      @id @default(cuid())
+  jobId   String
+  sheetId String?
+  type    FeatureType
+  
+  // Properties (JSON)
+  props Json? // partitionType, service, diameterIn, etc.
+  
+  // Geometry (PostGIS)
+  geom Unsupported("geometry")?
+  
+  // Computed metrics
+  area   Float?
+  length Float?
+  count  Int?   @default(1)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  sheet Sheet? @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@map("features")
+}
+
+model Material {
+  id     String @id @default(cuid())
+  jobId  String
+  sku    String
+  qty    Float
+  uom    String // Unit of measure: "ea", "ft", "ft2", etc.
+  
+  // Traceability
+  ruleId  String?
+  sources Json?  // Array of feature IDs that contributed
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@map("materials")
+}
+
+model MaterialsRuleSet {
+  id      String @id @default(cuid())
+  name    String
+  version String
+  rules   Json   // YAML/JSON rules content
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, version])
+  @@map("materials_rule_sets")
+}
+
+enum JobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum FeatureType {
+  ROOM
+  WALL
+  OPENING
+  PIPE
+  DUCT
+  FIXTURE
+  EQUIPMENT
+}
