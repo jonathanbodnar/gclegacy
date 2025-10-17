@@ -1,0 +1,9 @@
+# Force Railway to use Nixpacks instead of Dockerfile
+# This helps with monorepo workspace dependencies
+
+node_modules/
+dist/
+.env
+.env.local
+*.log
+coverage/
