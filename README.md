@@ -1,6 +1,8 @@
-# PlanTakeoff API
+# PlanTakeoff Platform
 
-AI-powered architectural/MEP plan analysis and takeoff API. Upload plan files, extract geometry and dimensions, generate normalized takeoff data, and automatically build materials lists using configurable rules.
+AI-powered architectural/MEP plan analysis and takeoff platform. Upload plan files, extract geometry and dimensions, generate normalized takeoff data, and automatically build materials lists using configurable rules.
+
+This is a monorepo containing both the backend API and frontend React application.
 
 ## Features
 
@@ -12,54 +14,81 @@ AI-powered architectural/MEP plan analysis and takeoff API. Upload plan files, e
 - **API-first**: RESTful API with OpenAPI documentation
 - **Webhooks**: Real-time job status notifications
 
+## Project Structure
+
+```
+plantakeoff-platform/
+├── backend/               # NestJS API server
+│   ├── src/              # API source code
+│   ├── prisma/           # Database schema & migrations
+│   ├── scripts/          # Deployment scripts
+│   └── package.json
+├── frontend/             # React web application
+│   ├── src/              # Frontend source code
+│   ├── public/           # Static assets
+│   └── package.json
+├── package.json          # Root package.json (monorepo)
+└── README.md
+```
+
 ## Quick Start
 
 ### Prerequisites
 
 - Node.js 18+ and npm
-- PostgreSQL with PostGIS extension
+- PostgreSQL with PostGIS extension (for backend)
 - Redis (for job queues)
 - AWS S3 bucket (or compatible storage)
 
 ### Installation
 
-1. **Clone and install dependencies**:
+1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
-   cd plantakeoff-api
-   npm install
+   git clone git@github.com:jonathanbodnar/gclegacy.git
+   cd gclegacy
    ```
 
-2. **Set up environment variables**:
+2. **Install all dependencies**:
    ```bash
-   cp env.example .env
-   # Edit .env with your database and AWS credentials
+   npm run install:all
    ```
 
-3. **Set up database**:
+3. **Set up backend environment**:
+   ```bash
+   cp backend/env.example backend/.env
+   # Edit backend/.env with your database and AWS credentials
+   ```
+
+4. **Set up frontend environment**:
+   ```bash
+   echo "VITE_API_BASE_URL=http://localhost:3000/v1" > frontend/.env.local
+   ```
+
+5. **Set up database** (backend):
    ```bash
    # Create PostgreSQL database with PostGIS
    createdb plantakeoff
    psql plantakeoff -c "CREATE EXTENSION postgis;"
    
-   # Run migrations
-   npm run db:push
-   
-   # Seed with sample data
-   npm run seed
+   # Run database setup
+   npm run db:setup
    ```
 
-4. **Start the application**:
+6. **Start development servers**:
    ```bash
-   # Development mode
-   npm run start:dev
+   # Start both backend and frontend
+   npm run dev
    
-   # Production mode
-   npm run build
-   npm run start:prod
+   # Or start individually:
+   npm run dev:backend    # API at http://localhost:3000
+   npm run dev:frontend   # Web app at http://localhost:5173
    ```
 
-The API will be available at `http://localhost:3000/v1` with documentation at `http://localhost:3000/docs`.
+### Access Points
+
+- **Frontend Web App**: http://localhost:5173
+- **Backend API**: http://localhost:3000/v1
+- **API Documentation**: http://localhost:3000/docs
 
 ## API Usage
 
@@ -173,10 +202,10 @@ rules:
 
 ## Development
 
-### Project Structure
+### Backend Structure
 
 ```
-src/
+backend/src/
 ├── modules/
 │   ├── auth/           # JWT authentication
 │   ├── files/          # File upload and storage
@@ -192,8 +221,22 @@ src/
 └── main.ts
 ```
 
+### Frontend Structure
+
+```
+frontend/src/
+├── components/         # Reusable UI components
+├── pages/             # Page components
+├── hooks/             # Custom React hooks
+├── services/          # API service functions
+├── types/             # TypeScript definitions
+├── utils/             # Utility functions
+└── App.tsx            # Main app component
+```
+
 ### Key Technologies
 
+**Backend:**
 - **NestJS**: TypeScript framework
 - **Prisma**: Database ORM with PostGIS support
 - **Bull**: Redis-based job queues
@@ -202,17 +245,25 @@ src/
 - **pdf-parse**: PDF text extraction
 - **js-yaml**: YAML rules parsing
 
+**Frontend:**
+- **React 18**: Modern React with hooks
+- **TypeScript**: Type-safe development
+- **Vite**: Fast build tool and dev server
+- **TailwindCSS**: Utility-first CSS framework
+- **React Query**: API state management
+- **React Router**: Client-side routing
+
 ### Testing
 
 ```bash
-# Unit tests
+# Run all tests
 npm run test
 
-# E2E tests
-npm run test:e2e
+# Backend tests only
+npm run test:backend
 
-# Coverage
-npm run test:cov
+# Frontend tests only
+npm run test:frontend
 ```
 
 ### Database Schema

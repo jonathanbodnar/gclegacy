@@ -8,12 +8,16 @@ restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
 [[services]]
-name = "plantakeoff-api"
-source = "."
+name = "plantakeoff-backend"
+source = "./backend"
 
 [services.variables]
 NODE_ENV = "production"
 PORT = "${{ PORT }}"
+
+[[services]]
+name = "plantakeoff-frontend"
+source = "./frontend"
 
 [[services]]
 name = "postgres"
