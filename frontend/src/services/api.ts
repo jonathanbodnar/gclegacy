@@ -1,4 +1,20 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+// Detect backend URL - Railway typically uses different subdomains for each service
+const detectBackendUrl = () => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl) return envUrl;
+  
+  // If running on Railway, try to detect backend URL
+  const currentUrl = window.location.origin;
+  if (currentUrl.includes('railway.app')) {
+    // Replace frontend subdomain with backend subdomain
+    return currentUrl.replace('gclegacy-production', 'gclegacy-backend') + '/v1';
+  }
+  
+  // Development fallback
+  return 'http://localhost:3000/v1';
+};
+
+const API_BASE_URL = detectBackendUrl();
 
 class ApiService {
   private baseUrl: string;

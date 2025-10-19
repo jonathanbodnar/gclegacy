@@ -2,13 +2,16 @@
 nixPkgs = ["nodejs_18", "npm-9_x", "python3", "postgresql", "vips"]
 
 [phases.install]
-cmds = ["npm install"]
+cmds = [
+  "npm install",
+  "npx prisma generate"
+]
 
 [phases.build]
-cmds = ["echo 'No build needed for instant health server'"]
+cmds = ["npm run build"]
 
 [start]
-cmd = "npm run start:instant"
+cmd = "npm run start:prod"
 
 [variables]
 NODE_ENV = "production"
