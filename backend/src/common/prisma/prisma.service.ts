@@ -10,10 +10,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
-    await this.$connect();
-    
-    // Enable PostGIS extension
-    await this.$executeRaw`CREATE EXTENSION IF NOT EXISTS postgis;`;
+    try {
+      await this.$connect();
+      
+      // Enable PostGIS extension
+      await this.$executeRaw`CREATE EXTENSION IF NOT EXISTS postgis;`;
+    } catch (error) {
+      console.warn('Database connection failed during startup:', error.message);
+      // Don't fail the entire application if database is not ready
+      // This allows health checks to work even without database
+    }
   }
 
   async onModuleDestroy() {

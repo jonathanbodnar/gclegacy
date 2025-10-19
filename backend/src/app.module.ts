@@ -18,7 +18,21 @@ import { RulesEngineModule } from './modules/rules-engine/rules-engine.module';
 class HealthController {
   @Get('health')
   health() {
-    return { status: 'ok', timestamp: new Date().toISOString() };
+    return { 
+      status: 'ok', 
+      timestamp: new Date().toISOString(),
+      service: 'plantakeoff-api',
+      version: '0.1.0'
+    };
+  }
+
+  @Get()
+  root() {
+    return { 
+      message: 'PlanTakeoff API is running',
+      docs: '/docs',
+      health: '/health'
+    };
   }
 }
 
@@ -49,14 +63,16 @@ class HealthController {
       },
     ]),
 
-    // Queue management
-    BullModule.forRoot({
-      redis: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
-        password: process.env.REDIS_PASSWORD || undefined,
-      },
-    }),
+    // Queue management - make Redis connection optional for health checks
+    ...(process.env.REDIS_HOST ? [
+      BullModule.forRoot({
+        redis: {
+          host: process.env.REDIS_HOST,
+          port: parseInt(process.env.REDIS_PORT || '6379'),
+          password: process.env.REDIS_PASSWORD || undefined,
+        },
+      })
+    ] : []),
 
     // Core modules
     PrismaModule,
