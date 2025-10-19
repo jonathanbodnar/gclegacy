@@ -2,12 +2,19 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { MinimalAppModule } from './minimal-app.module';
 
 async function bootstrap() {
   try {
     console.log('🚀 Starting PlanTakeoff API...');
     
-    const app = await NestFactory.create(AppModule, {
+    // Use minimal app for faster health check availability
+    const useMinimalApp = process.env.MINIMAL_START === 'true';
+    const AppModuleToUse = useMinimalApp ? MinimalAppModule : AppModule;
+    
+    console.log(`Using ${useMinimalApp ? 'Minimal' : 'Full'} App Module`);
+    
+    const app = await NestFactory.create(AppModuleToUse, {
       logger: ['error', 'warn', 'log'],
     });
 
@@ -33,23 +40,25 @@ async function bootstrap() {
       credentials: true,
     });
 
-    // Swagger documentation
-    const config = new DocumentBuilder()
-      .setTitle('PlanTakeoff API')
-      .setDescription('AI-powered architectural/MEP plan analysis and takeoff API')
-      .setVersion('0.1.0')
-      .addBearerAuth(
-        {
-          type: 'http',
-          scheme: 'bearer',
-          bearerFormat: 'JWT',
-        },
-        'JWT-auth',
-      )
-      .build();
+    // Swagger documentation (only for full app)
+    if (!useMinimalApp) {
+      const config = new DocumentBuilder()
+        .setTitle('PlanTakeoff API')
+        .setDescription('AI-powered architectural/MEP plan analysis and takeoff API')
+        .setVersion('0.1.0')
+        .addBearerAuth(
+          {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'JWT',
+          },
+          'JWT-auth',
+        )
+        .build();
 
-    const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('docs', app, document);
+      const document = SwaggerModule.createDocument(app, config);
+      SwaggerModule.setup('docs', app, document);
+    }
 
     const port = process.env.PORT || 3000;
     await app.listen(port);

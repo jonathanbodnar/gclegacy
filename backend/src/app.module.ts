@@ -1,8 +1,9 @@
-import { Module, Controller, Get } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { BullModule } from '@nestjs/bull';
 
+import { HealthController } from './health.controller';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { FilesModule } from './modules/files/files.module';
@@ -13,28 +14,6 @@ import { ArtifactsModule } from './modules/artifacts/artifacts.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { IngestModule } from './modules/ingest/ingest.module';
 import { RulesEngineModule } from './modules/rules-engine/rules-engine.module';
-
-@Controller()
-class HealthController {
-  @Get('health')
-  health() {
-    return { 
-      status: 'ok', 
-      timestamp: new Date().toISOString(),
-      service: 'plantakeoff-api',
-      version: '0.1.0'
-    };
-  }
-
-  @Get()
-  root() {
-    return { 
-      message: 'PlanTakeoff API is running',
-      docs: '/docs',
-      health: '/health'
-    };
-  }
-}
 
 @Module({
   imports: [
