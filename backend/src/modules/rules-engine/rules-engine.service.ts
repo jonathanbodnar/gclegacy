@@ -56,7 +56,7 @@ export class RulesEngineService {
     }
 
     try {
-      return ruleSetRecord.rules as RuleSet;
+      return ruleSetRecord.rules as unknown as RuleSet;
     } catch (error) {
       throw new BadRequestException(`Invalid rule set format: ${error.message}`);
     }
@@ -87,7 +87,7 @@ export class RulesEngineService {
       data: {
         name,
         version,
-        rules: parsedRules,
+        rules: parsedRules as any,
       },
     });
 

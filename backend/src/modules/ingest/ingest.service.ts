@@ -26,6 +26,8 @@ export interface SheetData {
     rasterData?: Buffer;
     vectorData?: any;
     textData?: any;
+    layerData?: any;
+    modelData?: any;
   };
 }
 

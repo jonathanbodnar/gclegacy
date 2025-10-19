@@ -202,7 +202,7 @@ export class ArtifactsService {
 
     // Generate overlay for each feature type
     for (const [type, typeFeatures] of Object.entries(featuresByType)) {
-      const overlayImage = await this.createOverlayImage(sheet, typeFeatures, type);
+      const overlayImage = await this.createOverlayImage(sheet, typeFeatures as any[], type);
       
       await this.storageService.uploadArtifact(
         jobId,

@@ -42,11 +42,11 @@ export class WebhooksService {
           })
         );
 
-        if (response.status >= 200 && response.status < 300) {
+        if ((response as any).status >= 200 && (response as any).status < 300) {
           this.logger.log(`Webhook sent successfully to ${url}`);
           return true;
         } else {
-          this.logger.warn(`Webhook failed with status ${response.status}: ${url}`);
+          this.logger.warn(`Webhook failed with status ${(response as any).status}: ${url}`);
         }
 
       } catch (error) {

@@ -29,6 +29,7 @@
     "postbuild": "cp -r prisma dist/ && cp package*.json dist/"
   },
   "dependencies": {
+    "@nestjs/axios": "^3.0.0",
     "@nestjs/common": "^10.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",

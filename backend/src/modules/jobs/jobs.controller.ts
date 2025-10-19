@@ -92,7 +92,17 @@ export class JobsController {
   @ApiResponse({ 
     status: 200, 
     description: 'Job status retrieved successfully',
-    type: JobStatusResponse
+    schema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string' },
+        status: { type: 'string' },
+        progress: { type: 'number' },
+        error: { type: 'string' },
+        startedAt: { type: 'string', format: 'date-time' },
+        finishedAt: { type: 'string', format: 'date-time' }
+      }
+    }
   })
   @ApiResponse({ 
     status: 404, 
