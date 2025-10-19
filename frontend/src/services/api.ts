@@ -35,7 +35,7 @@ class ApiService {
     }
   }
 
-  private async request(endpoint: string, options: RequestInit = {}) {
+  private async request(endpoint: string, options: RequestInit = {}): Promise<any> {
     if (!this.token) {
       await this.authenticate();
     }

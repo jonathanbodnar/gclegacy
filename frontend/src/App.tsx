@@ -140,17 +140,17 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
-  const convertToCSV = (data: any) => {
+  const convertToCSV = (data: any): string => {
     // Simple CSV conversion for rooms
     const headers = ['Type', 'ID', 'Name', 'Value', 'Unit'];
-    const rows = [];
+    const rows: string[][] = [];
     
     data.rooms?.forEach((room: any) => {
-      rows.push(['Room', room.id, room.name || '', room.area, data.units.area]);
+      rows.push(['Room', room.id, room.name || '', room.area.toString(), data.units.area]);
     });
     
     data.walls?.forEach((wall: any) => {
-      rows.push(['Wall', wall.id, wall.partitionType || '', wall.length, data.units.linear]);
+      rows.push(['Wall', wall.id, wall.partitionType || '', wall.length.toString(), data.units.linear]);
     });
 
     return [headers, ...rows].map(row => row.join(',')).join('\n');

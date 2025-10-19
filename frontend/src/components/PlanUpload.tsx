@@ -7,7 +7,6 @@ interface PlanUploadProps {
 }
 
 export const PlanUpload: React.FC<PlanUploadProps> = ({ onFileUpload, isUploading }) => {
-  const [dragActive, setDragActive] = useState(false);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
