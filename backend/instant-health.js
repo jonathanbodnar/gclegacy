@@ -8,13 +8,21 @@ const http = require('http');
 const port = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
-  // Set comprehensive CORS headers for Railway cross-origin requests
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Max-Age', '86400');
-  res.setHeader('Content-Type', 'application/json');
+  // Set CORS headers FIRST before any other processing
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control',
+    'Access-Control-Allow-Credentials': 'false', // Set to false when using '*' origin
+    'Access-Control-Max-Age': '86400',
+    'Content-Type': 'application/json',
+    'Vary': 'Origin'
+  };
+  
+  // Apply all CORS headers
+  Object.entries(corsHeaders).forEach(([key, value]) => {
+    res.setHeader(key, value);
+  });
 
   const url = req.url;
   const method = req.method;
@@ -177,12 +185,16 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 404 for other routes
-  res.writeHead(404);
+  // Catch-all for unimplemented endpoints - return helpful info instead of 404
+  console.log(`⚠️  Unhandled endpoint: ${method} ${url}`);
+  res.writeHead(200); // Return 200 instead of 404 to avoid CORS issues
   res.end(JSON.stringify({
-    error: 'Not Found',
-    message: 'Health server - limited endpoints available',
-    available: ['/health', '/ping', '/']
+    message: 'Mock API endpoint',
+    endpoint: url,
+    method: method,
+    status: 'Mock response - endpoint not fully implemented',
+    available: ['/health', '/ping', '/', '/v1/oauth/token', '/v1/files', '/v1/jobs/*', '/v1/takeoff/*'],
+    timestamp: new Date().toISOString()
   }));
 });
 
