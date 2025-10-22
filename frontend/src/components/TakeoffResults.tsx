@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { MaterialsList } from './MaterialsList';
 
 interface TakeoffData {
   version: string;
@@ -65,6 +66,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
     { id: 'pipes', label: 'Pipes', count: data.pipes.length },
     { id: 'ducts', label: 'Ducts', count: data.ducts.length },
     { id: 'fixtures', label: 'Fixtures', count: data.fixtures.length },
+    { id: 'materials', label: 'Materials', count: null },
   ];
 
   const formatNumber = (num: number, decimals: number = 1) => {
@@ -142,12 +144,58 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
         return renderSummary();
       
       case 'rooms':
-        return renderTable(data.rooms, [
-          { key: 'id', label: 'ID' },
-          { key: 'name', label: 'Name' },
-          { key: 'area', label: `Area (${data.units.area})`, format: (val) => formatNumber(val) },
-          { key: 'program', label: 'Program' },
-        ]);
+        return (
+          <div className="space-y-6">
+            {data.rooms.map((room, index) => (
+              <div key={room.id || index} className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Basic Info */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">{room.name}</h4>
+                    <div className="space-y-1 text-sm text-gray-600">
+                      <div><span className="font-medium">ID:</span> {room.id}</div>
+                      <div><span className="font-medium">Area:</span> {formatNumber(room.area)} {data.units.area}</div>
+                      <div><span className="font-medium">Program:</span> {room.program}</div>
+                      {room.dimensions && (
+                        <div><span className="font-medium">Dimensions:</span> {room.dimensions.width}' × {room.dimensions.length}'</div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Finishes */}
+                  {room.finishes && (
+                    <div>
+                      <h5 className="font-medium text-gray-700 mb-2">Finishes</h5>
+                      <div className="space-y-1 text-xs text-gray-600">
+                        {Object.entries(room.finishes).map(([key, value]) => (
+                          <div key={key}>
+                            <span className="font-medium capitalize">{key}:</span>
+                            <span className="ml-1">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Specifications */}
+                  {room.specifications && (
+                    <div>
+                      <h5 className="font-medium text-gray-700 mb-2">Specifications</h5>
+                      <div className="space-y-1 text-xs text-gray-600">
+                        {Object.entries(room.specifications).map(([key, value]) => (
+                          <div key={key}>
+                            <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
+                            <span className="ml-1">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
       
       case 'walls':
         return renderTable(data.walls, [
@@ -181,11 +229,45 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
         ]);
       
       case 'fixtures':
-        return renderTable(data.fixtures, [
-          { key: 'id', label: 'ID' },
-          { key: 'fixtureType', label: 'Type' },
-          { key: 'count', label: 'Count' },
-        ]);
+        return (
+          <div className="space-y-6">
+            {data.fixtures.map((fixture, index) => (
+              <div key={fixture.id || index} className="bg-gray-50 rounded-lg p-6 border">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Basic Info */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-3">{fixture.fixtureType}</h4>
+                    <div className="space-y-2 text-sm">
+                      <div><span className="font-medium">ID:</span> {fixture.id}</div>
+                      <div><span className="font-medium">Count:</span> {fixture.count}</div>
+                      {fixture.specifications && (
+                        <div><span className="font-medium">Model:</span> {fixture.specifications}</div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Detailed Specifications */}
+                  {fixture.specifications && typeof fixture.specifications === 'object' && (
+                    <div>
+                      <h5 className="font-medium text-gray-700 mb-2">Specifications</h5>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                        {Object.entries(fixture.specifications).map(([key, value]) => (
+                          <div key={key}>
+                            <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
+                            <span className="ml-1">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      
+      case 'materials':
+        return <MaterialsList jobId={data.meta?.jobId} />;
       
       default:
         return <div>Select a tab to view results</div>;
