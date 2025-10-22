@@ -2,16 +2,13 @@
 nixPkgs = ["nodejs_18", "npm-9_x", "python3", "postgresql", "vips"]
 
 [phases.install]
-cmds = [
-  "npm install",
-  "npx prisma generate"
-]
+cmds = ["npm install"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["echo 'Using enhanced API server - no build needed'"]
 
 [start]
-cmd = "npm run start:prod"
+cmd = "npm run start:enhanced"
 
 [variables]
 NODE_ENV = "production"
