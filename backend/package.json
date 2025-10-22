@@ -15,6 +15,7 @@
     "start:health": "node simple-health.js",
     "start:instant": "node instant-health.js",
     "start:enhanced": "node enhanced-api.js",
+    "start:commercial": "node commercial-analysis.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
