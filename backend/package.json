@@ -16,6 +16,7 @@
     "start:instant": "node instant-health.js",
     "start:enhanced": "node enhanced-api.js",
     "start:commercial": "node commercial-analysis.js",
+    "start:vision": "node real-vision-analysis.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -63,7 +64,9 @@
     "uuid": "^9.0.0",
     "axios": "^1.4.0",
     "express": "^4.18.0",
-    "openai": "^4.0.0"
+    "openai": "^4.0.0",
+    "pdf2pic": "^2.1.4",
+    "canvas": "^2.11.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
