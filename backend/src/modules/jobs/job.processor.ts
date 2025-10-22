@@ -8,6 +8,7 @@ import { IngestService } from '../ingest/ingest.service';
 import { RulesEngineService } from '../rules-engine/rules-engine.service';
 import { PlanAnalysisService } from '../vision/plan-analysis.service';
 import { FeatureExtractionService } from '../vision/feature-extraction.service';
+import { FilesService } from '../files/files.service';
 
 interface ProcessJobData {
   jobId: string;
@@ -29,6 +30,7 @@ export class JobProcessor {
     private rulesEngineService: RulesEngineService,
     private planAnalysisService: PlanAnalysisService,
     private featureExtractionService: FeatureExtractionService,
+    private filesService: FilesService,
   ) {}
 
   @Process('process-job')
@@ -46,24 +48,41 @@ export class JobProcessor {
       const ingestResult = await this.ingestService.ingestFile(fileId, disciplines, options);
       await job.progress(20);
 
-      // Step 2: Extract features based on targets (60% progress)
+      // Step 2: Real plan analysis with OpenAI Vision (60% progress)
+      await job.progress(25);
+      
+      // Get the actual uploaded file
+      const fileBuffer = await this.filesService.getFileBuffer(fileId);
+      const file = await this.filesService.getFile(fileId);
+      
+      this.logger.log(`Starting real plan analysis for ${file.filename} (${file.pages || 'unknown'} pages)`);
+      
+      // Use OpenAI Vision to analyze the actual plan
+      const analysisResult = await this.planAnalysisService.analyzePlanFile(
+        fileBuffer,
+        file.filename,
+        disciplines,
+        targets,
+        options
+      );
+      
+      await job.progress(60);
+      
+      // Extract features from analysis results
       const features = [];
-      const progressPerTarget = 40 / targets.length;
-      let currentProgress = 20;
-
-      for (const target of targets) {
-        this.logger.log(`Processing target: ${target} for job ${jobId}`);
-        
-        const targetFeatures = await this.extractFeaturesForTarget(
-          ingestResult,
-          target,
+      for (const pageResult of analysisResult.pages) {
+        const pageFeatures = await this.featureExtractionService.extractFeatures(
+          jobId,
+          pageResult.pageIndex.toString(),
+          pageResult.features, // This would be the image buffer in real implementation
           disciplines,
+          targets,
+          options
         );
-        features.push(...targetFeatures);
-
-        currentProgress += progressPerTarget;
-        await job.progress(currentProgress);
+        features.push(...pageFeatures);
       }
+      
+      await job.progress(75);
 
       // Step 3: Save features to database (80% progress)
       await this.saveFeatures(jobId, features);

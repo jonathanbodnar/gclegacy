@@ -14,6 +14,7 @@ import { ArtifactsModule } from './modules/artifacts/artifacts.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { IngestModule } from './modules/ingest/ingest.module';
 import { RulesEngineModule } from './modules/rules-engine/rules-engine.module';
+import { VisionModule } from './modules/vision/vision.module';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { RulesEngineModule } from './modules/rules-engine/rules-engine.module';
     // Processing modules
     IngestModule,
     RulesEngineModule,
+    VisionModule,
   ],
   controllers: [HealthController],
 })

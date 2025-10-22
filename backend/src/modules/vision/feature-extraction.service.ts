@@ -14,7 +14,7 @@ export class FeatureExtractionService {
   async extractFeatures(
     jobId: string,
     sheetId: string,
-    imageBuffer: Buffer,
+    analysisFeatures: any, // Changed from imageBuffer to analysisFeatures
     disciplines: string[],
     targets: string[],
     options?: any
@@ -22,19 +22,12 @@ export class FeatureExtractionService {
     this.logger.log(`Extracting features for job ${jobId}, sheet ${sheetId}`);
 
     try {
-      // Use OpenAI Vision for feature extraction
-      const analysisResult = await this.openaiVision.analyzePlanImage(
-        imageBuffer,
-        disciplines,
-        targets,
-        options
-      );
-
+      // analysisFeatures already contains the OpenAI Vision results
       // Convert OpenAI results to database features
       const features = await this.convertToFeatures(
         jobId,
         sheetId,
-        analysisResult,
+        analysisFeatures,
         targets
       );
 
