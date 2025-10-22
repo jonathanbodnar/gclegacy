@@ -253,7 +253,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
                       <div><span className="font-medium">ID:</span> {fixture.id}</div>
                       <div><span className="font-medium">Count:</span> {fixture.count}</div>
                       {fixture.specifications && (
-                        <div><span className="font-medium">Model:</span> {fixture.specifications}</div>
+                        <div><span className="font-medium">Model:</span> {String(fixture.specifications)}</div>
                       )}
                     </div>
                   </div>
