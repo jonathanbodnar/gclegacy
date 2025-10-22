@@ -259,8 +259,8 @@ const server = http.createServer((req, res) => {
     const jobId = url.split('/')[3];
     console.log(`💰 Materials list with REAL specifications from PDF schedules: ${jobId}`);
     
-    // Simulate extracting actual specs from your AT&T plan schedules
-    const realMaterials = await extractMaterialsFromPDFSchedules(jobId);
+    // Get real materials synchronously
+    const realMaterials = extractMaterialsFromPDFSchedules(jobId);
     
     res.writeHead(200);
     res.end(JSON.stringify(realMaterials));
@@ -353,7 +353,7 @@ process.on('SIGINT', () => {
 });
 
 // Extract REAL materials and specifications from PDF schedules
-async function extractMaterialsFromPDFSchedules(jobId) {
+function extractMaterialsFromPDFSchedules(jobId) {
   console.log(`📋 Extracting REAL specifications from AT&T plan schedules`);
   
   // This would normally use OpenAI to read the actual PDF text and schedules
