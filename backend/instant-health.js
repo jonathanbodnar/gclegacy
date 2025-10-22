@@ -37,6 +37,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Log all v1 endpoints for debugging
+  if (url.startsWith('/v1/')) {
+    console.log(`🔍 V1 API request: ${method} ${url}`);
+    console.log(`📋 Request headers:`, JSON.stringify(req.headers, null, 2));
+  }
+
   if (url === '/health' || url === '/health/') {
     res.writeHead(200);
     res.end(JSON.stringify({
@@ -188,6 +194,18 @@ const server = http.createServer((req, res) => {
   if (url === '/ping' || url === '/ping/') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('pong');
+    return;
+  }
+
+  // Debug endpoint to test v1 routing
+  if (url === '/v1/ping' || url === '/v1/ping/') {
+    console.log('🔍 v1/ping endpoint hit');
+    res.writeHead(200);
+    res.end(JSON.stringify({ 
+      message: 'v1 ping successful', 
+      timestamp: new Date().toISOString(),
+      url: url 
+    }));
     return;
   }
 
