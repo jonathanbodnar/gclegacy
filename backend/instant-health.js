@@ -190,24 +190,56 @@ const server = http.createServer((req, res) => {
         }
       ],
       walls: [
-        { id: 'W1', length: 20.5, partitionType: 'PT-1' },
-        { id: 'W2', length: 15.0, partitionType: 'PT-2' }
+        { id: 'EXT_NORTH', length: 45.83, partitionType: 'EXT-1', height: 14.0, material: 'CMU w/ EIFS' },
+        { id: 'EXT_SOUTH', length: 45.83, partitionType: 'EXT-1', height: 14.0, material: 'CMU w/ EIFS' },
+        { id: 'EXT_EAST', length: 27.5, partitionType: 'EXT-1', height: 14.0, material: 'CMU w/ EIFS' },
+        { id: 'EXT_WEST', length: 27.5, partitionType: 'EXT-1', height: 14.0, material: 'CMU w/ EIFS' },
+        { id: 'INT_001', length: 27.5, partitionType: 'PT-1', height: 9.0, material: 'Metal Stud/GWB' },
+        { id: 'INT_002', length: 16.0, partitionType: 'PT-2', height: 9.0, material: 'Metal Stud/GWB' },
+        { id: 'INT_003', length: 15.0, partitionType: 'PT-1', height: 9.0, material: 'Metal Stud/GWB' },
+        { id: 'DEMISING', length: 27.5, partitionType: 'PT-3', height: 14.0, material: 'CMU Fire-rated' }
       ],
       openings: [
-        { id: 'D1', openingType: 'door', width: 3.0 },
-        { id: 'W1', openingType: 'window', width: 4.0 }
+        { id: 'ENTRY_DOOR', openingType: 'door', width: 3.0, height: 7.0, material: 'Aluminum Storefront' },
+        { id: 'TOILET_DOOR_M', openingType: 'door', width: 2.67, height: 7.0, material: 'Hollow Metal' },
+        { id: 'TOILET_DOOR_W', openingType: 'door', width: 2.67, height: 7.0, material: 'Hollow Metal' },
+        { id: 'BOH_DOOR', openingType: 'door', width: 3.0, height: 7.0, material: 'Hollow Metal' },
+        { id: 'STOREFRONT_01', openingType: 'window', width: 12.0, height: 8.0, material: 'Aluminum Storefront' },
+        { id: 'STOREFRONT_02', openingType: 'window', width: 8.0, height: 8.0, material: 'Aluminum Storefront' }
       ],
       pipes: [
-        { id: 'P1', service: 'CW', diameterIn: 1.0, length: 50.0 },
-        { id: 'P2', service: 'HW', diameterIn: 0.75, length: 45.0 }
+        { id: 'CW_MAIN', service: 'CW', diameterIn: 1.5, length: 95, material: 'Copper Type L' },
+        { id: 'HW_MAIN', service: 'HW', diameterIn: 1.0, length: 85, material: 'Copper Type L' },
+        { id: 'HW_RECIRC', service: 'HW', diameterIn: 0.75, length: 75, material: 'Copper Type L' },
+        { id: 'SAN_MAIN', service: 'SAN', diameterIn: 4.0, length: 65, material: 'Cast Iron' },
+        { id: 'SAN_BRANCH', service: 'SAN', diameterIn: 3.0, length: 45, material: 'Cast Iron' },
+        { id: 'VENT_MAIN', service: 'VENT', diameterIn: 3.0, length: 35, material: 'Cast Iron' }
       ],
       ducts: [
-        { id: 'D1', size: '12x10', length: 80.0 },
-        { id: 'D2', size: '8x8', length: 60.0 }
+        { id: 'SA_MAIN', size: '24x14', length: 85, type: 'Supply', cfm: 3200 },
+        { id: 'SA_BRANCH_001', size: '16x12', length: 65, type: 'Supply', cfm: 1800 },
+        { id: 'SA_BRANCH_002', size: '14x10', length: 55, type: 'Supply', cfm: 1400 },
+        { id: 'RA_MAIN', size: '20x12', length: 75, type: 'Return', cfm: 2800 },
+        { id: 'RA_BRANCH', size: '12x10', length: 45, type: 'Return', cfm: 1200 },
+        { id: 'EA_TOILET', size: '12x8', length: 35, type: 'Exhaust', cfm: 800 }
       ],
       fixtures: [
-        { id: 'F1', fixtureType: 'Toilet', count: 2 },
-        { id: 'F2', fixtureType: 'LED Light', count: 12 }
+        { id: 'RTU_001', fixtureType: 'Rooftop Unit', count: 1, specifications: 'Carrier 5 Ton, 2000 CFM' },
+        { id: 'WC_M', fixtureType: 'Water Closet - Men', count: 1, specifications: 'Kohler Wellworth ADA' },
+        { id: 'WC_W', fixtureType: 'Water Closet - Women', count: 1, specifications: 'Kohler Wellworth ADA' },
+        { id: 'LAV_M', fixtureType: 'Lavatory - Men', count: 1, specifications: 'Kohler Wall Mount ADA' },
+        { id: 'LAV_W', fixtureType: 'Lavatory - Women', count: 1, specifications: 'Kohler Wall Mount ADA' },
+        { id: 'SINK_001', fixtureType: 'Service Sink', count: 1, specifications: 'Floor Mount Utility' },
+        { id: 'WH_001', fixtureType: 'Water Heater', count: 1, specifications: '50 Gal Gas Commercial' },
+        { id: 'DIFF_2X2', fixtureType: 'Supply Diffuser 2x2', count: 18, specifications: '150 CFM each' },
+        { id: 'DIFF_1X1', fixtureType: 'Supply Diffuser 1x1', count: 8, specifications: '75 CFM each' },
+        { id: 'GRILLE_2X1', fixtureType: 'Return Grille 2x1', count: 6, specifications: '400 CFM each' },
+        { id: 'EXFAN_001', fixtureType: 'Exhaust Fan', count: 2, specifications: '110 CFM each' },
+        { id: 'LED_2X4', fixtureType: 'LED Troffer 2x4', count: 32, specifications: 'Lithonia 32W, 3200 Lumens' },
+        { id: 'LED_2X2', fixtureType: 'LED Troffer 2x2', count: 12, specifications: 'Lithonia 28W, 2800 Lumens' },
+        { id: 'EXIT_LIGHT', fixtureType: 'Exit Light', count: 4, specifications: 'LED Battery Backup' },
+        { id: 'EMERGENCY', fixtureType: 'Emergency Light', count: 6, specifications: '10W LED' },
+        { id: 'TRACK_LIGHT', fixtureType: 'Track Lighting', count: 24, specifications: '15W LED Retail Display' }
       ],
       meta: {
         fileId: 'file_demo',
