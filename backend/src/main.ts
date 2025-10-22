@@ -8,14 +8,26 @@ async function bootstrap() {
   try {
     console.log('🚀 Starting PlanTakeoff API...');
     
-    // Use minimal app for faster health check availability
-    const useMinimalApp = process.env.MINIMAL_START === 'true';
-    const AppModuleToUse = useMinimalApp ? MinimalAppModule : AppModule;
+    // Always start with minimal app first for health checks, then upgrade
+    const useMinimalApp = process.env.MINIMAL_START !== 'false';
+    let AppModuleToUse = useMinimalApp ? MinimalAppModule : AppModule;
     
-    console.log(`Using ${useMinimalApp ? 'Minimal' : 'Full'} App Module`);
+    // Try full app first, fallback to minimal if it fails
+    if (!useMinimalApp) {
+      try {
+        console.log('Attempting to start Full App Module...');
+        AppModuleToUse = AppModule;
+      } catch (error) {
+        console.warn('Full app failed to load, falling back to minimal app:', error.message);
+        AppModuleToUse = MinimalAppModule;
+      }
+    }
+    
+    console.log(`Using ${AppModuleToUse === MinimalAppModule ? 'Minimal' : 'Full'} App Module`);
     
     const app = await NestFactory.create(AppModuleToUse, {
       logger: ['error', 'warn', 'log'],
+      abortOnError: false, // Don't crash on module loading errors
     });
 
     // Global validation pipe
