@@ -1,13 +1,20 @@
-// Detect backend URL - Railway typically uses different subdomains for each service
+// Backend URL configuration for Railway deployment
 const detectBackendUrl = () => {
   const envUrl = import.meta.env.VITE_API_BASE_URL;
   if (envUrl) return envUrl;
   
-  // If running on Railway, try to detect backend URL
+  // If running on Railway, use the backend service URL
   const currentUrl = window.location.origin;
   if (currentUrl.includes('railway.app')) {
-    // Replace frontend subdomain with backend subdomain
-    return currentUrl.replace('gclegacy-production', 'gclegacy-backend') + '/v1';
+    // Try common Railway backend URL patterns
+    const possibleUrls = [
+      'https://gclegacy-backend.up.railway.app/v1',
+      'https://plantakeoff-backend.up.railway.app/v1', 
+      'https://web-production-xxxx.up.railway.app/v1', // Replace xxxx with your backend ID
+    ];
+    
+    // For now, use the first one - update this with your actual backend URL
+    return possibleUrls[0];
   }
   
   // Development fallback
@@ -15,6 +22,9 @@ const detectBackendUrl = () => {
 };
 
 const API_BASE_URL = detectBackendUrl();
+
+// Add debug logging to see what URL is being used
+console.log('🔗 API Base URL:', API_BASE_URL);
 
 class ApiService {
   private baseUrl: string;
