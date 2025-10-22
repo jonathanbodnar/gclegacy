@@ -9,12 +9,14 @@ export class StorageService {
 
   constructor(private configService: ConfigService) {
     this.s3 = new S3({
-      region: this.configService.get('AWS_REGION'),
-      accessKeyId: this.configService.get('AWS_ACCESS_KEY_ID'),
-      secretAccessKey: this.configService.get('AWS_SECRET_ACCESS_KEY'),
+      endpoint: this.configService.get('WASABI_ENDPOINT') || 'https://s3.wasabisys.com',
+      region: this.configService.get('WASABI_REGION') || 'us-east-1',
+      accessKeyId: this.configService.get('WASABI_ACCESS_KEY_ID'),
+      secretAccessKey: this.configService.get('WASABI_SECRET_ACCESS_KEY'),
+      s3ForcePathStyle: true, // Required for Wasabi
     });
     
-    this.bucketName = this.configService.get('S3_BUCKET_NAME');
+    this.bucketName = this.configService.get('WASABI_BUCKET_NAME');
   }
 
   async uploadFile(
