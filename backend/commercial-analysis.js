@@ -405,12 +405,12 @@ function generateRealisticCommercialData(disciplines, targets) {
   // MEP data based on commercial building requirements
   if (targets.includes('pipes')) {
     data.pipes = [
-      { id: 'CW_MAIN', service: 'CW', diameter: 1.5, length: 95, material: 'Copper Type L', pressure: '125 PSI' },
-      { id: 'HW_MAIN', service: 'HW', diameter: 1.0, length: 85, material: 'Copper Type L', pressure: '125 PSI' },
-      { id: 'HW_RECIRC', service: 'HW', diameter: 0.75, length: 75, material: 'Copper Type L', pressure: '125 PSI' },
-      { id: 'SAN_MAIN', service: 'SAN', diameter: 4.0, length: 65, material: 'Cast Iron', pressure: 'Gravity' },
-      { id: 'SAN_BRANCH', service: 'SAN', diameter: 3.0, length: 45, material: 'Cast Iron', pressure: 'Gravity' },
-      { id: 'VENT_MAIN', service: 'VENT', diameter: 3.0, length: 35, material: 'Cast Iron', pressure: 'Gravity' }
+      { id: 'CW_MAIN', service: 'CW', diameterIn: 1.5, length: 95, material: 'Copper Type L', pressure: '125 PSI' },
+      { id: 'HW_MAIN', service: 'HW', diameterIn: 1.0, length: 85, material: 'Copper Type L', pressure: '125 PSI' },
+      { id: 'HW_RECIRC', service: 'HW', diameterIn: 0.75, length: 75, material: 'Copper Type L', pressure: '125 PSI' },
+      { id: 'SAN_MAIN', service: 'SAN', diameterIn: 4.0, length: 65, material: 'Cast Iron', pressure: 'Gravity' },
+      { id: 'SAN_BRANCH', service: 'SAN', diameterIn: 3.0, length: 45, material: 'Cast Iron', pressure: 'Gravity' },
+      { id: 'VENT_MAIN', service: 'VENT', diameterIn: 3.0, length: 35, material: 'Cast Iron', pressure: 'Gravity' }
     ];
   }
 
