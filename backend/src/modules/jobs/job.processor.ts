@@ -6,6 +6,8 @@ import { JobStatus } from '@prisma/client';
 import { JobsService } from './jobs.service';
 import { IngestService } from '../ingest/ingest.service';
 import { RulesEngineService } from '../rules-engine/rules-engine.service';
+import { PlanAnalysisService } from '../vision/plan-analysis.service';
+import { FeatureExtractionService } from '../vision/feature-extraction.service';
 
 interface ProcessJobData {
   jobId: string;
@@ -25,6 +27,8 @@ export class JobProcessor {
     private jobsService: JobsService,
     private ingestService: IngestService,
     private rulesEngineService: RulesEngineService,
+    private planAnalysisService: PlanAnalysisService,
+    private featureExtractionService: FeatureExtractionService,
   ) {}
 
   @Process('process-job')
