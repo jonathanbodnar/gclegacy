@@ -19,6 +19,12 @@ interface TakeoffData {
     name?: string;
     area: number;
     program?: string;
+    dimensions?: {
+      width: number;
+      length: number;
+    };
+    finishes?: Record<string, string>;
+    specifications?: Record<string, any>;
   }>;
   walls: Array<{
     id: string;
@@ -47,7 +53,13 @@ interface TakeoffData {
     id: string;
     fixtureType: string;
     count: number;
+    specifications?: Record<string, any> | string;
   }>;
+  meta?: {
+    fileId?: string;
+    jobId?: string;
+    generatedAt?: string;
+  };
 }
 
 interface TakeoffResultsProps {
@@ -170,7 +182,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
                         {Object.entries(room.finishes).map(([key, value]) => (
                           <div key={key}>
                             <span className="font-medium capitalize">{key}:</span>
-                            <span className="ml-1">{value}</span>
+                            <span className="ml-1">{String(value)}</span>
                           </div>
                         ))}
                       </div>
@@ -185,7 +197,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
                         {Object.entries(room.specifications).map(([key, value]) => (
                           <div key={key}>
                             <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
-                            <span className="ml-1">{value}</span>
+                            <span className="ml-1">{String(value)}</span>
                           </div>
                         ))}
                       </div>
@@ -254,7 +266,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
                         {Object.entries(fixture.specifications).map(([key, value]) => (
                           <div key={key}>
                             <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
-                            <span className="ml-1">{value}</span>
+                            <span className="ml-1">{String(value)}</span>
                           </div>
                         ))}
                       </div>
