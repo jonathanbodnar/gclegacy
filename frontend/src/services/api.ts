@@ -31,7 +31,13 @@ class ApiService {
   private token: string | null = null;
 
   constructor() {
-    this.baseUrl = API_BASE_URL;
+    // Ensure base URL has protocol
+    let baseUrl = API_BASE_URL;
+    if (!baseUrl.startsWith('http')) {
+      baseUrl = 'https://' + baseUrl;
+    }
+    this.baseUrl = baseUrl;
+    console.log('🌐 API Service initialized with URL:', this.baseUrl);
   }
 
   async authenticate() {
@@ -156,9 +162,19 @@ class ApiService {
 
   async checkHealth() {
     try {
-      const response = await fetch(`${this.baseUrl.replace('/v1', '')}/health`);
-      return response.json();
+      // Ensure URL has protocol
+      let healthUrl = this.baseUrl.replace('/v1', '') + '/health';
+      if (!healthUrl.startsWith('http')) {
+        healthUrl = 'https://' + healthUrl;
+      }
+      
+      console.log('🔍 Checking health at:', healthUrl);
+      const response = await fetch(healthUrl);
+      const data = await response.json();
+      console.log('✅ Health response:', data);
+      return data;
     } catch (error) {
+      console.error('❌ Health check failed:', error);
       throw new Error('API health check failed');
     }
   }
