@@ -8,18 +8,22 @@ const http = require('http');
 const port = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
-  // Set CORS headers
+  // Set comprehensive CORS headers for Railway cross-origin requests
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
   res.setHeader('Content-Type', 'application/json');
 
   const url = req.url;
   const method = req.method;
 
-  console.log(`${new Date().toISOString()} - ${method} ${url}`);
+  console.log(`${new Date().toISOString()} - ${method} ${url} - Origin: ${req.headers.origin || 'none'}`);
 
+  // Handle preflight OPTIONS requests for all endpoints
   if (method === 'OPTIONS') {
+    console.log(`✅ CORS preflight for ${url}`);
     res.writeHead(200);
     res.end();
     return;
@@ -42,26 +46,32 @@ const server = http.createServer((req, res) => {
 
   // Basic OAuth endpoint for frontend testing
   if (url === '/v1/oauth/token' && method === 'POST') {
+    console.log('🔐 OAuth token request received');
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
-        const data = JSON.parse(body);
+        console.log('📝 OAuth request body:', body);
+        const data = JSON.parse(body || '{}');
         if (data.grant_type === 'client_credentials') {
-          res.writeHead(200);
-          res.end(JSON.stringify({
+          const response = {
             access_token: 'demo-token-12345',
             token_type: 'Bearer',
             expires_in: 86400,
             scope: 'read write'
-          }));
+          };
+          console.log('✅ OAuth token generated:', response);
+          res.writeHead(200);
+          res.end(JSON.stringify(response));
         } else {
+          console.log('❌ Invalid grant type:', data.grant_type);
           res.writeHead(400);
           res.end(JSON.stringify({ error: 'unsupported_grant_type' }));
         }
       } catch (error) {
+        console.log('❌ OAuth parsing error:', error.message);
         res.writeHead(400);
-        res.end(JSON.stringify({ error: 'invalid_request' }));
+        res.end(JSON.stringify({ error: 'invalid_request', message: error.message }));
       }
     });
     return;
@@ -69,13 +79,16 @@ const server = http.createServer((req, res) => {
 
   // Mock file upload endpoint
   if (url === '/v1/files' && method === 'POST') {
-    res.writeHead(200);
-    res.end(JSON.stringify({
+    console.log('📁 File upload request received');
+    const response = {
       fileId: 'file_demo_' + Date.now(),
       pages: 1,
       mime: 'application/pdf',
       checksum: 'demo-checksum-' + Date.now()
-    }));
+    };
+    console.log('✅ File upload response:', response);
+    res.writeHead(200);
+    res.end(JSON.stringify(response));
     return;
   }
 
