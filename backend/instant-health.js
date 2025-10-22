@@ -127,8 +127,10 @@ const server = http.createServer((req, res) => {
 
   // Mock takeoff results
   if (url.startsWith('/v1/takeoff/') && method === 'GET') {
-    res.writeHead(200);
-    res.end(JSON.stringify({
+    const jobId = url.split('/')[3];
+    console.log(`📊 Takeoff results request for job: ${jobId}`);
+    
+    const takeoffData = {
       version: '2025-10-01',
       units: { linear: 'ft', area: 'ft2' },
       sheets: [{ id: 'A-1.1', scale: '1/4"=1\'-0"' }],
@@ -161,7 +163,11 @@ const server = http.createServer((req, res) => {
         jobId: jobId,
         generatedAt: new Date().toISOString()
       }
-    }));
+    };
+    
+    console.log(`✅ Returning takeoff data for job: ${jobId}`);
+    res.writeHead(200);
+    res.end(JSON.stringify(takeoffData));
     return;
   }
 
@@ -203,6 +209,16 @@ server.listen(port, '0.0.0.0', () => {
   console.log(`❤️  Health: http://0.0.0.0:${port}/health`);
   console.log(`🏓 Ping: http://0.0.0.0:${port}/ping`);
   console.log(`📡 Ready for Railway health checks`);
+  console.log(`🔗 Available API endpoints:`);
+  console.log(`   GET  /health`);
+  console.log(`   GET  /ping`);
+  console.log(`   GET  /`);
+  console.log(`   POST /v1/oauth/token`);
+  console.log(`   POST /v1/files`);
+  console.log(`   POST /v1/jobs`);
+  console.log(`   GET  /v1/jobs/{jobId}`);
+  console.log(`   GET  /v1/takeoff/{jobId}`);
+  console.log(`🌐 CORS enabled for origin: *`);
 });
 
 // Error handling
