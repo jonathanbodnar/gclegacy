@@ -43,6 +43,20 @@ interface TakeoffData {
     service: string;
     diameterIn: number;
     length: number;
+    material?: string;
+    calculation?: {
+      route: string;
+      baseLength?: number;
+      wasteFactor?: string;
+      formula?: string;
+      [key: string]: any;
+    };
+    routing?: {
+      start?: string;
+      path?: string;
+      fittings?: string;
+      [key: string]: any;
+    };
   }>;
   ducts: Array<{
     id: string;
@@ -226,12 +240,69 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
         ]);
       
       case 'pipes':
-        return renderTable(data.pipes, [
-          { key: 'id', label: 'ID' },
-          { key: 'service', label: 'Service' },
-          { key: 'diameterIn', label: 'Diameter (in)', format: (val) => formatNumber(val, 2) },
-          { key: 'length', label: `Length (${data.units.linear})`, format: (val) => formatNumber(val) },
-        ]);
+        return (
+          <div className="space-y-6">
+            {data.pipes.map((pipe, index) => (
+              <div key={pipe.id || index} className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Basic Pipe Info */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-3">{pipe.service} - {pipe.diameterIn}" Pipe</h4>
+                    <div className="space-y-2 text-sm">
+                      <div><span className="font-medium">ID:</span> {pipe.id}</div>
+                      <div><span className="font-medium">Service:</span> {pipe.service}</div>
+                      <div><span className="font-medium">Diameter:</span> {formatNumber(pipe.diameterIn, 2)}"</div>
+                      <div><span className="font-medium">Length:</span> {formatNumber(pipe.length)} {data.units.linear}</div>
+                      {pipe.material && (
+                        <div><span className="font-medium">Material:</span> {pipe.material}</div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Calculation Details */}
+                  {pipe.calculation && (
+                    <div>
+                      <h5 className="font-medium text-gray-700 mb-3">Pipe Length Calculation</h5>
+                      <div className="bg-blue-50 rounded p-3 text-sm">
+                        <div className="font-medium text-blue-900 mb-2">{pipe.calculation.route}</div>
+                        {pipe.calculation.formula && (
+                          <div className="text-blue-700 mb-2">
+                            <span className="font-medium">Formula:</span> {pipe.calculation.formula}
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-2 text-xs text-blue-600">
+                          {Object.entries(pipe.calculation).filter(([key]) => 
+                            !['route', 'formula'].includes(key)
+                          ).map(([key, value]) => (
+                            <div key={key}>
+                              <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
+                              <span className="ml-1">{String(value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Routing Information */}
+                {pipe.routing && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <h5 className="font-medium text-gray-700 mb-2">Routing Details</h5>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+                      {Object.entries(pipe.routing).map(([key, value]) => (
+                        <div key={key}>
+                          <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
+                          <div className="text-gray-800">{String(value)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        );
       
       case 'ducts':
         return renderTable(data.ducts, [

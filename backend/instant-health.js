@@ -208,12 +208,99 @@ const server = http.createServer((req, res) => {
         { id: 'STOREFRONT_02', openingType: 'window', width: 8.0, height: 8.0, material: 'Aluminum Storefront' }
       ],
       pipes: [
-        { id: 'CW_MAIN', service: 'CW', diameterIn: 1.5, length: 95, material: 'Copper Type L' },
-        { id: 'HW_MAIN', service: 'HW', diameterIn: 1.0, length: 85, material: 'Copper Type L' },
-        { id: 'HW_RECIRC', service: 'HW', diameterIn: 0.75, length: 75, material: 'Copper Type L' },
-        { id: 'SAN_MAIN', service: 'SAN', diameterIn: 4.0, length: 65, material: 'Cast Iron' },
-        { id: 'SAN_BRANCH', service: 'SAN', diameterIn: 3.0, length: 45, material: 'Cast Iron' },
-        { id: 'VENT_MAIN', service: 'VENT', diameterIn: 3.0, length: 35, material: 'Cast Iron' }
+        { 
+          id: 'CW_MAIN', 
+          service: 'CW', 
+          diameterIn: 1.5, 
+          length: Math.round(35 * 1.07 * 100) / 100, // CALCULATED: 37.45 LF
+          material: 'Copper Type L',
+          calculation: {
+            route: 'Water service → Mechanical room',
+            baseLength: 35,
+            wasteFactor: '7%',
+            formula: 'Service to Building (15) + Entry to Mech Room (20) × 1.07'
+          },
+          routing: {
+            start: 'Water service at exterior wall',
+            path: 'Along exterior wall to mechanical room',
+            fittings: '3 elbows + 1 distribution tee'
+          }
+        },
+        { 
+          id: 'CW_BRANCH', 
+          service: 'CW', 
+          diameterIn: 1.0, 
+          length: Math.round(60 * 1.07 * 100) / 100, // CALCULATED: 64.20 LF
+          material: 'Copper Type L',
+          calculation: {
+            route: 'Mechanical room → Fixtures',
+            mechToToilets: 25,
+            toiletDistribution: 15,
+            otherBranches: 20,
+            baseLength: 60,
+            wasteFactor: '7%',
+            formula: 'Mech to Toilets (25) + Distribution (15) + Other (20) × 1.07'
+          }
+        },
+        { 
+          id: 'HW_SUPPLY', 
+          service: 'HW', 
+          diameterIn: 0.75, 
+          length: Math.round(45 * 1.07 * 100) / 100, // CALCULATED: 48.15 LF
+          material: 'Copper Type L',
+          calculation: {
+            route: 'Water heater → Hot water fixtures',
+            heaterToToilets: 25,
+            toiletDistribution: 12,
+            utilitySink: 8,
+            baseLength: 45,
+            wasteFactor: '7%',
+            formula: 'Heater to Toilets (25) + Distribution (12) + Utility (8) × 1.07'
+          }
+        },
+        { 
+          id: 'HW_RECIRC', 
+          service: 'HW', 
+          diameterIn: 0.5, 
+          length: Math.round(30 * 1.07 * 100) / 100, // CALCULATED: 32.10 LF
+          material: 'Copper Type L',
+          calculation: {
+            route: 'Hot water return circulation',
+            returnPath: 30,
+            wasteFactor: '7%',
+            formula: 'Recirculation return path × 1.07'
+          }
+        },
+        { 
+          id: 'SAN_MAIN', 
+          service: 'SAN', 
+          diameterIn: 4.0, 
+          length: Math.round(35 * 1.05 * 100) / 100, // CALCULATED: 36.75 LF
+          material: 'Cast Iron',
+          calculation: {
+            route: 'Building sanitary main to sewer',
+            toiletCollection: 20,
+            buildingToSewer: 15,
+            baseLength: 35,
+            wasteFactor: '5%',
+            formula: 'Toilet Collection (20) + Building to Sewer (15) × 1.05'
+          }
+        },
+        { 
+          id: 'SAN_BRANCH', 
+          service: 'SAN', 
+          diameterIn: 3.0, 
+          length: Math.round(20 * 1.05 * 100) / 100, // CALCULATED: 21.00 LF
+          material: 'Cast Iron',
+          calculation: {
+            route: 'Toilet room drainage collection',
+            fixtureConnections: 16,
+            connectionAllowance: 4,
+            baseLength: 20,
+            wasteFactor: '5%',
+            formula: 'Fixture Connections (16) + Allowance (4) × 1.05'
+          }
+        }
       ],
       ducts: [
         { id: 'SA_MAIN', size: '24x14', length: 85, type: 'Supply', cfm: 3200 },
