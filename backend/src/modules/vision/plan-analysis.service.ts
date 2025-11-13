@@ -1,10 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OpenAIVisionService } from './openai-vision.service';
-import * as sharp from 'sharp';
+import { OpenAIVisionService, VisionAnalysisResult } from './openai-vision.service';
+import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
+import { spawn } from 'child_process';
 
 @Injectable()
 export class PlanAnalysisService {
   private readonly logger = new Logger(PlanAnalysisService.name);
+  private static readonly PLACEHOLDER_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+    'base64'
+  );
 
   constructor(private openaiVision: OpenAIVisionService) {}
 
@@ -46,6 +54,7 @@ export class PlanAnalysisService {
           metadata: {
             imageSize: imageBuffer.length,
             analysisTimestamp: new Date().toISOString(),
+            viewType: this.detectViewType(pageResult),
           }
         });
       }
@@ -78,65 +87,153 @@ export class PlanAnalysisService {
         // Already an image
         return [fileBuffer];
       default:
-        // Convert to PNG for analysis
-        try {
-          const pngBuffer = await sharp(fileBuffer)
-            .png()
-            .resize(2048, 2048, { fit: 'inside', withoutEnlargement: true })
-            .toBuffer();
-          return [pngBuffer];
-        } catch (error) {
-          this.logger.warn(`Failed to convert ${extension} to image:`, error.message);
-          throw new Error(`Unsupported file format: ${extension}`);
-        }
+        this.logger.warn(`Unsupported file extension "${extension}" - using placeholder image`);
+        return [PlanAnalysisService.PLACEHOLDER_PNG];
     }
   }
 
   private async convertPdfToImages(pdfBuffer: Buffer): Promise<Buffer[]> {
-    // In a real implementation, you'd use a library like pdf2pic or pdf-poppler
-    // For now, return the buffer as a single "page"
-    this.logger.log('PDF to image conversion - using placeholder implementation');
-    
+    const density = parseInt(process.env.PDF_RENDER_DPI || '220', 10);
+    const maxPages = parseInt(process.env.PDF_RENDER_MAX_PAGES || '5', 10);
+
     try {
-      // Mock: Create a placeholder image for each "page"
-      const mockImage = await sharp({
-        create: {
-          width: 1024,
-          height: 768,
-          channels: 3,
-          background: { r: 255, g: 255, b: 255 }
-        }
-      })
-      .png()
-      .toBuffer();
-      
-      return [mockImage]; // In real implementation, would return array of page images
-    } catch (error) {
-      throw new Error('PDF processing failed');
+      const mupdfBuffers = await this.convertPdfWithMuPDF(
+        pdfBuffer,
+        Math.max(1, maxPages),
+        density
+      );
+      if (mupdfBuffers.length > 0) {
+        return mupdfBuffers;
+      }
+    } catch (mupdfError) {
+      this.logger.error(`MuPDF conversion failed: ${mupdfError.message}`);
     }
+
+    try {
+      const fallbackBuffers = await this.convertPdfWithPdf2Pic(
+        pdfBuffer,
+        density,
+        Math.max(1, maxPages)
+      );
+
+      if (fallbackBuffers.length > 0) {
+        return fallbackBuffers;
+      }
+    } catch (pdf2picError) {
+      this.logger.error(`pdf2pic conversion failed: ${pdf2picError.message}`);
+    }
+
+    this.logger.warn('Falling back to placeholder image for PDF conversion');
+    return [PlanAnalysisService.PLACEHOLDER_PNG];
+  }
+
+  private async convertPdfWithMuPDF(
+    pdfBuffer: Buffer,
+    maxPages: number,
+    dpi: number
+  ): Promise<Buffer[]> {
+    const mutoolPath = process.env.MUTOOL_PATH || 'mutool';
+    const tempDir = await fs.mkdtemp(join(tmpdir(), 'mupdf-'));
+    const inputPath = join(tempDir, `${randomUUID()}.pdf`);
+    await fs.writeFile(inputPath, pdfBuffer);
+
+    const outputPattern = join(tempDir, 'page-%d.png');
+    const pageRange = `${1}-${Math.max(1, maxPages)}`;
+    const args = [
+      'draw',
+      '-F', 'png',
+      '-o', outputPattern,
+      '-r', `${dpi}`,
+      inputPath,
+      pageRange,
+    ];
+
+    try {
+      await this.spawnCommand(mutoolPath, args);
+
+      const buffers: Buffer[] = [];
+      const files = await fs.readdir(tempDir);
+      const pageFiles = files
+        .filter(name => name.startsWith('page-') && name.endsWith('.png'))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+      for (const file of pageFiles) {
+        const buffer = await fs.readFile(join(tempDir, file));
+        buffers.push(buffer);
+      }
+
+      return buffers;
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async convertPdfWithPdf2Pic(
+    pdfBuffer: Buffer,
+    density: number,
+    maxPages: number
+  ): Promise<Buffer[]> {
+    const pdf2picModule = await import('pdf2pic');
+    const fromBuffer =
+      (pdf2picModule as any).fromBuffer ||
+      pdf2picModule.default?.fromBuffer;
+
+    if (!fromBuffer) {
+      throw new Error('pdf2pic fromBuffer helper not available');
+    }
+
+    const convert = fromBuffer(pdfBuffer, {
+      density,
+      format: 'png',
+      width: 2048,
+      height: 2048,
+      preserveAspectRatio: true,
+    });
+
+    const images: Buffer[] = [];
+    for (let page = 1; page <= Math.max(1, maxPages); page++) {
+      try {
+        const result = await convert(page);
+        if (!result?.base64) {
+          break;
+        }
+        images.push(Buffer.from(result.base64, 'base64'));
+      } catch (error) {
+        if (page === 1) {
+          throw error;
+        }
+        break;
+      }
+    }
+
+    return images;
+  }
+
+
+  private async spawnCommand(command: string, args: string[]): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(command, args, { stdio: 'pipe' });
+      let stderr = '';
+
+      proc.stderr.on('data', chunk => {
+        stderr += chunk.toString();
+      });
+
+      proc.on('error', reject);
+      proc.on('close', code => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(stderr || `Command exited with code ${code}`));
+        }
+      });
+    });
   }
 
   private async convertCadToImages(cadBuffer: Buffer): Promise<Buffer[]> {
     // In a real implementation, you'd use a CAD conversion library
-    // For now, create a placeholder image
     this.logger.log('CAD to image conversion - using placeholder implementation');
-    
-    try {
-      const mockImage = await sharp({
-        create: {
-          width: 1024,
-          height: 768,
-          channels: 3,
-          background: { r: 255, g: 255, b: 255 }
-        }
-      })
-      .png()
-      .toBuffer();
-      
-      return [mockImage];
-    } catch (error) {
-      throw new Error('CAD processing failed');
-    }
+    return [PlanAnalysisService.PLACEHOLDER_PNG];
   }
 
   private detectDisciplineFromContent(content: any, requestedDisciplines: string[]): string {
@@ -164,6 +261,21 @@ export class PlanAnalysisService {
     return sortedDisciplines[0]?.[0] || requestedDisciplines[0] || 'A';
   }
 
+  private detectViewType(content: VisionAnalysisResult): 'plan' | 'vertical' | 'mixed' {
+    const hasVertical =
+      (content.elevations?.length || 0) > 0 ||
+      (content.sections?.length || 0) > 0 ||
+      (content.risers?.length || 0) > 0;
+    const hasPlan =
+      (content.rooms?.length || 0) > 0 ||
+      (content.walls?.length || 0) > 0 ||
+      (content.openings?.length || 0) > 0;
+
+    if (hasVertical && hasPlan) return 'mixed';
+    if (hasVertical) return 'vertical';
+    return 'plan';
+  }
+
   private generateSummary(pageResults: any[]): any {
     const summary = {
       totalRooms: 0,
@@ -171,15 +283,42 @@ export class PlanAnalysisService {
       totalPipeLength: 0,
       totalDuctLength: 0,
       totalFixtures: 0,
+      totalElevations: 0,
+      totalSections: 0,
+      totalRisers: 0,
+      totalRiserHeight: 0,
       disciplines: new Set<string>(),
+      levelsMap: new Map<string, { elevationFt?: number; heightFt?: number }>(),
+      defaultStoryHeightFt: undefined as number | undefined,
     };
 
     for (const page of pageResults) {
-      summary.totalRooms += page.features.rooms?.length || 0;
-      summary.totalWallLength += page.features.walls?.reduce((sum: number, w: any) => sum + (w.length || 0), 0) || 0;
-      summary.totalPipeLength += page.features.pipes?.reduce((sum: number, p: any) => sum + (p.length || 0), 0) || 0;
-      summary.totalDuctLength += page.features.ducts?.reduce((sum: number, d: any) => sum + (d.length || 0), 0) || 0;
-      summary.totalFixtures += page.features.fixtures?.reduce((sum: number, f: any) => sum + (f.count || 0), 0) || 0;
+      const features = page.features as VisionAnalysisResult;
+
+      summary.totalRooms += features.rooms?.length || 0;
+      summary.totalWallLength += features.walls?.reduce((sum: number, w: any) => sum + (w.length || 0), 0) || 0;
+      summary.totalPipeLength += features.pipes?.reduce((sum: number, p: any) => sum + (p.length || 0), 0) || 0;
+      summary.totalDuctLength += features.ducts?.reduce((sum: number, d: any) => sum + (d.length || 0), 0) || 0;
+      summary.totalFixtures += features.fixtures?.reduce((sum: number, f: any) => sum + (f.count || 0), 0) || 0;
+
+      summary.totalElevations += features.elevations?.length || 0;
+      summary.totalSections += features.sections?.length || 0;
+      summary.totalRisers += features.risers?.length || 0;
+      summary.totalRiserHeight += features.risers?.reduce((sum: number, r: any) => sum + (r.heightFt || 0), 0) || 0;
+
+      if (!summary.defaultStoryHeightFt && features.verticalMetadata?.defaultStoryHeightFt) {
+        summary.defaultStoryHeightFt = features.verticalMetadata.defaultStoryHeightFt;
+      }
+
+      features.levels?.forEach(level => {
+        const key = level.name || level.id;
+        if (!summary.levelsMap.has(key)) {
+          summary.levelsMap.set(key, {
+            elevationFt: level.elevationFt,
+            heightFt: level.heightFt,
+          });
+        }
+      });
       
       if (page.discipline) {
         summary.disciplines.add(page.discipline);
@@ -187,8 +326,21 @@ export class PlanAnalysisService {
     }
 
     return {
-      ...summary,
+      totalRooms: summary.totalRooms,
+      totalWallLength: summary.totalWallLength,
+      totalPipeLength: summary.totalPipeLength,
+      totalDuctLength: summary.totalDuctLength,
+      totalFixtures: summary.totalFixtures,
+      totalElevations: summary.totalElevations,
+      totalSections: summary.totalSections,
+      totalRisers: summary.totalRisers,
+      totalRiserHeight: summary.totalRiserHeight,
+      defaultStoryHeightFt: summary.defaultStoryHeightFt,
       disciplines: Array.from(summary.disciplines),
+      levels: Array.from(summary.levelsMap.entries()).map(([name, data]) => ({
+        name,
+        ...data,
+      })),
     };
   }
 }

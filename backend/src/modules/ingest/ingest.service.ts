@@ -95,10 +95,22 @@ export class IngestService {
       return;
     }
 
-    // Create sheet records
+    // Create or update sheet records per index
     for (const sheet of sheets) {
-      await this.prisma.sheet.create({
-        data: {
+      await this.prisma.sheet.upsert({
+        where: {
+          jobId_index: {
+            jobId: job.id,
+            index: sheet.index,
+          },
+        },
+        update: {
+          name: sheet.name,
+          discipline: sheet.discipline,
+          scale: sheet.scale,
+          units: sheet.units,
+        },
+        create: {
           jobId: job.id,
           index: sheet.index,
           name: sheet.name,

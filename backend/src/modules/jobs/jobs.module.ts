@@ -1,21 +1,23 @@
-import { Module } from '@nestjs/common';
-import { BullModule } from '@nestjs/bull';
+import { Module } from "@nestjs/common";
+import { BullModule } from "@nestjs/bull";
 
-import { JobsController } from './jobs.controller';
-import { JobsService } from './jobs.service';
-import { JobProcessor } from './job.processor';
-import { IngestModule } from '../ingest/ingest.module';
-import { RulesEngineModule } from '../rules-engine/rules-engine.module';
-import { VisionModule } from '../vision/vision.module';
+import { JobsController } from "./jobs.controller";
+import { JobsService } from "./jobs.service";
+import { JobProcessor } from "./job.processor";
+import { IngestModule } from "../ingest/ingest.module";
+import { RulesEngineModule } from "../rules-engine/rules-engine.module";
+import { VisionModule } from "../vision/vision.module";
+import { FilesModule } from "../files/files.module";
 
 @Module({
   imports: [
     BullModule.registerQueue({
-      name: 'job-processing',
+      name: "job-processing",
     }),
     IngestModule,
     RulesEngineModule,
     VisionModule,
+    FilesModule,
   ],
   controllers: [JobsController],
   providers: [JobsService, JobProcessor],
