@@ -8,8 +8,8 @@ cmds = ["npm install"]
 cmds = ["echo 'Using enhanced API server - no build needed'"]
 
 [start]
-cmd = "npm run start:instant"
+cmd = "npm start"
 
 [variables]
 NODE_ENV = "production"
-MINIMAL_START = "true"
+MINIMAL_START = "false"
