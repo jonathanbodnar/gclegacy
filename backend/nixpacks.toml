@@ -5,13 +5,10 @@ nixPkgs = ["nodejs_18", "npm-9_x", "python3", "postgresql", "vips"]
 cmds = ["npm install"]
 
 [phases.build]
-cmds = [
-  "npm run build",
-  "npx prisma generate"
-]
+cmds = ["echo 'Using enhanced API server - no build needed'"]
 
 [start]
-cmd = "node scripts/railway-startup.js"
+cmd = "npm start"
 
 [variables]
 NODE_ENV = "production"
