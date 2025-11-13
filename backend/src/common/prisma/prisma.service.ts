@@ -19,14 +19,27 @@ export class PrismaService
     try {
       await this.$connect();
 
+      // Diagnostic: Check database connection details (without exposing password)
+      const dbUrl = process.env.DATABASE_URL || "";
+      const dbHost = dbUrl.match(/@([^:]+):/)?.[1] || "unknown";
+      const dbName = dbUrl.match(/\/([^?]+)/)?.[1] || "unknown";
+      console.log(`🔍 Database connection: ${dbHost}/${dbName}`);
+
       // Enable PostGIS extension
       try {
         await this.$executeRaw`CREATE EXTENSION IF NOT EXISTS postgis;`;
         console.log("✅ PostGIS extension enabled");
       } catch (postgisError: any) {
+        // Check if it's a PostGIS availability error
+        const errorCode = postgisError?.meta?.code || postgisError?.code;
+        const errorMessage =
+          postgisError?.meta?.message || postgisError?.message || "";
+
         if (
-          postgisError?.meta?.code === "0A000" ||
-          postgisError?.code === "P2010"
+          errorCode === "0A000" ||
+          errorCode === "P2010" ||
+          (errorMessage.includes("extension") &&
+            errorMessage.includes("not available"))
         ) {
           console.error(
             "❌ PostGIS extension is not available in this PostgreSQL instance."
@@ -34,11 +47,15 @@ export class PrismaService
           console.error(
             "⚠️  This application requires PostGIS for geospatial features."
           );
+          console.error(`🔍 Connected to: ${dbHost}/${dbName}`);
           console.error(
             "💡 Solution: Use a PostGIS-enabled PostgreSQL image (e.g., postgis/postgis:15-3.4)"
           );
           console.error(
             "💡 On Railway: Use the PostGIS template or container service instead of managed PostgreSQL"
+          );
+          console.error(
+            "💡 Quick fix: Remove any managed PostgreSQL service from Railway dashboard"
           );
           throw new Error(
             "PostGIS extension is required but not available. Please use a PostGIS-enabled PostgreSQL instance."
