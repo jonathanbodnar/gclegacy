@@ -21,7 +21,7 @@ source = "./frontend"
 
 [[services]]
 name = "postgres"
-source = "postgres:15"
+source = "postgis/postgis:15-3.4"
 
 [services.variables]
 POSTGRES_DB = "plantakeoff"
