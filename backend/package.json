@@ -12,6 +12,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
+    "start:railway": "node scripts/railway-startup.js",
     "start:health": "node simple-health.js",
     "start:instant": "node instant-health.js",
     "start:enhanced": "node enhanced-api.js",
