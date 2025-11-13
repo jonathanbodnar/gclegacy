@@ -20,7 +20,32 @@ export class PrismaService
       await this.$connect();
 
       // Enable PostGIS extension
-      await this.$executeRaw`CREATE EXTENSION IF NOT EXISTS postgis;`;
+      try {
+        await this.$executeRaw`CREATE EXTENSION IF NOT EXISTS postgis;`;
+        console.log("✅ PostGIS extension enabled");
+      } catch (postgisError: any) {
+        if (
+          postgisError?.meta?.code === "0A000" ||
+          postgisError?.code === "P2010"
+        ) {
+          console.error(
+            "❌ PostGIS extension is not available in this PostgreSQL instance."
+          );
+          console.error(
+            "⚠️  This application requires PostGIS for geospatial features."
+          );
+          console.error(
+            "💡 Solution: Use a PostGIS-enabled PostgreSQL image (e.g., postgis/postgis:15-3.4)"
+          );
+          console.error(
+            "💡 On Railway: Use the PostGIS template or container service instead of managed PostgreSQL"
+          );
+          throw new Error(
+            "PostGIS extension is required but not available. Please use a PostGIS-enabled PostgreSQL instance."
+          );
+        }
+        throw postgisError;
+      }
 
       // Verify that required tables exist (safety check)
       const tables = await this.$queryRaw<Array<{ tablename: string }>>`

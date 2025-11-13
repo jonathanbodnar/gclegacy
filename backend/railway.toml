@@ -14,6 +14,8 @@ source = "./backend"
 [services.variables]
 NODE_ENV = "production"
 PORT = "${{ PORT }}"
+# DATABASE_URL will be automatically set by Railway when services are linked
+# If you have a managed PostgreSQL service, remove it and use the container service below
 
 [[services]]
 name = "plantakeoff-frontend"
@@ -22,6 +24,9 @@ source = "./frontend"
 [[services]]
 name = "postgres"
 source = "postgis/postgis:15-3.4"
+# IMPORTANT: This PostGIS-enabled PostgreSQL container is required for the application
+# If you have a managed PostgreSQL service (created via 'railway add --database postgresql'),
+# you must remove it and use this container service instead, as managed PostgreSQL doesn't include PostGIS
 
 [services.variables]
 POSTGRES_DB = "plantakeoff"
