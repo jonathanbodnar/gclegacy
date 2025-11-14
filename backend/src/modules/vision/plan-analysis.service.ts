@@ -1,17 +1,19 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { OpenAIVisionService, VisionAnalysisResult } from './openai-vision.service';
-import { promises as fs } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { randomUUID } from 'crypto';
-import { spawn } from 'child_process';
+import { Injectable, Logger } from "@nestjs/common";
+import {
+  OpenAIVisionService,
+  VisionAnalysisResult,
+} from "./openai-vision.service";
+import { promises as fs } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { randomUUID } from "crypto";
 
 @Injectable()
 export class PlanAnalysisService {
   private readonly logger = new Logger(PlanAnalysisService.name);
   private static readonly PLACEHOLDER_PNG = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
-    'base64'
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=",
+    "base64"
   );
 
   constructor(private openaiVision: OpenAIVisionService) {}
@@ -28,12 +30,12 @@ export class PlanAnalysisService {
     try {
       // Convert PDF pages or plan sheets to images for vision analysis
       const images = await this.convertToImages(fileBuffer, fileName);
-      
+
       const results = [];
-      
+
       for (const [pageIndex, imageBuffer] of images.entries()) {
         this.logger.log(`Analyzing page ${pageIndex + 1}/${images.length}`);
-        
+
         // Use OpenAI Vision to analyze each page
         const pageResult = await this.openaiVision.analyzePlanImage(
           imageBuffer,
@@ -41,10 +43,10 @@ export class PlanAnalysisService {
           targets,
           options
         );
-        
+
         // Detect scale for this page
         const scaleInfo = await this.openaiVision.detectScale(imageBuffer);
-        
+
         results.push({
           pageIndex,
           fileName: `${fileName}_page_${pageIndex + 1}`,
@@ -55,7 +57,7 @@ export class PlanAnalysisService {
             imageSize: imageBuffer.length,
             analysisTimestamp: new Date().toISOString(),
             viewType: this.detectViewType(pageResult),
-          }
+          },
         });
       }
 
@@ -65,107 +67,306 @@ export class PlanAnalysisService {
         pages: results,
         summary: this.generateSummary(results),
       };
-
     } catch (error) {
       this.logger.error(`Plan analysis failed for ${fileName}:`, error.message);
       throw error;
     }
   }
 
-  private async convertToImages(fileBuffer: Buffer, fileName: string): Promise<Buffer[]> {
-    const extension = fileName.split('.').pop()?.toLowerCase();
-    
+  private async convertToImages(
+    fileBuffer: Buffer,
+    fileName: string
+  ): Promise<Buffer[]> {
+    const extension = fileName.split(".").pop()?.toLowerCase();
+
     switch (extension) {
-      case 'pdf':
+      case "pdf":
         return this.convertPdfToImages(fileBuffer);
-      case 'dwg':
-      case 'dxf':
+      case "dwg":
+      case "dxf":
         return this.convertCadToImages(fileBuffer);
-      case 'png':
-      case 'jpg':
-      case 'jpeg':
+      case "png":
+      case "jpg":
+      case "jpeg":
         // Already an image
         return [fileBuffer];
       default:
-        this.logger.warn(`Unsupported file extension "${extension}" - using placeholder image`);
+        this.logger.warn(
+          `Unsupported file extension "${extension}" - using placeholder image`
+        );
         return [PlanAnalysisService.PLACEHOLDER_PNG];
     }
   }
 
   private async convertPdfToImages(pdfBuffer: Buffer): Promise<Buffer[]> {
-    const density = parseInt(process.env.PDF_RENDER_DPI || '220', 10);
-    const maxPages = parseInt(process.env.PDF_RENDER_MAX_PAGES || '5', 10);
-
     try {
-      const mupdfBuffers = await this.convertPdfWithMuPDF(
-        pdfBuffer,
-        Math.max(1, maxPages),
-        density
-      );
-      if (mupdfBuffers.length > 0) {
-        return mupdfBuffers;
+      // Try extracting embedded images first using pdfjs-dist
+      const buffers = await this.extractEmbeddedImagesFromPdf(pdfBuffer);
+
+      if (buffers.length > 0) {
+        this.logger.log(`Extracted ${buffers.length} embedded images from PDF`);
+        return buffers;
       }
-    } catch (mupdfError) {
-      this.logger.error(`MuPDF conversion failed: ${mupdfError.message}`);
+    } catch (extractError: any) {
+      this.logger.warn(
+        `Embedded image extraction failed: ${extractError.message}. Falling back to pdf2pic.`
+      );
     }
 
+    // Fallback to pdf2pic for rendering full pages
+    const density = parseInt(process.env.PDF_RENDER_DPI || "220", 10);
+    const maxPages = parseInt(process.env.PDF_RENDER_MAX_PAGES || "5", 10);
+
     try {
-      const fallbackBuffers = await this.convertPdfWithPdf2Pic(
+      const buffers = await this.convertPdfWithPdf2Pic(
         pdfBuffer,
         density,
         Math.max(1, maxPages)
       );
 
-      if (fallbackBuffers.length > 0) {
-        return fallbackBuffers;
+      if (buffers.length > 0) {
+        return buffers;
       }
-    } catch (pdf2picError) {
+    } catch (pdf2picError: any) {
       this.logger.error(`pdf2pic conversion failed: ${pdf2picError.message}`);
+
+      // Provide helpful error message about GraphicsMagick/ImageMagick requirement
+      if (
+        pdf2picError.message?.includes("ENOENT") ||
+        pdf2picError.message?.includes("spawn") ||
+        pdf2picError.message?.includes("write EOF")
+      ) {
+        throw new Error(
+          "PDF conversion failed: pdf2pic requires GraphicsMagick or ImageMagick to be installed. " +
+            "Please install one of these tools:\n" +
+            "- Windows: Download from https://imagemagick.org/script/download.php or use: choco install imagemagick\n" +
+            "- Linux: sudo apt-get install graphicsmagick or sudo apt-get install imagemagick\n" +
+            "- macOS: brew install graphicsmagick or brew install imagemagick"
+        );
+      }
+
+      throw pdf2picError;
     }
 
-    this.logger.warn('Falling back to placeholder image for PDF conversion');
-    return [PlanAnalysisService.PLACEHOLDER_PNG];
+    // This should not be reached, but kept as fallback
+    this.logger.warn("PDF conversion returned no images");
+    throw new Error("PDF conversion failed: No images were generated");
   }
 
-  private async convertPdfWithMuPDF(
-    pdfBuffer: Buffer,
-    maxPages: number,
-    dpi: number
+  private async extractEmbeddedImagesFromPdf(
+    pdfBuffer: Buffer
   ): Promise<Buffer[]> {
-    const mutoolPath = process.env.MUTOOL_PATH || 'mutool';
-    const tempDir = await fs.mkdtemp(join(tmpdir(), 'mupdf-'));
-    const inputPath = join(tempDir, `${randomUUID()}.pdf`);
-    await fs.writeFile(inputPath, pdfBuffer);
+    // Load sharp for image processing (works better on Windows than canvas)
+    let sharp: any;
+    try {
+      sharp = require("sharp");
+    } catch (e) {
+      throw new Error(
+        "Sharp module is required for PDF image extraction. Please install: npm install sharp"
+      );
+    }
 
-    const outputPattern = join(tempDir, 'page-%d.png');
-    const pageRange = `${1}-${Math.max(1, maxPages)}`;
-    const args = [
-      'draw',
-      '-F', 'png',
-      '-o', outputPattern,
-      '-r', `${dpi}`,
-      inputPath,
-      pageRange,
-    ];
+    // Try different import methods based on pdfjs-dist version
+    let pdfjsLib: any;
+    try {
+      pdfjsLib = require("pdfjs-dist");
+    } catch (e) {
+      try {
+        pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+      } catch (e2) {
+        throw new Error(
+          "Could not load pdfjs-dist. Please check installation."
+        );
+      }
+    }
+
+    const images: Buffer[] = [];
 
     try {
-      await this.spawnCommand(mutoolPath, args);
+      // Load the PDF document
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(pdfBuffer),
+      });
 
-      const buffers: Buffer[] = [];
-      const files = await fs.readdir(tempDir);
-      const pageFiles = files
-        .filter(name => name.startsWith('page-') && name.endsWith('.png'))
-        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      const pdfDoc = await loadingTask.promise;
+      const numPages = pdfDoc.numPages;
 
-      for (const file of pageFiles) {
-        const buffer = await fs.readFile(join(tempDir, file));
-        buffers.push(buffer);
+      // Minimum image size threshold (width * height) - default 100,000 pixels
+      const minImageSize = parseInt(
+        process.env.PDF_MIN_IMAGE_SIZE || "100000",
+        10
+      );
+
+      this.logger.log(
+        `PDF has ${numPages} pages, filtering images larger than ${minImageSize} pixels`
+      );
+
+      // Collect all images with metadata
+      const allImages: Array<{
+        buffer: Buffer;
+        size: number;
+        width: number;
+        height: number;
+        page: number;
+      }> = [];
+
+      for (let i = 1; i <= numPages; i++) {
+        const page = await pdfDoc.getPage(i);
+
+        // Extract embedded images ONLY
+        const opList = await page.getOperatorList();
+        const fnArray = opList.fnArray;
+        const argsArray = opList.argsArray;
+
+        let imgCount = 0;
+
+        for (let j = 0; j < fnArray.length; j++) {
+          const fn = fnArray[j];
+          const args = argsArray[j];
+
+          // Check for image operations
+          if (
+            fn === pdfjsLib.OPS.paintImageXObject ||
+            fn === pdfjsLib.OPS.paintInlineImageXObject ||
+            fn === pdfjsLib.OPS.paintImageMaskXObject
+          ) {
+            const objName = args[0];
+
+            try {
+              // Get the image from the page's object storage
+              const img = await new Promise<any>((resolve, reject) => {
+                const timeout = setTimeout(
+                  () => reject(new Error("Timeout")),
+                  5000
+                );
+
+                page.objs.get(objName, (image: any) => {
+                  clearTimeout(timeout);
+                  if (image) {
+                    resolve(image);
+                  } else {
+                    reject(new Error("Image not found"));
+                  }
+                });
+              });
+
+              if (img && img.width && img.height) {
+                const imageSize = img.width * img.height;
+
+                // Skip small images (icons, logos, etc.)
+                if (imageSize < minImageSize) {
+                  this.logger.debug(
+                    `Skipping small image on page ${i}: ${img.width}x${img.height} (${imageSize} pixels < ${minImageSize})`
+                  );
+                  continue;
+                }
+
+                this.logger.log(
+                  `Large image found on page ${i}: ${img.width}x${img.height} (${imageSize} pixels)`
+                );
+
+                // Convert image data to RGBA format
+                let rgbaData: Uint8Array;
+                let channels = 4; // RGBA
+
+                if (img.data) {
+                  const bytesPerPixel =
+                    img.data.length / (img.width * img.height);
+
+                  if (bytesPerPixel === 4) {
+                    // RGBA data - direct use
+                    rgbaData = new Uint8Array(img.data);
+                  } else if (bytesPerPixel === 3) {
+                    // RGB data - need to add alpha channel
+                    rgbaData = new Uint8Array(img.width * img.height * 4);
+                    for (let k = 0; k < img.width * img.height; k++) {
+                      rgbaData[k * 4] = img.data[k * 3]; // R
+                      rgbaData[k * 4 + 1] = img.data[k * 3 + 1]; // G
+                      rgbaData[k * 4 + 2] = img.data[k * 3 + 2]; // B
+                      rgbaData[k * 4 + 3] = 255; // A
+                    }
+                  } else if (bytesPerPixel === 1) {
+                    // Grayscale - convert to RGBA
+                    rgbaData = new Uint8Array(img.width * img.height * 4);
+                    for (let k = 0; k < img.width * img.height; k++) {
+                      const gray = img.data[k];
+                      rgbaData[k * 4] = gray; // R
+                      rgbaData[k * 4 + 1] = gray; // G
+                      rgbaData[k * 4 + 2] = gray; // B
+                      rgbaData[k * 4 + 3] = 255; // A
+                    }
+                  } else {
+                    this.logger.warn(
+                      `Unsupported bytes per pixel: ${bytesPerPixel}, skipping image`
+                    );
+                    continue;
+                  }
+                } else if (img.bitmap) {
+                  // Bitmap data - assume RGBA
+                  rgbaData = new Uint8Array(img.bitmap);
+                } else {
+                  this.logger.warn(
+                    `Image has no data or bitmap property, skipping`
+                  );
+                  continue;
+                }
+
+                // Use sharp to convert raw RGBA data to PNG
+                const embeddedImgBuffer = await sharp(rgbaData, {
+                  raw: {
+                    width: img.width,
+                    height: img.height,
+                    channels: channels,
+                  },
+                })
+                  .png()
+                  .toBuffer();
+
+                // Store image with metadata for sorting
+                allImages.push({
+                  buffer: embeddedImgBuffer,
+                  size: imageSize,
+                  width: img.width,
+                  height: img.height,
+                  page: i,
+                });
+
+                this.logger.log(
+                  `Extracted large image from page ${i}: ${img.width}x${img.height} (${imageSize} pixels, ${embeddedImgBuffer.length} bytes)`
+                );
+
+                imgCount++;
+              }
+            } catch (err: any) {
+              this.logger.error(
+                `Error extracting image ${objName} from page ${i}:`,
+                err.message
+              );
+            }
+          }
+        }
+
+        if (imgCount === 0) {
+          this.logger.log(`No large embedded images found on page ${i}`);
+        }
       }
 
-      return buffers;
-    } finally {
-      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+      // Sort all images by size (largest first) and add to results
+      allImages.sort((a, b) => b.size - a.size);
+
+      for (const imgData of allImages) {
+        images.push(imgData.buffer);
+      }
+
+      this.logger.log(
+        `Extracted ${images.length} large images (filtered from all pages, minimum size: ${minImageSize} pixels)`
+      );
+    } catch (error: any) {
+      this.logger.error(`Error extracting embedded images:`, error.message);
+      throw error;
     }
+
+    return images;
   }
 
   private async convertPdfWithPdf2Pic(
@@ -173,95 +374,248 @@ export class PlanAnalysisService {
     density: number,
     maxPages: number
   ): Promise<Buffer[]> {
-    const pdf2picModule = await import('pdf2pic');
-    const fromBuffer =
-      (pdf2picModule as any).fromBuffer ||
-      pdf2picModule.default?.fromBuffer;
+    const pdf2picModule = await import("pdf2pic");
+    const pdf2pic = pdf2picModule.default || pdf2picModule;
 
-    if (!fromBuffer) {
-      throw new Error('pdf2pic fromBuffer helper not available');
-    }
+    // Create a temporary file for the PDF (pdf2pic works better with file paths)
+    const tempDir = tmpdir();
+    const tempPdfPath = join(tempDir, `pdf_${randomUUID()}.pdf`);
 
-    const convert = fromBuffer(pdfBuffer, {
-      density,
-      format: 'png',
-      width: 2048,
-      height: 2048,
-      preserveAspectRatio: true,
-    });
+    try {
+      // Write PDF buffer to temp file
+      await fs.writeFile(tempPdfPath, pdfBuffer);
 
-    const images: Buffer[] = [];
-    for (let page = 1; page <= Math.max(1, maxPages); page++) {
-      try {
-        const result = await convert(page);
-        if (!result?.base64) {
+      // Use fromPath instead of fromBuffer for better compatibility
+      const convert = pdf2pic.fromPath(tempPdfPath, {
+        density,
+        format: "png",
+        width: 2048,
+        height: 2048,
+        preserveAspectRatio: true,
+        saveFilename: `page_${randomUUID()}`,
+        savePath: tempDir,
+      });
+
+      const images: Buffer[] = [];
+      for (let page = 1; page <= Math.max(1, maxPages); page++) {
+        try {
+          this.logger.log(
+            `Converting PDF page ${page}/${maxPages} to image...`
+          );
+
+          // Try buffer response type first
+          let result: any;
+          try {
+            result = await convert(page, { responseType: "buffer" });
+          } catch (convertError: any) {
+            // If buffer fails, try image response type
+            this.logger.warn(
+              `Buffer response failed, trying image response: ${convertError.message}`
+            );
+            try {
+              result = await convert(page, { responseType: "image" });
+            } catch (imageError: any) {
+              // If both fail, try without responseType (default)
+              this.logger.warn(
+                `Image response failed, trying default: ${imageError.message}`
+              );
+              result = await convert(page);
+            }
+          }
+
+          this.logger.debug(`pdf2pic result structure:`, {
+            hasBuffer: !!result?.buffer,
+            hasBase64: !!result?.base64,
+            hasPath: !!result?.path,
+            bufferSize: result?.buffer?.length || 0,
+            keys: result ? Object.keys(result) : [],
+          });
+
+          let imageBuffer: Buffer | null = null;
+
+          if (result?.buffer && Buffer.isBuffer(result.buffer)) {
+            imageBuffer = result.buffer;
+            this.logger.log(
+              `Using buffer from result (${imageBuffer.length} bytes)`
+            );
+          } else if (result?.base64 && typeof result.base64 === "string") {
+            imageBuffer = Buffer.from(result.base64, "base64");
+            this.logger.log(
+              `Using base64 from result (decoded to ${imageBuffer.length} bytes)`
+            );
+          } else if (result?.path && typeof result.path === "string") {
+            // If buffer/base64 not available, read from file path
+            this.logger.log(`Reading image from file: ${result.path}`);
+            imageBuffer = await fs.readFile(result.path);
+            // Clean up the generated image file
+            await fs.unlink(result.path).catch(() => undefined);
+          } else {
+            // Try to find any buffer-like property
+            const keys = Object.keys(result || {});
+            this.logger.warn(
+              `Unexpected result structure. Available keys: ${keys.join(", ")}`
+            );
+
+            // Try to extract buffer from result object
+            for (const key of keys) {
+              if (Buffer.isBuffer(result[key])) {
+                imageBuffer = result[key];
+                this.logger.log(
+                  `Found buffer in property '${key}' (${imageBuffer.length} bytes)`
+                );
+                break;
+              }
+            }
+          }
+
+          // Check if buffer is empty (indicates GraphicsMagick/ImageMagick not working)
+          if (imageBuffer && imageBuffer.length === 0) {
+            this.logger.error(
+              `pdf2pic returned empty buffer (0 bytes) for page ${page}. ` +
+                `This usually means GraphicsMagick or ImageMagick is not installed or not working.`
+            );
+            if (page === 1) {
+              throw new Error(
+                "PDF conversion failed: pdf2pic returned empty buffer (0 bytes). " +
+                  "This indicates GraphicsMagick or ImageMagick is not installed or not working properly. " +
+                  "Please install one of these tools:\n" +
+                  "- Windows: Download from https://imagemagick.org/script/download.php or use: choco install imagemagick\n" +
+                  "- Linux: sudo apt-get install graphicsmagick or sudo apt-get install imagemagick\n" +
+                  "- macOS: brew install graphicsmagick or brew install imagemagick\n\n" +
+                  "After installation, make sure the tool is in your system PATH and restart the application."
+              );
+            }
+            break;
+          }
+
+          // Validate the image buffer before adding
+          if (imageBuffer && this.validateImageBuffer(imageBuffer)) {
+            images.push(imageBuffer);
+            this.logger.log(
+              `Successfully converted page ${page} (${imageBuffer.length} bytes)`
+            );
+          } else {
+            const errorDetails = {
+              bufferSize: imageBuffer?.length || 0,
+              bufferType: imageBuffer?.constructor?.name,
+              firstBytes: imageBuffer
+                ? imageBuffer
+                    .subarray(0, Math.min(8, imageBuffer.length))
+                    .toString("hex")
+                : "none",
+            };
+            this.logger.error(
+              `Invalid image data returned for page ${page}:`,
+              errorDetails
+            );
+            if (page === 1) {
+              throw new Error(
+                `PDF conversion returned invalid image data for page ${page}. ` +
+                  `Buffer size: ${errorDetails.bufferSize} bytes, ` +
+                  `First bytes: ${errorDetails.firstBytes}. ` +
+                  `If buffer size is 0, GraphicsMagick/ImageMagick may not be installed.`
+              );
+            }
+            break;
+          }
+        } catch (error: any) {
+          this.logger.error(`Error converting page ${page}:`, error.message);
+          if (page === 1) {
+            throw error;
+          }
+          this.logger.warn(`Failed to convert page ${page}: ${error.message}`);
           break;
         }
-        images.push(Buffer.from(result.base64, 'base64'));
-      } catch (error) {
-        if (page === 1) {
-          throw error;
-        }
-        break;
       }
-    }
 
-    return images;
+      if (images.length === 0) {
+        throw new Error("No images were generated from PDF");
+      }
+
+      return images;
+    } finally {
+      // Clean up temp PDF file
+      await fs.unlink(tempPdfPath).catch(() => undefined);
+    }
   }
 
+  private validateImageBuffer(buffer: Buffer): boolean {
+    if (!buffer || buffer.length < 1024) {
+      this.logger.warn(
+        `Invalid image buffer: size ${buffer?.length || 0} bytes (too small)`
+      );
+      return false;
+    }
 
-  private async spawnCommand(command: string, args: string[]): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const proc = spawn(command, args, { stdio: 'pipe' });
-      let stderr = '';
+    // Check PNG header
+    const pngHeader = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    const jpegHeader = Buffer.from([0xff, 0xd8, 0xff]);
 
-      proc.stderr.on('data', chunk => {
-        stderr += chunk.toString();
-      });
+    const isPng = buffer.subarray(0, 8).equals(pngHeader);
+    const isJpeg = buffer.subarray(0, 3).equals(jpegHeader);
 
-      proc.on('error', reject);
-      proc.on('close', code => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(stderr || `Command exited with code ${code}`));
-        }
-      });
-    });
+    if (!isPng && !isJpeg) {
+      this.logger.warn(
+        `Invalid image format: not a valid PNG or JPEG. First bytes: ${buffer.subarray(0, 8).toString("hex")}`
+      );
+      return false;
+    }
+
+    return true;
   }
 
   private async convertCadToImages(cadBuffer: Buffer): Promise<Buffer[]> {
     // In a real implementation, you'd use a CAD conversion library
-    this.logger.log('CAD to image conversion - using placeholder implementation');
+    this.logger.log(
+      "CAD to image conversion - using placeholder implementation"
+    );
     return [PlanAnalysisService.PLACEHOLDER_PNG];
   }
 
-  private detectDisciplineFromContent(content: any, requestedDisciplines: string[]): string {
+  private detectDisciplineFromContent(
+    content: any,
+    requestedDisciplines: string[]
+  ): string {
     // Analyze the extracted content to determine the most likely discipline
     const scores = {
-      'A': 0,
-      'P': 0, 
-      'M': 0,
-      'E': 0,
+      A: 0,
+      P: 0,
+      M: 0,
+      E: 0,
     };
 
     // Score based on feature types found
-    if (content.rooms?.length > 0 || content.walls?.length > 0) scores['A'] += 2;
-    if (content.openings?.length > 0) scores['A'] += 1;
-    if (content.pipes?.length > 0) scores['P'] += 3;
-    if (content.ducts?.length > 0) scores['M'] += 3;
-    if (content.fixtures?.some((f: any) => f.type.toLowerCase().includes('light'))) scores['E'] += 2;
-    if (content.fixtures?.some((f: any) => ['toilet', 'sink', 'faucet'].some(t => f.type.toLowerCase().includes(t)))) scores['P'] += 2;
+    if (content.rooms?.length > 0 || content.walls?.length > 0)
+      scores["A"] += 2;
+    if (content.openings?.length > 0) scores["A"] += 1;
+    if (content.pipes?.length > 0) scores["P"] += 3;
+    if (content.ducts?.length > 0) scores["M"] += 3;
+    if (
+      content.fixtures?.some((f: any) => f.type.toLowerCase().includes("light"))
+    )
+      scores["E"] += 2;
+    if (
+      content.fixtures?.some((f: any) =>
+        ["toilet", "sink", "faucet"].some((t) =>
+          f.type.toLowerCase().includes(t)
+        )
+      )
+    )
+      scores["P"] += 2;
 
     // Return the highest scoring discipline that was requested
     const sortedDisciplines = Object.entries(scores)
       .filter(([discipline]) => requestedDisciplines.includes(discipline))
-      .sort(([,a], [,b]) => b - a);
+      .sort(([, a], [, b]) => b - a);
 
-    return sortedDisciplines[0]?.[0] || requestedDisciplines[0] || 'A';
+    return sortedDisciplines[0]?.[0] || requestedDisciplines[0] || "A";
   }
 
-  private detectViewType(content: VisionAnalysisResult): 'plan' | 'vertical' | 'mixed' {
+  private detectViewType(
+    content: VisionAnalysisResult
+  ): "plan" | "vertical" | "mixed" {
     const hasVertical =
       (content.elevations?.length || 0) > 0 ||
       (content.sections?.length || 0) > 0 ||
@@ -271,9 +625,9 @@ export class PlanAnalysisService {
       (content.walls?.length || 0) > 0 ||
       (content.openings?.length || 0) > 0;
 
-    if (hasVertical && hasPlan) return 'mixed';
-    if (hasVertical) return 'vertical';
-    return 'plan';
+    if (hasVertical && hasPlan) return "mixed";
+    if (hasVertical) return "vertical";
+    return "plan";
   }
 
   private generateSummary(pageResults: any[]): any {
@@ -296,21 +650,45 @@ export class PlanAnalysisService {
       const features = page.features as VisionAnalysisResult;
 
       summary.totalRooms += features.rooms?.length || 0;
-      summary.totalWallLength += features.walls?.reduce((sum: number, w: any) => sum + (w.length || 0), 0) || 0;
-      summary.totalPipeLength += features.pipes?.reduce((sum: number, p: any) => sum + (p.length || 0), 0) || 0;
-      summary.totalDuctLength += features.ducts?.reduce((sum: number, d: any) => sum + (d.length || 0), 0) || 0;
-      summary.totalFixtures += features.fixtures?.reduce((sum: number, f: any) => sum + (f.count || 0), 0) || 0;
+      summary.totalWallLength +=
+        features.walls?.reduce(
+          (sum: number, w: any) => sum + (w.length || 0),
+          0
+        ) || 0;
+      summary.totalPipeLength +=
+        features.pipes?.reduce(
+          (sum: number, p: any) => sum + (p.length || 0),
+          0
+        ) || 0;
+      summary.totalDuctLength +=
+        features.ducts?.reduce(
+          (sum: number, d: any) => sum + (d.length || 0),
+          0
+        ) || 0;
+      summary.totalFixtures +=
+        features.fixtures?.reduce(
+          (sum: number, f: any) => sum + (f.count || 0),
+          0
+        ) || 0;
 
       summary.totalElevations += features.elevations?.length || 0;
       summary.totalSections += features.sections?.length || 0;
       summary.totalRisers += features.risers?.length || 0;
-      summary.totalRiserHeight += features.risers?.reduce((sum: number, r: any) => sum + (r.heightFt || 0), 0) || 0;
+      summary.totalRiserHeight +=
+        features.risers?.reduce(
+          (sum: number, r: any) => sum + (r.heightFt || 0),
+          0
+        ) || 0;
 
-      if (!summary.defaultStoryHeightFt && features.verticalMetadata?.defaultStoryHeightFt) {
-        summary.defaultStoryHeightFt = features.verticalMetadata.defaultStoryHeightFt;
+      if (
+        !summary.defaultStoryHeightFt &&
+        features.verticalMetadata?.defaultStoryHeightFt
+      ) {
+        summary.defaultStoryHeightFt =
+          features.verticalMetadata.defaultStoryHeightFt;
       }
 
-      features.levels?.forEach(level => {
+      features.levels?.forEach((level) => {
         const key = level.name || level.id;
         if (!summary.levelsMap.has(key)) {
           summary.levelsMap.set(key, {
@@ -319,7 +697,7 @@ export class PlanAnalysisService {
           });
         }
       });
-      
+
       if (page.discipline) {
         summary.disciplines.add(page.discipline);
       }

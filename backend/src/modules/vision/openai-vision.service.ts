@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
-import { appendVisionLog } from './vision.logger';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import OpenAI from "openai";
+import { appendVisionLog } from "./vision.logger";
 
 export interface VisionAnalysisResult {
   rooms: Array<{
@@ -23,7 +23,7 @@ export interface VisionAnalysisResult {
   }>;
   openings: Array<{
     id: string;
-    type: 'door' | 'window';
+    type: "door" | "window";
     width?: number;
     height?: number;
     location?: number[];
@@ -31,7 +31,7 @@ export interface VisionAnalysisResult {
   }>;
   pipes: Array<{
     id: string;
-    service: 'CW' | 'HW' | 'SAN' | 'VENT';
+    service: "CW" | "HW" | "SAN" | "VENT";
     diameter?: number;
     length?: number;
     polyline?: number[][];
@@ -91,7 +91,7 @@ export interface VisionAnalysisResult {
   };
   scale?: {
     detected: string;
-    units: 'ft' | 'm';
+    units: "ft" | "m";
     ratio: number;
   };
 }
@@ -103,78 +103,95 @@ export class OpenAIVisionService {
   private allowMockFallback: boolean;
 
   constructor(private configService: ConfigService) {
-    const apiKey = this.configService.get('OPENAI_API_KEY');
+    const apiKey = this.configService.get("OPENAI_API_KEY");
     if (!apiKey) {
-      this.logger.warn('OpenAI API key not configured - vision analysis will be limited');
+      this.logger.warn(
+        "OpenAI API key not configured - vision analysis will be limited"
+      );
     }
-    
+
     this.openai = new OpenAI({
-      apiKey: apiKey || 'dummy-key',
+      apiKey: apiKey || "dummy-key",
     });
-    this.allowMockFallback = (this.configService.get('VISION_ALLOW_MOCK') || 'false').toLowerCase() === 'true';
+    this.allowMockFallback =
+      (this.configService.get("VISION_ALLOW_MOCK") || "false").toLowerCase() ===
+      "true";
   }
 
   async analyzePlanImage(
-    imageBuffer: Buffer, 
-    disciplines: string[], 
+    imageBuffer: Buffer,
+    disciplines: string[],
     targets: string[],
     options?: any
   ): Promise<VisionAnalysisResult> {
-    this.logger.log(`Analyzing plan image with OpenAI Vision (disciplines: ${disciplines.join(',')}, targets: ${targets.join(',')})`);
+    this.logger.log(
+      `Analyzing plan image with OpenAI Vision (disciplines: ${disciplines.join(",")}, targets: ${targets.join(",")})`
+    );
 
     try {
+      // Validate image buffer before processing
+      this.validateImageBuffer(imageBuffer);
+
+      // Determine image format from buffer
+      const imageFormat = this.detectImageFormat(imageBuffer);
+      if (!imageFormat) {
+        throw new Error("Invalid image format: buffer must be a valid PNG or JPEG");
+      }
+
       // Convert buffer to base64 for OpenAI
-      const base64Image = imageBuffer.toString('base64');
-      const imageUrl = `data:image/png;base64,${base64Image}`;
+      const base64Image = imageBuffer.toString("base64");
+      const imageUrl = `data:image/${imageFormat};base64,${base64Image}`;
 
       // Create comprehensive prompt based on disciplines and targets
       const prompt = this.createAnalysisPrompt(disciplines, targets);
 
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-5-mini-2025-08-07',
+        model: "gpt-5-mini-2025-08-07",
         messages: [
           {
             role: "system",
             content: `You are an expert architectural/MEP plan analyst with full visual access to the provided drawing.
 Return VALID JSON only that matches the requested schema.
 If data is missing, use nulls or empty arrays—never apologize or say you cannot analyze.
-Do not add prose, markdown, or explanations beyond the JSON object.`
+Do not add prose, markdown, or explanations beyond the JSON object.`,
           },
           {
             role: "user",
             content: [
               {
                 type: "text",
-                text: prompt
+                text: prompt,
               },
               {
                 type: "image_url",
                 image_url: {
                   url: imageUrl,
-                  detail: "high"
-                }
-              }
-            ]
-          }
+                  detail: "high",
+                },
+              },
+            ],
+          },
         ],
         max_completion_tokens: 4000,
       });
 
       const analysisText = response.choices[0]?.message?.content;
       if (!analysisText) {
-        throw new Error('No analysis response from OpenAI');
+        throw new Error("No analysis response from OpenAI");
       }
 
       if (this.isRefusalResponse(analysisText)) {
-        await appendVisionLog('OpenAI vision refusal', {
+        await appendVisionLog("OpenAI vision refusal", {
           disciplines,
           targets,
           message: analysisText.slice(0, 500),
         });
-        throw new Error('OpenAI vision model refused the request (insufficient access or policy restriction)');
+        throw new Error(
+          "OpenAI vision model refused the request (insufficient access or policy restriction)"
+        );
       }
 
-      await appendVisionLog('OpenAI vision raw response', {
+      await appendVisionLog("OpenAI vision raw response", {
         disciplines,
         targets,
         length: analysisText.length,
@@ -184,19 +201,20 @@ Do not add prose, markdown, or explanations beyond the JSON object.`
 
       // Parse the structured response
       const result = await this.parseAnalysisResponse(analysisText, targets);
-      
-      this.logger.log(`OpenAI analysis completed: ${result.rooms.length} rooms, ${result.walls.length} walls, ${result.fixtures.length} fixtures`);
-      
-      return result;
 
+      this.logger.log(
+        `OpenAI analysis completed: ${result.rooms.length} rooms, ${result.walls.length} walls, ${result.fixtures.length} fixtures`
+      );
+
+      return result;
     } catch (error) {
-      this.logger.error('OpenAI vision analysis failed:', error.message);
-      await appendVisionLog('OpenAI vision analysis failed', {
+      this.logger.error("OpenAI vision analysis failed:", error.message);
+      await appendVisionLog("OpenAI vision analysis failed", {
         disciplines,
         targets,
         error: error.message,
       });
-      
+
       // Fallback to mock data for testing
       if (this.allowMockFallback) {
         return this.generateMockAnalysis(disciplines, targets);
@@ -205,43 +223,48 @@ Do not add prose, markdown, or explanations beyond the JSON object.`
     }
   }
 
-  private createAnalysisPrompt(disciplines: string[], targets: string[]): string {
+  private createAnalysisPrompt(
+    disciplines: string[],
+    targets: string[]
+  ): string {
     const disciplineMap = {
-      'A': 'Architectural (floor plans, rooms, walls, doors, windows)',
-      'P': 'Plumbing (pipes, fixtures, water/sewer systems)', 
-      'M': 'Mechanical/HVAC (ducts, equipment, air systems)',
-      'E': 'Electrical (lighting, panels, conduits)'
+      A: "Architectural (floor plans, rooms, walls, doors, windows)",
+      P: "Plumbing (pipes, fixtures, water/sewer systems)",
+      M: "Mechanical/HVAC (ducts, equipment, air systems)",
+      E: "Electrical (lighting, panels, conduits)",
     };
 
     const targetMap = {
-      'rooms': 'room boundaries and areas with names/numbers',
-      'walls': 'wall centerlines with partition types',
-      'doors': 'door locations with sizes',
-      'windows': 'window locations with sizes', 
-      'pipes': 'piping systems with diameters and services (CW/HW/SAN)',
-      'ducts': 'ductwork with sizes',
-      'fixtures': 'plumbing/electrical fixtures with types and counts',
-      'levels': 'building levels with elevations and clear heights',
-      'elevations': 'exterior/interior elevations that show story heights',
-      'sections': 'section cuts indicating vertical dimensions and structural relationships',
-      'risers': 'vertical riser diagrams for plumbing/mechanical/electrical systems'
+      rooms: "room boundaries and areas with names/numbers",
+      walls: "wall centerlines with partition types",
+      doors: "door locations with sizes",
+      windows: "window locations with sizes",
+      pipes: "piping systems with diameters and services (CW/HW/SAN)",
+      ducts: "ductwork with sizes",
+      fixtures: "plumbing/electrical fixtures with types and counts",
+      levels: "building levels with elevations and clear heights",
+      elevations: "exterior/interior elevations that show story heights",
+      sections:
+        "section cuts indicating vertical dimensions and structural relationships",
+      risers:
+        "vertical riser diagrams for plumbing/mechanical/electrical systems",
     };
 
     const wantsVertical = {
-      levels: targets.includes('levels'),
-      elevations: targets.includes('elevations'),
-      sections: targets.includes('sections'),
-      risers: targets.includes('risers'),
+      levels: targets.includes("levels"),
+      elevations: targets.includes("elevations"),
+      sections: targets.includes("sections"),
+      risers: targets.includes("risers"),
     };
     const verticalRequested = Object.values(wantsVertical).some(Boolean);
 
     const jsonSections: string[] = [
-`  "scale": {
+      `  "scale": {
     "detected": "scale found in titleblock (e.g. 1/4\\"=1'-0\\")",
     "units": "ft or m",
     "ratio": "numeric ratio for calculations"
   }`,
-`  "rooms": [
+      `  "rooms": [
     {
       "id": "unique_id",
       "name": "room name or number from plan",
@@ -249,14 +272,14 @@ Do not add prose, markdown, or explanations beyond the JSON object.`
       "program": "room type (office, toilet, etc.)"
     }
   ]`,
-`  "walls": [
+      `  "walls": [
     {
       "id": "unique_id", 
       "length": "linear length",
       "partitionType": "wall type from legend (PT-1, etc.)"
     }
   ]`,
-`  "openings": [
+      `  "openings": [
     {
       "id": "unique_id",
       "type": "door or window", 
@@ -264,7 +287,7 @@ Do not add prose, markdown, or explanations beyond the JSON object.`
       "height": "opening height"
     }
   ]`,
-`  "pipes": [
+      `  "pipes": [
     {
       "id": "unique_id",
       "service": "CW (cold water), HW (hot water), SAN (sanitary), or VENT",
@@ -272,14 +295,14 @@ Do not add prose, markdown, or explanations beyond the JSON object.`
       "length": "pipe run length"
     }
   ]`,
-`  "ducts": [
+      `  "ducts": [
     {
       "id": "unique_id", 
       "size": "duct size (e.g. 12x10)",
       "length": "duct run length"
     }
   ]`,
-`  "fixtures": [
+      `  "fixtures": [
     {
       "id": "unique_id",
       "type": "fixture type (toilet, sink, light, etc.)",
@@ -346,19 +369,19 @@ Do not add prose, markdown, or explanations beyond the JSON object.`
     }
 
     const verticalInstruction = verticalRequested
-      ? '\n- Capture vertical information (story heights, level names, risers) whenever available'
-      : '';
+      ? "\n- Capture vertical information (story heights, level names, risers) whenever available"
+      : "";
 
     return `You are an expert architectural/MEP plan analyst. Analyze this construction drawing and extract specific technical information.
 
-DISCIPLINES TO ANALYZE: ${disciplines.map(d => disciplineMap[d]).join(', ')}
+DISCIPLINES TO ANALYZE: ${disciplines.map((d) => disciplineMap[d]).join(", ")}
 
-EXTRACTION TARGETS: ${targets.map(t => targetMap[t]).join(', ')}
+EXTRACTION TARGETS: ${targets.map((t) => targetMap[t]).join(", ")}
 
 Please provide a detailed analysis in the following JSON format:
 
 {
-${jsonSections.join(',\n\n')}
+${jsonSections.join(",\n\n")}
 }
 
 IMPORTANT: 
@@ -370,32 +393,51 @@ IMPORTANT:
 - Return valid JSON only`;
   }
 
-  private async parseAnalysisResponse(responseText: string, targets: string[]): Promise<VisionAnalysisResult> {
+  private async parseAnalysisResponse(
+    responseText: string,
+    targets: string[]
+  ): Promise<VisionAnalysisResult> {
     try {
       // Extract JSON from response (handle markdown code blocks)
-      const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || responseText.match(/\{[\s\S]*\}/);
-      const jsonText = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : responseText;
-      
+      const jsonMatch =
+        responseText.match(/```json\n([\s\S]*?)\n```/) ||
+        responseText.match(/\{[\s\S]*\}/);
+      const jsonText = jsonMatch ? jsonMatch[1] || jsonMatch[0] : responseText;
+
       const parsed = JSON.parse(jsonText);
-      
+
       // Validate and structure the response
       return {
-        rooms: this.validateArray(parsed.rooms, targets.includes('rooms')),
-        walls: this.validateArray(parsed.walls, targets.includes('walls')),
-        openings: this.validateArray(parsed.openings, targets.includes('doors') || targets.includes('windows')),
-        pipes: this.validateArray(parsed.pipes, targets.includes('pipes')),
-        ducts: this.validateArray(parsed.ducts, targets.includes('ducts')),
-        fixtures: this.validateArray(parsed.fixtures, targets.includes('fixtures')),
-        levels: this.validateArray(parsed.levels, targets.includes('levels')),
-        elevations: this.validateArray(parsed.elevations, targets.includes('elevations')),
-        sections: this.validateArray(parsed.sections, targets.includes('sections')),
-        risers: this.validateArray(parsed.risers, targets.includes('risers')),
-        verticalMetadata: this.normalizeVerticalMetadata(parsed.verticalMetadata),
-        scale: parsed.scale || { detected: 'Unknown', units: 'ft', ratio: 1 },
+        rooms: this.validateArray(parsed.rooms, targets.includes("rooms")),
+        walls: this.validateArray(parsed.walls, targets.includes("walls")),
+        openings: this.validateArray(
+          parsed.openings,
+          targets.includes("doors") || targets.includes("windows")
+        ),
+        pipes: this.validateArray(parsed.pipes, targets.includes("pipes")),
+        ducts: this.validateArray(parsed.ducts, targets.includes("ducts")),
+        fixtures: this.validateArray(
+          parsed.fixtures,
+          targets.includes("fixtures")
+        ),
+        levels: this.validateArray(parsed.levels, targets.includes("levels")),
+        elevations: this.validateArray(
+          parsed.elevations,
+          targets.includes("elevations")
+        ),
+        sections: this.validateArray(
+          parsed.sections,
+          targets.includes("sections")
+        ),
+        risers: this.validateArray(parsed.risers, targets.includes("risers")),
+        verticalMetadata: this.normalizeVerticalMetadata(
+          parsed.verticalMetadata
+        ),
+        scale: parsed.scale || { detected: "Unknown", units: "ft", ratio: 1 },
       };
     } catch (error) {
-      this.logger.warn('Failed to parse OpenAI response, using fallback data');
-      await appendVisionLog('Vision JSON parse failure', {
+      this.logger.warn("Failed to parse OpenAI response, using fallback data");
+      await appendVisionLog("Vision JSON parse failure", {
         error: error.message,
         responsePreview: responseText?.slice(0, 1000),
       });
@@ -405,20 +447,22 @@ IMPORTANT:
 
   private validateArray(items: any[], shouldInclude: boolean): any[] {
     if (!shouldInclude || !Array.isArray(items)) return [];
-    
+
     return items.map((item, index) => ({
       id: item.id || `item_${index + 1}`,
       ...item,
     }));
   }
 
-  private normalizeVerticalMetadata(meta: any): VisionAnalysisResult['verticalMetadata'] {
-    if (!meta || typeof meta !== 'object') {
+  private normalizeVerticalMetadata(
+    meta: any
+  ): VisionAnalysisResult["verticalMetadata"] {
+    if (!meta || typeof meta !== "object") {
       return undefined;
     }
 
     const coerceNumber = (value: any): number | undefined => {
-      if (typeof value === 'number') return value;
+      if (typeof value === "number") return value;
       const parsed = Number(value);
       return Number.isFinite(parsed) ? parsed : undefined;
     };
@@ -426,8 +470,13 @@ IMPORTANT:
     return {
       defaultStoryHeightFt: coerceNumber(meta.defaultStoryHeightFt),
       totalStories: coerceNumber(meta.totalStories),
-      referenceDatum: typeof meta.referenceDatum === 'string' ? meta.referenceDatum : undefined,
-      notes: Array.isArray(meta.notes) ? meta.notes.filter((n: any) => typeof n === 'string') : undefined,
+      referenceDatum:
+        typeof meta.referenceDatum === "string"
+          ? meta.referenceDatum
+          : undefined,
+      notes: Array.isArray(meta.notes)
+        ? meta.notes.filter((n: any) => typeof n === "string")
+        : undefined,
     };
   }
 
@@ -436,61 +485,107 @@ IMPORTANT:
     const lower = text.toLowerCase();
     const refusalPhrases = [
       "i'm unable to analyze",
-      'i am unable to analyze',
+      "i am unable to analyze",
       "i can't analyze",
-      'as an ai language model',
-      'cannot view images',
-      'do not have the ability to view',
+      "as an ai language model",
+      "cannot view images",
+      "do not have the ability to view",
     ];
-    return refusalPhrases.some(phrase => lower.includes(phrase));
+    return refusalPhrases.some((phrase) => lower.includes(phrase));
   }
 
-  private generateMockAnalysis(disciplines: string[], targets: string[]): VisionAnalysisResult {
+  private generateMockAnalysis(
+    disciplines: string[],
+    targets: string[]
+  ): VisionAnalysisResult {
     // Fallback mock data when OpenAI is not available
     return {
-      rooms: targets.includes('rooms') ? [
-        { id: 'R100', name: 'OFFICE', area: 150, program: 'Office' },
-        { id: 'R101', name: 'CONFERENCE', area: 200, program: 'Meeting' },
-      ] : [],
-      walls: targets.includes('walls') ? [
-        { id: 'W1', length: 20, partitionType: 'PT-1' },
-        { id: 'W2', length: 15, partitionType: 'PT-2' },
-      ] : [],
-      openings: (targets.includes('doors') || targets.includes('windows')) ? [
-        { id: 'D1', type: 'door', width: 3, height: 7 },
-        { id: 'W1', type: 'window', width: 4, height: 3 },
-      ] : [],
-      pipes: targets.includes('pipes') ? [
-        { id: 'P1', service: 'CW', diameter: 1, length: 50 },
-        { id: 'P2', service: 'HW', diameter: 0.75, length: 45 },
-      ] : [],
-      ducts: targets.includes('ducts') ? [
-        { id: 'D1', size: '12x10', length: 80 },
-        { id: 'D2', size: '8x8', length: 60 },
-      ] : [],
-      fixtures: targets.includes('fixtures') ? [
-        { id: 'F1', type: 'Toilet', count: 2 },
-        { id: 'F2', type: 'LED Light', count: 12 },
-      ] : [],
-      levels: targets.includes('levels') ? [
-        { id: 'L1', name: 'Level 1', elevationFt: 0, heightFt: 12 },
-        { id: 'L2', name: 'Level 2', elevationFt: 12, heightFt: 12 },
-      ] : [],
-      elevations: targets.includes('elevations') ? [
-        { id: 'ELEV-A', face: 'South', fromLevel: 'L1', toLevel: 'Roof', heightFt: 24 },
-      ] : [],
-      sections: targets.includes('sections') ? [
-        { id: 'SEC-A', description: 'Section through core', fromLevel: 'L1', toLevel: 'Roof', heightFt: 24 },
-      ] : [],
-      risers: targets.includes('risers') ? [
-        { id: 'R-CW', system: 'Cold Water', levels: ['L1', 'L2', 'Roof'], heightFt: 24, qty: 1 },
-      ] : [],
-      verticalMetadata: targets.some(t => ['levels', 'elevations', 'sections', 'risers'].includes(t)) ? {
-        defaultStoryHeightFt: 12,
-        totalStories: 2,
-        referenceDatum: 'Level 1 = 0\'-0"',
-      } : undefined,
-      scale: { detected: '1/4"=1\'-0"', units: 'ft', ratio: 48 },
+      rooms: targets.includes("rooms")
+        ? [
+            { id: "R100", name: "OFFICE", area: 150, program: "Office" },
+            { id: "R101", name: "CONFERENCE", area: 200, program: "Meeting" },
+          ]
+        : [],
+      walls: targets.includes("walls")
+        ? [
+            { id: "W1", length: 20, partitionType: "PT-1" },
+            { id: "W2", length: 15, partitionType: "PT-2" },
+          ]
+        : [],
+      openings:
+        targets.includes("doors") || targets.includes("windows")
+          ? [
+              { id: "D1", type: "door", width: 3, height: 7 },
+              { id: "W1", type: "window", width: 4, height: 3 },
+            ]
+          : [],
+      pipes: targets.includes("pipes")
+        ? [
+            { id: "P1", service: "CW", diameter: 1, length: 50 },
+            { id: "P2", service: "HW", diameter: 0.75, length: 45 },
+          ]
+        : [],
+      ducts: targets.includes("ducts")
+        ? [
+            { id: "D1", size: "12x10", length: 80 },
+            { id: "D2", size: "8x8", length: 60 },
+          ]
+        : [],
+      fixtures: targets.includes("fixtures")
+        ? [
+            { id: "F1", type: "Toilet", count: 2 },
+            { id: "F2", type: "LED Light", count: 12 },
+          ]
+        : [],
+      levels: targets.includes("levels")
+        ? [
+            { id: "L1", name: "Level 1", elevationFt: 0, heightFt: 12 },
+            { id: "L2", name: "Level 2", elevationFt: 12, heightFt: 12 },
+          ]
+        : [],
+      elevations: targets.includes("elevations")
+        ? [
+            {
+              id: "ELEV-A",
+              face: "South",
+              fromLevel: "L1",
+              toLevel: "Roof",
+              heightFt: 24,
+            },
+          ]
+        : [],
+      sections: targets.includes("sections")
+        ? [
+            {
+              id: "SEC-A",
+              description: "Section through core",
+              fromLevel: "L1",
+              toLevel: "Roof",
+              heightFt: 24,
+            },
+          ]
+        : [],
+      risers: targets.includes("risers")
+        ? [
+            {
+              id: "R-CW",
+              system: "Cold Water",
+              levels: ["L1", "L2", "Roof"],
+              heightFt: 24,
+              qty: 1,
+            },
+          ]
+        : [],
+      verticalMetadata: targets.some((t) =>
+        ["levels", "elevations", "sections", "risers"].includes(t)
+      )
+        ? {
+            defaultStoryHeightFt: 12,
+            totalStories: 2,
+            referenceDatum: "Level 1 = 0'-0\"",
+          }
+        : undefined,
+      scale: { detected: '1/4"=1\'-0"', units: "ft", ratio: 48 },
     };
   }
 
@@ -501,10 +596,11 @@ IMPORTANT:
         messages: [
           {
             role: "system",
-            content: "You are an expert construction document analyst. Extract technical information from architectural and MEP plan text."
+            content:
+              "You are an expert construction document analyst. Extract technical information from architectural and MEP plan text.",
           },
           {
-            role: "user", 
+            role: "user",
             content: `Analyze this text from a construction drawing and extract relevant technical information:
 
 Context: ${context}
@@ -518,22 +614,24 @@ Extract:
 - Material specifications
 - Dimension callouts
 
-Return as structured JSON.`
-          }
+Return as structured JSON.`,
+          },
         ],
         max_completion_tokens: 1000,
       });
 
-      return JSON.parse(response.choices[0]?.message?.content || '{}');
+      return JSON.parse(response.choices[0]?.message?.content || "{}");
     } catch (error) {
-      this.logger.warn('OpenAI text analysis failed:', error.message);
+      this.logger.warn("OpenAI text analysis failed:", error.message);
       return {};
     }
   }
 
-  async detectScale(imageBuffer: Buffer): Promise<{ scale?: string; units?: string; ratio?: number }> {
+  async detectScale(
+    imageBuffer: Buffer
+  ): Promise<{ scale?: string; units?: string; ratio?: number }> {
     try {
-      const base64Image = imageBuffer.toString('base64');
+      const base64Image = imageBuffer.toString("base64");
       const imageUrl = `data:image/png;base64,${base64Image}`;
 
       const response = await this.openai.chat.completions.create({
@@ -557,26 +655,86 @@ Return ONLY a JSON object with:
   "ratio": "numeric ratio for pixel-to-real conversion",
   "confidence": "high/medium/low",
   "method": "titleblock/dimensions/reference"
-}`
+}`,
               },
               {
                 type: "image_url",
                 image_url: {
                   url: imageUrl,
-                  detail: "high"
-                }
-              }
-            ]
-          }
+                  detail: "high",
+                },
+              },
+            ],
+          },
         ],
         max_completion_tokens: 500,
       });
 
-      const result = JSON.parse(response.choices[0]?.message?.content || '{}');
+      const result = JSON.parse(response.choices[0]?.message?.content || "{}");
       return result;
     } catch (error) {
-      this.logger.warn('OpenAI scale detection failed:', error.message);
-      return { scale: 'Unknown', units: 'ft', ratio: 1 };
+      this.logger.warn("OpenAI scale detection failed:", error.message);
+      return { scale: "Unknown", units: "ft", ratio: 1 };
     }
+  }
+
+  private validateImageBuffer(buffer: Buffer): void {
+    if (!buffer || buffer.length === 0) {
+      throw new Error("Image buffer is empty or null");
+    }
+
+    // Check minimum size (1KB minimum for a valid image)
+    if (buffer.length < 1024) {
+      throw new Error(
+        `Image buffer too small: ${buffer.length} bytes (minimum 1KB required)`
+      );
+    }
+
+    // Check maximum size (OpenAI limit is 20MB)
+    const maxSize = 20 * 1024 * 1024; // 20MB
+    if (buffer.length > maxSize) {
+      throw new Error(
+        `Image too large: ${buffer.length} bytes (maximum ${maxSize} bytes)`
+      );
+    }
+
+    // Validate image format headers
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const jpegHeader = Buffer.from([0xff, 0xd8, 0xff]);
+    const jpegHeader2 = Buffer.from([0xff, 0xd8, 0xff, 0xe0]); // JPEG with JFIF
+    const jpegHeader3 = Buffer.from([0xff, 0xd8, 0xff, 0xe1]); // JPEG with EXIF
+
+    const isPng = buffer.subarray(0, 8).equals(pngHeader);
+    const isJpeg = 
+      buffer.subarray(0, 3).equals(jpegHeader) ||
+      buffer.subarray(0, 4).equals(jpegHeader2) ||
+      buffer.subarray(0, 4).equals(jpegHeader3);
+
+    if (!isPng && !isJpeg) {
+      throw new Error(
+        "Invalid image format: buffer must start with PNG or JPEG headers. " +
+        `First bytes: ${buffer.subarray(0, 8).toString("hex")}`
+      );
+    }
+  }
+
+  private detectImageFormat(buffer: Buffer): "png" | "jpeg" | null {
+    if (!buffer || buffer.length < 3) {
+      return null;
+    }
+
+    // Check PNG header
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    if (buffer.subarray(0, 8).equals(pngHeader)) {
+      return "png";
+    }
+
+    // Check JPEG header
+    const jpegHeader = Buffer.from([0xff, 0xd8, 0xff]);
+    if (buffer.subarray(0, 3).equals(jpegHeader)) {
+      return "jpeg";
+    }
+
+    return null;
   }
 }
