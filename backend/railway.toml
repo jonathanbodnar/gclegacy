@@ -23,25 +23,15 @@ PORT = "${{ PORT }}"
 name = "plantakeoff-frontend"
 source = "./frontend"
 
-# PostgreSQL with PostGIS Container Service
-# IMPORTANT: Railway's managed PostgreSQL (via 'railway add --database postgresql') does NOT include PostGIS
-# 
-# CRITICAL: Before deploying, you MUST:
-# 1. Go to Railway dashboard → Remove any managed PostgreSQL service
-# 2. Ensure this container service is the only PostgreSQL service
-# 3. Railway will auto-link services and set DATABASE_URL
-#
-# Alternative: Use Railway's PostGIS template: https://railway.com/template/postgis
+# PostgreSQL Container Service
 [[services]]
 name = "postgres"
-source = "postgis/postgis:15-3.4"
+source = "postgres:15"
 
 [services.variables]
 POSTGRES_DB = "plantakeoff"
 POSTGRES_USER = "plantakeoff"
 POSTGRES_PASSWORD = "${{ POSTGRES_PASSWORD }}"
-# PostGIS extensions are available by default in this image
-# The application will enable them on startup via Prisma
 
 [[services]]
 name = "redis"

@@ -25,45 +25,6 @@ export class PrismaService
       const dbName = dbUrl.match(/\/([^?]+)/)?.[1] || "unknown";
       console.log(`🔍 Database connection: ${dbHost}/${dbName}`);
 
-      // Enable PostGIS extension
-      try {
-        await this.$executeRaw`CREATE EXTENSION IF NOT EXISTS postgis;`;
-        console.log("✅ PostGIS extension enabled");
-      } catch (postgisError: any) {
-        // Check if it's a PostGIS availability error
-        const errorCode = postgisError?.meta?.code || postgisError?.code;
-        const errorMessage =
-          postgisError?.meta?.message || postgisError?.message || "";
-
-        if (
-          errorCode === "0A000" ||
-          errorCode === "P2010" ||
-          (errorMessage.includes("extension") &&
-            errorMessage.includes("not available"))
-        ) {
-          console.error(
-            "❌ PostGIS extension is not available in this PostgreSQL instance."
-          );
-          console.error(
-            "⚠️  This application requires PostGIS for geospatial features."
-          );
-          console.error(`🔍 Connected to: ${dbHost}/${dbName}`);
-          console.error(
-            "💡 Solution: Use a PostGIS-enabled PostgreSQL image (e.g., postgis/postgis:15-3.4)"
-          );
-          console.error(
-            "💡 On Railway: Use the PostGIS template or container service instead of managed PostgreSQL"
-          );
-          console.error(
-            "💡 Quick fix: Remove any managed PostgreSQL service from Railway dashboard"
-          );
-          throw new Error(
-            "PostGIS extension is required but not available. Please use a PostGIS-enabled PostgreSQL instance."
-          );
-        }
-        throw postgisError;
-      }
-
       // Verify that required tables exist (safety check)
       const tables = await this.$queryRaw<Array<{ tablename: string }>>`
         SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'files';
@@ -93,38 +54,5 @@ export class PrismaService
 
   async onModuleDestroy() {
     await this.$disconnect();
-  }
-
-  // Helper method to execute raw geometry queries
-  async executeGeometryQuery(query: string, params: any[] = []) {
-    return this.$queryRawUnsafe(query, ...params);
-  }
-
-  // Helper to calculate area from PostGIS geometry
-  async calculateArea(
-    geometryColumn: string,
-    tableName: string,
-    whereClause?: string
-  ) {
-    const query = `
-      SELECT ST_Area(${geometryColumn}) as area
-      FROM ${tableName}
-      ${whereClause ? `WHERE ${whereClause}` : ""}
-    `;
-    return this.$queryRawUnsafe(query);
-  }
-
-  // Helper to calculate length from PostGIS geometry
-  async calculateLength(
-    geometryColumn: string,
-    tableName: string,
-    whereClause?: string
-  ) {
-    const query = `
-      SELECT ST_Length(${geometryColumn}) as length
-      FROM ${tableName}
-      ${whereClause ? `WHERE ${whereClause}` : ""}
-    `;
-    return this.$queryRawUnsafe(query);
   }
 }

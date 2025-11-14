@@ -1,6 +1,3 @@
--- CreateExtension
-CREATE EXTENSION IF NOT EXISTS "postgis";
-
 -- CreateEnum
 CREATE TYPE "JobStatus" AS ENUM ('QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED');
 
@@ -68,7 +65,7 @@ CREATE TABLE "features" (
     "sheetId" TEXT,
     "type" "FeatureType" NOT NULL,
     "props" JSONB,
-    "geom" geometry,
+    "geom" JSONB,
     "area" DOUBLE PRECISION,
     "length" DOUBLE PRECISION,
     "count" INTEGER DEFAULT 1,
