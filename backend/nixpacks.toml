@@ -12,4 +12,4 @@ cmd = "npm run start"
 
 [variables]
 NODE_ENV = "production"
-MINIMAL_START = "true"
+MINIMAL_START = "false"
