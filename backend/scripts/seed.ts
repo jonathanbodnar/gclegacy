@@ -135,22 +135,35 @@ const sampleRuleSet = {
 async function main() {
   console.log('Seeding database...');
 
-  // Create sample rule set
-  const ruleSet = await prisma.materialsRuleSet.create({
-    data: {
+  // Create or update Standard Commercial Rules
+  const ruleSet = await prisma.materialsRuleSet.upsert({
+    where: {
+      name_version: {
+        name: 'Standard Commercial Rules',
+        version: '1.0',
+      },
+    },
+    update: {
+      rules: sampleRuleSet, // You can choose to omit or keep this if you don’t want to overwrite
+    },
+    create: {
       name: 'Standard Commercial Rules',
       version: '1.0',
       rules: sampleRuleSet,
     },
   });
 
-  console.log(`Created rule set: ${ruleSet.id}`);
+  console.log(`Created or updated rule set: ${ruleSet.id}`);
 
-  // Create additional rule sets for different building types
-  const residentialRuleSet = await prisma.materialsRuleSet.create({
-    data: {
-      name: 'Residential Rules',
-      version: '1.0',
+  // Create or update Residential Rules
+  const residentialRuleSet = await prisma.materialsRuleSet.upsert({
+    where: {
+      name_version: {
+        name: 'Residential Rules',
+        version: '1.0',
+      },
+    },
+    update: {
       rules: {
         ...sampleRuleSet,
         vars: {
@@ -159,12 +172,24 @@ async function main() {
         },
       },
     },
+    create: {
+      name: 'Residential Rules',
+      version: '1.0',
+      rules: {
+        ...sampleRuleSet,
+        vars: {
+          height_ft: 9,
+          waste_pct: 0.05,
+        },
+      },
+    },
   });
 
-  console.log(`Created residential rule set: ${residentialRuleSet.id}`);
+  console.log(`Created or updated residential rule set: ${residentialRuleSet.id}`);
 
   console.log('Database seeded successfully!');
 }
+
 
 main()
   .catch((e) => {

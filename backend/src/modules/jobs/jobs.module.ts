@@ -7,7 +7,7 @@ import { JobProcessor } from "./job.processor";
 import { IngestModule } from "../ingest/ingest.module";
 import { RulesEngineModule } from "../rules-engine/rules-engine.module";
 import { VisionModule } from "../vision/vision.module";
-// import { FilesModule } from "../files/files.module";
+import { FilesModule } from "../files/files.module";
 
 @Module({
   imports: [
@@ -17,7 +17,7 @@ import { VisionModule } from "../vision/vision.module";
     IngestModule,
     RulesEngineModule,
     VisionModule,
-    // FilesModule,
+    FilesModule,
   ],
   controllers: [JobsController],
   providers: [JobsService, JobProcessor],

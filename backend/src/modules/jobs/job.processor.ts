@@ -8,6 +8,7 @@ import { IngestService } from '../ingest/ingest.service';
 import { RulesEngineService } from '../rules-engine/rules-engine.service';
 import { PlanAnalysisService } from '../vision/plan-analysis.service';
 import { FeatureExtractionService } from '../vision/feature-extraction.service';
+import { TakeoffAggregatorService } from '../vision/takeoff-aggregator.service';
 import { FilesService } from '../files/files.service';
 
 interface ProcessJobData {
@@ -30,6 +31,7 @@ export class JobProcessor {
     private rulesEngineService: RulesEngineService,
     private planAnalysisService: PlanAnalysisService,
     private featureExtractionService: FeatureExtractionService,
+    private takeoffAggregator: TakeoffAggregatorService,
     private filesService: FilesService,
   ) {}
 
@@ -44,12 +46,12 @@ export class JobProcessor {
       await this.jobsService.updateJobStatus(jobId, JobStatus.PROCESSING, 0);
 
       // Step 1: Ingest and parse file (20% progress)
-      await job.progress(10);
+      await this.reportProgress(job, 10);
       const ingestResult = await this.ingestService.ingestFile(fileId, disciplines, options);
-      await job.progress(20);
+      await this.reportProgress(job, 20);
 
       // Step 2: Real plan analysis with OpenAI Vision (60% progress)
-      await job.progress(25);
+      await this.reportProgress(job, 25);
       
       // Get the actual uploaded file
       const fileBuffer = await this.filesService.getFileBuffer(fileId);
@@ -66,7 +68,7 @@ export class JobProcessor {
         options
       );
       
-      await job.progress(60);
+      await this.reportProgress(job, 60);
       
       // Extract features from analysis results
       const features = [];
@@ -82,21 +84,22 @@ export class JobProcessor {
         features.push(...pageFeatures);
       }
       
-      await job.progress(75);
+      await this.reportProgress(job, 75);
 
       // Step 3: Save features to database (80% progress)
       await this.saveFeatures(jobId, features);
-      await job.progress(80);
+      await this.reportProgress(job, 80);
+      await this.generateSchemaTakeoff(jobId, analysisResult.pages || [], analysisResult.summary, features);
 
       // Step 4: Apply materials rules if specified (95% progress)
       if (materialsRuleSetId) {
         await this.rulesEngineService.applyRules(jobId, materialsRuleSetId, features);
       }
-      await job.progress(95);
+      await this.reportProgress(job, 95);
 
       // Step 5: Generate artifacts and complete (100% progress)
       await this.generateArtifacts(jobId, ingestResult, features);
-      await job.progress(100);
+      await this.reportProgress(job, 100);
 
       // Mark job as completed
       await this.jobsService.updateJobStatus(jobId, JobStatus.COMPLETED, 100);
@@ -170,6 +173,11 @@ export class JobProcessor {
     ];
   }
 
+  private async reportProgress(job: Job<ProcessJobData>, percent: number): Promise<void> {
+    await job.progress(percent);
+    await this.jobsService.updateJobStatus(job.data.jobId, JobStatus.PROCESSING, percent);
+  }
+
   private async extractWalls(ingestResult: any, disciplines: string[]): Promise<any[]> {
     // Mock wall extraction
     return [
@@ -228,6 +236,27 @@ export class JobProcessor {
         // geometry would be actual PostGIS geometry
       }
     ];
+  }
+
+  private async generateSchemaTakeoff(
+    jobId: string,
+    pages: any[],
+    summary: any,
+    features: any[],
+  ): Promise<void> {
+    try {
+      const result = await this.takeoffAggregator.aggregate({
+        jobId,
+        pages,
+        summary,
+        features,
+      });
+      if (result) {
+        await this.jobsService.mergeJobOptions(jobId, { takeoff: result });
+      }
+    } catch (error) {
+      this.logger.warn(`Schema takeoff aggregation failed for job ${jobId}: ${error.message}`);
+    }
   }
 
   private async saveFeatures(jobId: string, features: any[]): Promise<void> {

@@ -25,7 +25,7 @@ class CreateJobRequest {
   disciplines: string[];
 
   @ApiProperty({ 
-    example: ['rooms', 'walls', 'doors', 'windows', 'pipes', 'ducts', 'fixtures'] 
+    example: ['rooms', 'walls', 'pipes', 'fixtures', 'vertical'] 
   })
   @IsArray()
   @IsString({ each: true })
@@ -41,11 +41,32 @@ class CreateJobRequest {
   @IsString()
   webhookUrl?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ 
+    required: false,
+    description: 'Optional tuning flags (scale overrides, story heights, sheet metadata).',
+    example: {
+      inferScale: true,
+      defaultStoryHeightFt: 12,
+      levelOverrides: {
+        'Level 1': 0,
+        'Level 2': 12
+      }
+    }
+  })
   @IsOptional()
   options?: {
     bimPreferred?: boolean;
     inferScale?: boolean;
+    defaultStoryHeightFt?: number;
+    levelOverrides?: Record<string, number>;
+    sheetOverrides?: Record<
+      string,
+      {
+        type?: 'plan' | 'elevation' | 'section';
+        defaultStoryHeightFt?: number;
+        levels?: string[];
+      }
+    >;
     [key: string]: any;
   };
 }

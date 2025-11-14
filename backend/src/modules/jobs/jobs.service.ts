@@ -13,6 +13,16 @@ export interface CreateJobDto {
   options?: {
     bimPreferred?: boolean;
     inferScale?: boolean;
+    defaultStoryHeightFt?: number;
+    levelOverrides?: Record<string, number>;
+    sheetOverrides?: Record<
+      string,
+      {
+        type?: 'plan' | 'elevation' | 'section';
+        defaultStoryHeightFt?: number;
+        levels?: string[];
+      }
+    >;
     [key: string]: any;
   };
 }
@@ -52,9 +62,22 @@ export class JobsService {
       throw new BadRequestException(`Invalid disciplines: ${invalidDisciplines.join(', ')}`);
     }
 
-    // Validate targets
-    const validTargets = ['rooms', 'walls', 'doors', 'windows', 'pipes', 'ducts', 'fixtures'];
-    const invalidTargets = createJobDto.targets.filter(
+    // Normalize and validate targets (supporting aliases like "vertical")
+    const normalizedTargets = this.normalizeTargets(createJobDto.targets);
+    const validTargets = [
+      'rooms',
+      'walls',
+      'doors',
+      'windows',
+      'pipes',
+      'ducts',
+      'fixtures',
+      'elevations',
+      'sections',
+      'risers',
+      'levels',
+    ];
+    const invalidTargets = normalizedTargets.filter(
       t => !validTargets.includes(t)
     );
     if (invalidTargets.length > 0) {
@@ -66,7 +89,7 @@ export class JobsService {
       data: {
         fileId: createJobDto.fileId,
         disciplines: createJobDto.disciplines,
-        targets: createJobDto.targets,
+        targets: normalizedTargets,
         materialsRuleSetId: createJobDto.materialsRuleSetId,
         webhookUrl: createJobDto.webhookUrl,
         options: createJobDto.options || {},
@@ -79,7 +102,7 @@ export class JobsService {
       jobId: job.id,
       fileId: createJobDto.fileId,
       disciplines: createJobDto.disciplines,
-      targets: createJobDto.targets,
+      targets: normalizedTargets,
       materialsRuleSetId: createJobDto.materialsRuleSetId,
       options: createJobDto.options,
     }, {
@@ -185,5 +208,37 @@ export class JobsService {
       startedAt: job.startedAt,
       finishedAt: job.finishedAt,
     }));
+  }
+
+  private normalizeTargets(targets: string[]): string[] {
+    const targetAliases: Record<string, string[]> = {
+      vertical: ['elevations', 'sections', 'risers', 'levels'],
+    };
+
+    const expanded = targets.flatMap(target => targetAliases[target] || [target]);
+
+    return Array.from(new Set(expanded));
+  }
+
+  async mergeJobOptions(jobId: string, patch: Record<string, any>): Promise<void> {
+    const job = await this.prisma.job.findUnique({
+      where: { id: jobId },
+      select: { options: true },
+    });
+
+    const baseOptions =
+      job?.options && typeof job.options === 'object' && !Array.isArray(job.options)
+        ? (job.options as Record<string, any>)
+        : {};
+
+    const mergedOptions = {
+      ...baseOptions,
+      ...patch,
+    };
+
+    await this.prisma.job.update({
+      where: { id: jobId },
+      data: { options: mergedOptions },
+    });
   }
 }

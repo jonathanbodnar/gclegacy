@@ -69,19 +69,38 @@ export class FilesService {
     );
 
     // Save file record
-    const savedFile = await this.prisma.file.create({
-      data: {
-        filename: filename || file.originalname,
-        mime: file.mimetype,
-        pages,
-        checksum,
-        size: BigInt(file.size),
-        projectId,
-        tags: tags || [],
-        storageKey,
-        storageUrl,
-      },
-    });
+    let savedFile;
+    try {
+      savedFile = await this.prisma.file.create({
+        data: {
+          filename: filename || file.originalname,
+          mime: file.mimetype,
+          pages,
+          checksum,
+          size: BigInt(file.size),
+          projectId,
+          tags: tags || [],
+          storageKey,
+          storageUrl,
+        },
+      });
+    } catch (error: any) {
+      if (error.code === 'P2002' && error.meta?.target?.includes('checksum')) {
+        // Another request created this file concurrently – reuse that record
+        const duplicate = await this.prisma.file.findUnique({
+          where: { checksum },
+        });
+        if (duplicate) {
+          return {
+            fileId: duplicate.id,
+            pages: duplicate.pages,
+            mime: duplicate.mime,
+            checksum: duplicate.checksum,
+          };
+        }
+      }
+      throw error;
+    }
 
     return {
       fileId: savedFile.id,
