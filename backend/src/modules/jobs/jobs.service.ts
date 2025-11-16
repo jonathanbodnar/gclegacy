@@ -120,13 +120,12 @@ export class JobsService {
         },
       });
     } else {
-      // No queue available - mark job as pending manual processing
+      // No queue available - keep as QUEUED with note in error field
       this.logger.warn(`Job ${job.id} created but queue not available - will need manual processing`);
       await this.prisma.job.update({
         where: { id: job.id },
         data: { 
-          status: JobStatus.PENDING,
-          error: 'Queue not available - awaiting manual processing'
+          error: 'Queue not available - awaiting manual processing or Redis configuration'
         },
       });
     }
