@@ -11,7 +11,7 @@ cmds = [
 ]
 
 [start]
-cmd = "node scripts/railway-start-resilient.js"
+cmd = "npm run start:prod"
 
 [variables]
 NODE_ENV = "production"
