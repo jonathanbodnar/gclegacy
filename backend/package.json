@@ -33,7 +33,7 @@
     "seed": "ts-node scripts/seed.ts",
     "railway:deploy": "./railway-deploy.sh",
     "railway:setup": "npm run db:generate && npm run db:push && npm run seed",
-    "postbuild": "cp -r prisma dist/ && cp package*.json dist/"
+    "postbuild": "cp -r prisma dist/ && cp -r scripts dist/ && cp package*.json dist/"
   },
   "dependencies": {
     "@nestjs/axios": "^3.0.0",
