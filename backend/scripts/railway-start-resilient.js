@@ -84,7 +84,13 @@ async function startApplication() {
 
     // Start the NestJS application
     console.log("🎯 Starting NestJS application...");
-    require("../dist/main");
+    
+    // Handle different working directories
+    const path = require("path");
+    const distPath = path.resolve(__dirname, "../dist/main");
+    console.log(`📁 Loading from: ${distPath}`);
+    
+    require(distPath);
   } catch (error) {
     console.error("❌ Startup failed:", error);
     console.error("Stack trace:", error.stack);
