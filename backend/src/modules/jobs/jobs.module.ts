@@ -9,16 +9,24 @@ import { RulesEngineModule } from "../rules-engine/rules-engine.module";
 import { VisionModule } from "../vision/vision.module";
 import { FilesModule } from "../files/files.module";
 
-@Module({
-  imports: [
+// Make Bull queue optional - only register if Redis is available
+const conditionalImports = [
+  IngestModule,
+  RulesEngineModule,
+  VisionModule,
+  FilesModule,
+];
+
+if (process.env.REDIS_HOST) {
+  conditionalImports.unshift(
     BullModule.registerQueue({
       name: "job-processing",
-    }),
-    IngestModule,
-    RulesEngineModule,
-    VisionModule,
-    FilesModule,
-  ],
+    })
+  );
+}
+
+@Module({
+  imports: conditionalImports,
   controllers: [JobsController],
   providers: [JobsService, JobProcessor],
   exports: [JobsService],
