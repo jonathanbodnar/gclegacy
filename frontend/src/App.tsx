@@ -85,10 +85,14 @@ function App() {
   useEffect(() => {
     // Poll job status when processing
     if (jobId && currentStep === "processing") {
+      let failureCount = 0;
+      const MAX_FAILURES = 3;
+      
       const pollInterval = setInterval(async () => {
         try {
           const status = await apiService.getJobStatus(jobId);
           setJobStatus(status);
+          failureCount = 0; // Reset on success
 
           if (status.status === "COMPLETED") {
             clearInterval(pollInterval);
@@ -102,8 +106,20 @@ function App() {
           }
         } catch (error) {
           console.error("Error polling job status:", error);
+          failureCount++;
+          
+          // After 3 consecutive failures, assume job doesn't exist and reset
+          if (failureCount >= MAX_FAILURES) {
+            console.log(`Failed to poll job status ${MAX_FAILURES} times, resetting...`);
+            clearInterval(pollInterval);
+            localStorage.clear();
+            setCurrentStep('upload');
+            setJobId(null);
+            setJobStatus(null);
+            setError('Lost connection to job. Please start a new analysis.');
+          }
         }
-      }, 10000);
+      }, 5000); // Poll every 5 seconds
 
       return () => clearInterval(pollInterval);
     }
