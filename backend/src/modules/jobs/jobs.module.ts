@@ -24,22 +24,7 @@ import { FilesModule } from "../files/files.module";
     FilesModule,
   ],
   controllers: [JobsController],
-  providers: [
-    JobsService, 
-    JobProcessor, // Always include - @Processor decorator will only activate if queue exists
-  ],
+  providers: [JobsService, JobProcessor],
   exports: [JobsService],
 })
-export class JobsModule {
-  constructor() {
-    const hasRedis = !!(process.env.REDIS_HOST || process.env.REDISHOST || process.env.REDIS_URL);
-    console.log('🔍 JobsModule initialized - Redis configured:', hasRedis);
-    if (hasRedis) {
-      console.log('   Redis vars:', {
-        REDIS_HOST: !!process.env.REDIS_HOST,
-        REDISHOST: !!process.env.REDISHOST,
-        REDIS_URL: !!process.env.REDIS_URL,
-      });
-    }
-  }
-}
+export class JobsModule {}
