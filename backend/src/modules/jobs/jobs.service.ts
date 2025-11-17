@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Optional, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 import { PrismaService } from '@/common/prisma/prisma.service';
@@ -38,10 +38,16 @@ export interface JobStatusResponse {
 
 @Injectable()
 export class JobsService {
+  private readonly logger = new Logger(JobsService.name);
+  
   constructor(
     private prisma: PrismaService,
-    @InjectQueue('job-processing') private jobQueue: Queue,
-  ) {}
+    @Optional() @InjectQueue('job-processing') private jobQueue?: Queue,
+  ) {
+    if (!this.jobQueue) {
+      this.logger.warn('⚠️  Job queue not available - jobs will be processed synchronously');
+    }
+  }
 
   async createJob(createJobDto: CreateJobDto): Promise<{ jobId: string; status: JobStatus }> {
     // Validate file exists
@@ -97,21 +103,32 @@ export class JobsService {
       },
     });
 
-    // Add to processing queue
-    await this.jobQueue.add('process-job', {
-      jobId: job.id,
-      fileId: createJobDto.fileId,
-      disciplines: createJobDto.disciplines,
-      targets: normalizedTargets,
-      materialsRuleSetId: createJobDto.materialsRuleSetId,
-      options: createJobDto.options,
-    }, {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 2000,
-      },
-    });
+    // Add to processing queue (if available)
+    if (this.jobQueue) {
+      await this.jobQueue.add('process-job', {
+        jobId: job.id,
+        fileId: createJobDto.fileId,
+        disciplines: createJobDto.disciplines,
+        targets: normalizedTargets,
+        materialsRuleSetId: createJobDto.materialsRuleSetId,
+        options: createJobDto.options,
+      }, {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 2000,
+        },
+      });
+    } else {
+      // No queue available - keep as QUEUED with note in error field
+      this.logger.warn(`Job ${job.id} created but queue not available - will need manual processing`);
+      await this.prisma.job.update({
+        where: { id: job.id },
+        data: { 
+          error: 'Queue not available - awaiting manual processing or Redis configuration'
+        },
+      });
+    }
 
     return {
       jobId: job.id,
@@ -184,8 +201,8 @@ export class JobsService {
     // Update job status
     await this.updateJobStatus(jobId, JobStatus.CANCELLED);
 
-    // Remove from queue if still queued
-    if (job.status === JobStatus.QUEUED) {
+    // Remove from queue if still queued and queue is available
+    if (job.status === JobStatus.QUEUED && this.jobQueue) {
       const jobs = await this.jobQueue.getJobs(['waiting', 'active']);
       const queueJob = jobs.find(j => j.data.jobId === jobId);
       if (queueJob) {

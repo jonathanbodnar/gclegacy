@@ -16,6 +16,18 @@ export class PrismaService
   }
 
   async onModuleInit() {
+    // Skip database initialization if explicitly disabled
+    if (process.env.SKIP_DB_INIT === 'true') {
+      console.warn("⚠️  Database initialization skipped (SKIP_DB_INIT=true)");
+      return;
+    }
+
+    // Skip if no DATABASE_URL is configured
+    if (!process.env.DATABASE_URL) {
+      console.warn("⚠️  No DATABASE_URL configured, skipping database connection");
+      return;
+    }
+
     try {
       await this.$connect();
 
@@ -35,14 +47,25 @@ export class PrismaService
           '❌ Database schema not initialized! The "files" table does not exist.'
         );
         console.error("⚠️  Please run: npx prisma migrate deploy");
-        throw new Error(
-          "Database schema not initialized. Run migrations first."
-        );
+        
+        // In production, throw error only if we're not in minimal mode
+        if (process.env.NODE_ENV === "production" && process.env.MINIMAL_START !== 'true') {
+          throw new Error(
+            "Database schema not initialized. Run migrations first."
+          );
+        }
       }
 
       console.log("✅ Database connection established and schema verified");
     } catch (error) {
       console.error("❌ Database initialization failed:", error.message);
+      
+      // In production with minimal mode, just warn and continue
+      if (process.env.MINIMAL_START === 'true') {
+        console.warn("⚠️  Continuing in minimal mode without database");
+        return;
+      }
+      
       // In production, fail fast if database is not ready
       if (process.env.NODE_ENV === "production") {
         throw error;
