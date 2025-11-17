@@ -149,7 +149,7 @@ export class OpenAIVisionService {
       const prompt = this.createAnalysisPrompt(disciplines, targets);
 
       const response = await this.openai.chat.completions.create({
-        model: "gpt-5-mini-2025-08-07",
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
@@ -841,7 +841,7 @@ IMPORTANT:
   async analyzeText(text: string, context: string): Promise<any> {
     try {
       const response = await this.openai.chat.completions.create({
-        model: "gpt-5-mini-2025-08-07",
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
@@ -884,7 +884,7 @@ Return as structured JSON.`,
       const imageUrl = `data:image/png;base64,${base64Image}`;
 
       const response = await this.openai.chat.completions.create({
-        model: "gpt-5-mini-2025-08-07",
+        model: "gpt-4o",
         messages: [
           {
             role: "user",
