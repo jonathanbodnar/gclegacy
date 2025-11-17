@@ -1,22 +1,44 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { S3 } from 'aws-sdk';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class StorageService {
-  private s3: S3;
+  private s3: S3 | null = null;
   private bucketName: string;
+  private useLocalStorage: boolean = false;
+  private localStoragePath: string = '/tmp/plantakeoff-storage';
+  private readonly logger = new Logger(StorageService.name);
 
   constructor(private configService: ConfigService) {
-    this.s3 = new S3({
-      endpoint: this.configService.get('WASABI_ENDPOINT') || 'https://s3.wasabisys.com',
-      region: this.configService.get('WASABI_REGION') || 'us-east-1',
-      accessKeyId: this.configService.get('WASABI_ACCESS_KEY_ID'),
-      secretAccessKey: this.configService.get('WASABI_SECRET_ACCESS_KEY'),
-      s3ForcePathStyle: true, // Required for Wasabi
-    });
-    
-    this.bucketName = this.configService.get('WASABI_BUCKET_NAME');
+    const hasWasabiConfig = 
+      this.configService.get('WASABI_ACCESS_KEY_ID') && 
+      this.configService.get('WASABI_SECRET_ACCESS_KEY') &&
+      this.configService.get('WASABI_BUCKET_NAME');
+
+    if (hasWasabiConfig) {
+      this.logger.log('📦 Using Wasabi S3 storage');
+      this.s3 = new S3({
+        endpoint: this.configService.get('WASABI_ENDPOINT') || 'https://s3.wasabisys.com',
+        region: this.configService.get('WASABI_REGION') || 'us-east-1',
+        accessKeyId: this.configService.get('WASABI_ACCESS_KEY_ID'),
+        secretAccessKey: this.configService.get('WASABI_SECRET_ACCESS_KEY'),
+        s3ForcePathStyle: true, // Required for Wasabi
+      });
+      
+      this.bucketName = this.configService.get('WASABI_BUCKET_NAME');
+    } else {
+      this.logger.warn('⚠️  Wasabi credentials not configured - using local file storage at ' + this.localStoragePath);
+      this.useLocalStorage = true;
+      this.bucketName = 'local';
+      
+      // Create local storage directory
+      if (!fs.existsSync(this.localStoragePath)) {
+        fs.mkdirSync(this.localStoragePath, { recursive: true });
+      }
+    }
   }
 
   async uploadFile(
@@ -24,6 +46,19 @@ export class StorageService {
     buffer: Buffer,
     contentType: string,
   ): Promise<string> {
+    if (this.useLocalStorage) {
+      const filePath = path.join(this.localStoragePath, key);
+      const dir = path.dirname(filePath);
+      
+      // Create directory if it doesn't exist
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      
+      fs.writeFileSync(filePath, buffer);
+      return `file://${filePath}`;
+    }
+
     const params = {
       Bucket: this.bucketName,
       Key: key,
@@ -32,37 +67,56 @@ export class StorageService {
       ServerSideEncryption: 'AES256',
     };
 
-    const result = await this.s3.upload(params).promise();
+    const result = await this.s3!.upload(params).promise();
     return result.Location;
   }
 
   async downloadFile(key: string): Promise<Buffer> {
+    if (this.useLocalStorage) {
+      const filePath = path.join(this.localStoragePath, key);
+      return fs.readFileSync(filePath);
+    }
+
     const params = {
       Bucket: this.bucketName,
       Key: key,
     };
 
-    const result = await this.s3.getObject(params).promise();
+    const result = await this.s3!.getObject(params).promise();
     return result.Body as Buffer;
   }
 
   async deleteFile(key: string): Promise<void> {
+    if (this.useLocalStorage) {
+      const filePath = path.join(this.localStoragePath, key);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      return;
+    }
+
     const params = {
       Bucket: this.bucketName,
       Key: key,
     };
 
-    await this.s3.deleteObject(params).promise();
+    await this.s3!.deleteObject(params).promise();
   }
 
   async getSignedUrl(key: string, expiresIn: number = 3600): Promise<string> {
+    if (this.useLocalStorage) {
+      // For local storage, return a file path (not ideal for production)
+      const filePath = path.join(this.localStoragePath, key);
+      return `file://${filePath}`;
+    }
+
     const params = {
       Bucket: this.bucketName,
       Key: key,
       Expires: expiresIn,
     };
 
-    return this.s3.getSignedUrl('getObject', params);
+    return this.s3!.getSignedUrl('getObject', params);
   }
 
   async uploadArtifact(
