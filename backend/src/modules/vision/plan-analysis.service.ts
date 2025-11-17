@@ -47,9 +47,13 @@ export class PlanAnalysisService {
         // Detect scale for this page
         const scaleInfo = await this.openaiVision.detectScale(imageBuffer);
 
+        // Extract sheet title from vision analysis, fallback to generated name
+        const sheetTitle =
+          pageResult.sheetTitle || `${fileName}_page_${pageIndex + 1}`;
+
         results.push({
           pageIndex,
-          fileName: `${fileName}_page_${pageIndex + 1}`,
+          fileName: sheetTitle,
           discipline: this.detectDisciplineFromContent(pageResult, disciplines),
           scale: scaleInfo,
           features: pageResult,
@@ -57,6 +61,7 @@ export class PlanAnalysisService {
             imageSize: imageBuffer.length,
             analysisTimestamp: new Date().toISOString(),
             viewType: this.detectViewType(pageResult),
+            sheetTitle: pageResult.sheetTitle,
           },
         });
       }
@@ -99,13 +104,36 @@ export class PlanAnalysisService {
   }
 
   private async convertPdfToImages(pdfBuffer: Buffer): Promise<Buffer[]> {
+    // First, get the total page count from the PDF
+    let totalPages = 0;
+    try {
+      totalPages = await this.getPdfPageCount(pdfBuffer);
+      this.logger.log(
+        `PDF has ${totalPages} total pages - will process all pages`
+      );
+    } catch (error: any) {
+      this.logger.warn(
+        `Failed to get PDF page count: ${error.message}. Will attempt to process pages.`
+      );
+    }
+
     try {
       // Try extracting embedded images first using pdfjs-dist
       const buffers = await this.extractEmbeddedImagesFromPdf(pdfBuffer);
 
       if (buffers.length > 0) {
         this.logger.log(`Extracted ${buffers.length} embedded images from PDF`);
-        return buffers;
+        // If we got embedded images but they're fewer than total pages,
+        // we should still render all pages to ensure complete coverage
+        if (totalPages > 0 && buffers.length < totalPages) {
+          this.logger.log(
+            `Only ${buffers.length} embedded images found but PDF has ${totalPages} pages. ` +
+              `Rendering all pages to ensure complete coverage.`
+          );
+          // Continue to pdf2pic to render all pages
+        } else {
+          return buffers;
+        }
       }
     } catch (extractError: any) {
       this.logger.warn(
@@ -113,18 +141,25 @@ export class PlanAnalysisService {
       );
     }
 
-    // Fallback to pdf2pic for rendering full pages
+    // Use pdf2pic for rendering full pages - process ALL pages
     const density = parseInt(process.env.PDF_RENDER_DPI || "220", 10);
-    const maxPages = parseInt(process.env.PDF_RENDER_MAX_PAGES || "5", 10);
+    // Use totalPages if available, otherwise use a high default or env var
+    const pagesToProcess =
+      totalPages > 0
+        ? totalPages
+        : parseInt(process.env.PDF_RENDER_MAX_PAGES || "100", 10); // Default to 100 if page count unknown
 
     try {
       const buffers = await this.convertPdfWithPdf2Pic(
         pdfBuffer,
         density,
-        Math.max(1, maxPages)
+        pagesToProcess
       );
 
       if (buffers.length > 0) {
+        this.logger.log(
+          `Successfully converted ${buffers.length} pages from PDF to images`
+        );
         return buffers;
       }
     } catch (pdf2picError: any) {
@@ -151,6 +186,34 @@ export class PlanAnalysisService {
     // This should not be reached, but kept as fallback
     this.logger.warn("PDF conversion returned no images");
     throw new Error("PDF conversion failed: No images were generated");
+  }
+
+  private async getPdfPageCount(pdfBuffer: Buffer): Promise<number> {
+    // Try different import methods based on pdfjs-dist version
+    let pdfjsLib: any;
+    try {
+      pdfjsLib = require("pdfjs-dist");
+    } catch (e) {
+      try {
+        pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+      } catch (e2) {
+        throw new Error(
+          "Could not load pdfjs-dist. Please check installation."
+        );
+      }
+    }
+
+    try {
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(pdfBuffer),
+      });
+
+      const pdfDoc = await loadingTask.promise;
+      return pdfDoc.numPages;
+    } catch (error: any) {
+      this.logger.warn(`Failed to get PDF page count: ${error.message}`);
+      throw error;
+    }
   }
 
   private async extractEmbeddedImagesFromPdf(
@@ -397,10 +460,14 @@ export class PlanAnalysisService {
       });
 
       const images: Buffer[] = [];
-      for (let page = 1; page <= Math.max(1, maxPages); page++) {
+      const totalPagesToProcess = Math.max(1, maxPages);
+      let successfulPages = 0;
+      let failedPages = 0;
+
+      for (let page = 1; page <= totalPagesToProcess; page++) {
         try {
           this.logger.log(
-            `Converting PDF page ${page}/${maxPages} to image...`
+            `Converting PDF page ${page}/${totalPagesToProcess} to image...`
           );
 
           // Try buffer response type first
@@ -410,20 +477,20 @@ export class PlanAnalysisService {
           } catch (convertError: any) {
             // If buffer fails, try image response type
             this.logger.warn(
-              `Buffer response failed, trying image response: ${convertError.message}`
+              `Buffer response failed for page ${page}, trying image response: ${convertError.message}`
             );
             try {
               result = await convert(page, { responseType: "image" });
             } catch (imageError: any) {
               // If both fail, try without responseType (default)
               this.logger.warn(
-                `Image response failed, trying default: ${imageError.message}`
+                `Image response failed for page ${page}, trying default: ${imageError.message}`
               );
               result = await convert(page);
             }
           }
 
-          this.logger.debug(`pdf2pic result structure:`, {
+          this.logger.debug(`pdf2pic result structure for page ${page}:`, {
             hasBuffer: !!result?.buffer,
             hasBase64: !!result?.base64,
             hasPath: !!result?.path,
@@ -436,16 +503,18 @@ export class PlanAnalysisService {
           if (result?.buffer && Buffer.isBuffer(result.buffer)) {
             imageBuffer = result.buffer;
             this.logger.log(
-              `Using buffer from result (${imageBuffer.length} bytes)`
+              `Using buffer from result for page ${page} (${imageBuffer.length} bytes)`
             );
           } else if (result?.base64 && typeof result.base64 === "string") {
             imageBuffer = Buffer.from(result.base64, "base64");
             this.logger.log(
-              `Using base64 from result (decoded to ${imageBuffer.length} bytes)`
+              `Using base64 from result for page ${page} (decoded to ${imageBuffer.length} bytes)`
             );
           } else if (result?.path && typeof result.path === "string") {
             // If buffer/base64 not available, read from file path
-            this.logger.log(`Reading image from file: ${result.path}`);
+            this.logger.log(
+              `Reading image from file for page ${page}: ${result.path}`
+            );
             imageBuffer = await fs.readFile(result.path);
             // Clean up the generated image file
             await fs.unlink(result.path).catch(() => undefined);
@@ -453,7 +522,7 @@ export class PlanAnalysisService {
             // Try to find any buffer-like property
             const keys = Object.keys(result || {});
             this.logger.warn(
-              `Unexpected result structure. Available keys: ${keys.join(", ")}`
+              `Unexpected result structure for page ${page}. Available keys: ${keys.join(", ")}`
             );
 
             // Try to extract buffer from result object
@@ -461,7 +530,7 @@ export class PlanAnalysisService {
               if (Buffer.isBuffer(result[key])) {
                 imageBuffer = result[key];
                 this.logger.log(
-                  `Found buffer in property '${key}' (${imageBuffer.length} bytes)`
+                  `Found buffer in property '${key}' for page ${page} (${imageBuffer.length} bytes)`
                 );
                 break;
               }
@@ -485,14 +554,20 @@ export class PlanAnalysisService {
                   "After installation, make sure the tool is in your system PATH and restart the application."
               );
             }
-            break;
+            // Continue to next page instead of breaking
+            failedPages++;
+            this.logger.warn(
+              `Skipping page ${page} due to empty buffer, continuing with remaining pages...`
+            );
+            continue;
           }
 
           // Validate the image buffer before adding
           if (imageBuffer && this.validateImageBuffer(imageBuffer)) {
             images.push(imageBuffer);
+            successfulPages++;
             this.logger.log(
-              `Successfully converted page ${page} (${imageBuffer.length} bytes)`
+              `Successfully converted page ${page}/${totalPagesToProcess} (${imageBuffer.length} bytes)`
             );
           } else {
             const errorDetails = {
@@ -516,17 +591,32 @@ export class PlanAnalysisService {
                   `If buffer size is 0, GraphicsMagick/ImageMagick may not be installed.`
               );
             }
-            break;
+            // Continue to next page instead of breaking
+            failedPages++;
+            this.logger.warn(
+              `Skipping page ${page} due to invalid image data, continuing with remaining pages...`
+            );
+            continue;
           }
         } catch (error: any) {
           this.logger.error(`Error converting page ${page}:`, error.message);
           if (page === 1) {
+            // Page 1 failure indicates a fundamental problem - throw immediately
             throw error;
           }
-          this.logger.warn(`Failed to convert page ${page}: ${error.message}`);
-          break;
+          // For other pages, log the error but continue processing
+          failedPages++;
+          this.logger.warn(
+            `Failed to convert page ${page}/${totalPagesToProcess}: ${error.message}. Continuing with remaining pages...`
+          );
+          continue;
         }
       }
+
+      // Log summary
+      this.logger.log(
+        `PDF conversion complete: ${successfulPages} pages converted successfully, ${failedPages} pages failed out of ${totalPagesToProcess} total pages`
+      );
 
       if (images.length === 0) {
         throw new Error("No images were generated from PDF");

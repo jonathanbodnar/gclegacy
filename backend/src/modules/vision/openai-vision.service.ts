@@ -4,12 +4,13 @@ import OpenAI from "openai";
 import { appendVisionLog } from "./vision.logger";
 
 export interface VisionAnalysisResult {
+  sheetTitle?: string;
   rooms: Array<{
     id: string;
     name?: string;
     area?: number;
     polygon?: number[][];
-    program?: string;
+    program?: string | null;
     level?: string;
     heightFt?: number;
   }>;
@@ -135,7 +136,9 @@ export class OpenAIVisionService {
       // Determine image format from buffer
       const imageFormat = this.detectImageFormat(imageBuffer);
       if (!imageFormat) {
-        throw new Error("Invalid image format: buffer must be a valid PNG or JPEG");
+        throw new Error(
+          "Invalid image format: buffer must be a valid PNG or JPEG"
+        );
       }
 
       // Convert buffer to base64 for OpenAI
@@ -259,7 +262,8 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
     const verticalRequested = Object.values(wantsVertical).some(Boolean);
 
     const jsonSections: string[] = [
-      `  "scale": {
+      `  "sheetTitle": "exact sheet number/name from title block (e.g. A-101, S-201, I401) - read from title block, not generic names",
+  "scale": {
     "detected": "scale found in titleblock (e.g. 1/4\\"=1'-0\\")",
     "units": "ft or m",
     "ratio": "numeric ratio for calculations"
@@ -267,16 +271,18 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       `  "rooms": [
     {
       "id": "unique_id",
-      "name": "room name or number from plan",
+      "name": "room name or number from plan (read exact text)",
       "area": "calculated area in square units",
-      "program": "room type (office, toilet, etc.)"
+      "polygon": [[x1,y1], [x2,y2], [x3,y3], [x1,y1]] - closed polygon (first and last point must match),
+      "program": "ONLY if explicitly labeled on plan - use null if not shown, DO NOT guess"
     }
   ]`,
       `  "walls": [
     {
       "id": "unique_id", 
-      "length": "linear length",
-      "partitionType": "wall type from legend (PT-1, etc.)"
+      "length": "linear length (must be > 0)",
+      "partitionType": "wall type from legend (PT-1, EXT-1, etc.)",
+      "polyline": [[x1,y1], [x2,y2]] - wall centerline with at least 2 distinct points
     }
   ]`,
       `  "openings": [
@@ -372,11 +378,35 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       ? "\n- Capture vertical information (story heights, level names, risers) whenever available"
       : "";
 
+    const wallRules = targets.includes("walls")
+      ? `\n\nCRITICAL WALL EXTRACTION RULES:
+- Extract ONLY actual walls (partition lines, structural walls, demising walls)
+- DO NOT include: columns (circular/square structural elements), furniture, equipment, casework, dimension lines, text, symbols, or annotations
+- Columns are typically shown as filled circles/squares and should be EXCLUDED
+- Wall polylines must have at least 2 distinct coordinate points with non-zero length
+- Each wall segment should be a continuous line - do not create 0-length walls
+- If a wall is interrupted by a door/window, treat it as separate wall segments`
+      : "";
+
+    const roomRules = targets.includes("rooms")
+      ? `\n\nCRITICAL ROOM EXTRACTION RULES:
+- Room polygons must be closed shapes (first and last coordinates must match)
+- Polygon must have at least 3 distinct vertices to form a valid area
+- Extract room program/type ONLY if explicitly labeled on the plan (e.g., "OFFICE", "TOILET", "STORAGE")
+- If room type is not labeled, set program to null - DO NOT guess or infer room types`
+      : "";
+
     return `You are an expert architectural/MEP plan analyst. Analyze this construction drawing and extract specific technical information.
 
 DISCIPLINES TO ANALYZE: ${disciplines.map((d) => disciplineMap[d]).join(", ")}
 
 EXTRACTION TARGETS: ${targets.map((t) => targetMap[t]).join(", ")}
+
+SHEET TITLE EXTRACTION:
+- Read the EXACT sheet number/name from the title block (typically in lower right corner)
+- Look for patterns like: "SHEET NO.", "DRAWING NO.", "SHEET", or similar labels
+- Extract the actual sheet identifier (e.g., "A-101", "S-201", "I401", "A1.01")
+- Do NOT use generic names like "Page 1" or duplicate the same name for all sheets
 
 Please provide a detailed analysis in the following JSON format:
 
@@ -389,7 +419,7 @@ IMPORTANT:
 - Count and measure visible elements accurately
 - Use standard architectural/MEP terminology
 - Provide realistic dimensions based on typical construction
-- Include only elements that are clearly visible in the drawing${verticalInstruction}
+- Include only elements that are clearly visible in the drawing${verticalInstruction}${wallRules}${roomRules}
 - Return valid JSON only`;
   }
 
@@ -408,8 +438,18 @@ IMPORTANT:
 
       // Validate and structure the response
       return {
-        rooms: this.validateArray(parsed.rooms, targets.includes("rooms")),
-        walls: this.validateArray(parsed.walls, targets.includes("walls")),
+        sheetTitle:
+          typeof parsed.sheetTitle === "string"
+            ? parsed.sheetTitle.trim()
+            : undefined,
+        rooms: this.validateAndFilterRooms(
+          parsed.rooms,
+          targets.includes("rooms")
+        ),
+        walls: this.validateAndFilterWalls(
+          parsed.walls,
+          targets.includes("walls")
+        ),
         openings: this.validateArray(
           parsed.openings,
           targets.includes("doors") || targets.includes("windows")
@@ -452,6 +492,198 @@ IMPORTANT:
       id: item.id || `item_${index + 1}`,
       ...item,
     }));
+  }
+
+  private validateAndFilterRooms(
+    rooms: any[],
+    shouldInclude: boolean
+  ): VisionAnalysisResult["rooms"] {
+    if (!shouldInclude || !Array.isArray(rooms)) return [];
+
+    const validRooms: VisionAnalysisResult["rooms"] = [];
+
+    for (const room of rooms) {
+      // Validate polygon if present
+      if (room.polygon) {
+        const polygon = room.polygon;
+        if (!Array.isArray(polygon) || polygon.length < 3) {
+          this.logger.debug(
+            `Skipping room ${room.id}: invalid polygon (needs at least 3 vertices)`
+          );
+          continue;
+        }
+
+        // Check if polygon is closed (first and last points should match)
+        const first = polygon[0];
+        const last = polygon[polygon.length - 1];
+        const isClosed =
+          Array.isArray(first) &&
+          Array.isArray(last) &&
+          first.length >= 2 &&
+          last.length >= 2 &&
+          Math.abs(first[0] - last[0]) < 0.001 &&
+          Math.abs(first[1] - last[1]) < 0.001;
+
+        if (!isClosed) {
+          this.logger.debug(
+            `Room ${room.id}: polygon not closed, auto-closing by duplicating first point`
+          );
+          // Auto-close the polygon
+          room.polygon = [...polygon, [first[0], first[1]]];
+        }
+
+        // Validate all coordinates are valid numbers
+        const hasInvalidCoords = room.polygon.some(
+          (pt: any) =>
+            !Array.isArray(pt) ||
+            pt.length < 2 ||
+            !Number.isFinite(pt[0]) ||
+            !Number.isFinite(pt[1])
+        );
+        if (hasInvalidCoords) {
+          this.logger.debug(
+            `Skipping room ${room.id}: polygon has invalid coordinates`
+          );
+          continue;
+        }
+      }
+
+      // Ensure program is null if not explicitly provided (don't guess)
+      const program =
+        room.program && typeof room.program === "string" && room.program.trim()
+          ? room.program.trim()
+          : null;
+
+      validRooms.push({
+        id: room.id || `room_${validRooms.length + 1}`,
+        name: room.name,
+        area: this.toNumber(room.area),
+        polygon: room.polygon,
+        program: program,
+        level: room.level,
+        heightFt: this.toNumber(room.heightFt),
+      });
+    }
+
+    this.logger.log(
+      `Validated ${validRooms.length} rooms (filtered ${rooms.length - validRooms.length} invalid)`
+    );
+    return validRooms;
+  }
+
+  private validateAndFilterWalls(
+    walls: any[],
+    shouldInclude: boolean
+  ): VisionAnalysisResult["walls"] {
+    if (!shouldInclude || !Array.isArray(walls)) return [];
+
+    const validWalls: VisionAnalysisResult["walls"] = [];
+
+    for (const wall of walls) {
+      // Validate length - must be > 0
+      const length = this.toNumber(wall.length);
+      if (!length || length <= 0) {
+        this.logger.debug(
+          `Skipping wall ${wall.id}: invalid or zero length (${length})`
+        );
+        continue;
+      }
+
+      // Validate polyline if present
+      if (wall.polyline) {
+        const polyline = wall.polyline;
+        if (!Array.isArray(polyline) || polyline.length < 2) {
+          this.logger.debug(
+            `Skipping wall ${wall.id}: invalid polyline (needs at least 2 points)`
+          );
+          continue;
+        }
+
+        // Check for distinct points (not all the same)
+        const firstPoint = polyline[0];
+        const allSame = polyline.every(
+          (pt: any) =>
+            Array.isArray(pt) &&
+            pt.length >= 2 &&
+            Math.abs(pt[0] - firstPoint[0]) < 0.001 &&
+            Math.abs(pt[1] - firstPoint[1]) < 0.001
+        );
+        if (allSame) {
+          this.logger.debug(
+            `Skipping wall ${wall.id}: all polyline points are the same (0-length wall)`
+          );
+          continue;
+        }
+
+        // Validate all coordinates are valid numbers
+        const hasInvalidCoords = polyline.some(
+          (pt: any) =>
+            !Array.isArray(pt) ||
+            pt.length < 2 ||
+            !Number.isFinite(pt[0]) ||
+            !Number.isFinite(pt[1])
+        );
+        if (hasInvalidCoords) {
+          this.logger.debug(
+            `Skipping wall ${wall.id}: polyline has invalid coordinates`
+          );
+          continue;
+        }
+
+        // Calculate actual length from polyline to validate against reported length
+        let calculatedLength = 0;
+        for (let i = 1; i < polyline.length; i++) {
+          const dx = polyline[i][0] - polyline[i - 1][0];
+          const dy = polyline[i][1] - polyline[i - 1][1];
+          calculatedLength += Math.sqrt(dx * dx + dy * dy);
+        }
+        if (calculatedLength < 0.001) {
+          this.logger.debug(
+            `Skipping wall ${wall.id}: calculated polyline length is zero`
+          );
+          continue;
+        }
+      }
+
+      // Filter out columns and non-wall symbols
+      // Columns are typically small, square/circular elements
+      // Check if this might be a column based on characteristics
+      const partitionType = wall.partitionType?.toLowerCase() || "";
+      const isColumn =
+        partitionType.includes("column") ||
+        partitionType.includes("col") ||
+        (wall.polyline && wall.polyline.length === 4 && length < 2.0); // Small square-like shape < 2ft is likely a column
+
+      if (isColumn) {
+        this.logger.debug(
+          `Skipping wall ${wall.id}: identified as column, not a wall`
+        );
+        continue;
+      }
+
+      validWalls.push({
+        id: wall.id || `wall_${validWalls.length + 1}`,
+        length: length,
+        partitionType: wall.partitionType,
+        polyline: wall.polyline,
+        level: wall.level,
+        heightFt: this.toNumber(wall.heightFt),
+      });
+    }
+
+    this.logger.log(
+      `Validated ${validWalls.length} walls (filtered ${walls.length - validWalls.length} invalid/columns)`
+    );
+    return validWalls;
+  }
+
+  private toNumber(value: any): number | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
   }
 
   private normalizeVerticalMetadata(
@@ -500,6 +732,7 @@ IMPORTANT:
   ): VisionAnalysisResult {
     // Fallback mock data when OpenAI is not available
     return {
+      sheetTitle: "A-101",
       rooms: targets.includes("rooms")
         ? [
             { id: "R100", name: "OFFICE", area: 150, program: "Office" },
@@ -699,13 +932,15 @@ Return ONLY a JSON object with:
     }
 
     // Validate image format headers
-    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const pngHeader = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
     const jpegHeader = Buffer.from([0xff, 0xd8, 0xff]);
     const jpegHeader2 = Buffer.from([0xff, 0xd8, 0xff, 0xe0]); // JPEG with JFIF
     const jpegHeader3 = Buffer.from([0xff, 0xd8, 0xff, 0xe1]); // JPEG with EXIF
 
     const isPng = buffer.subarray(0, 8).equals(pngHeader);
-    const isJpeg = 
+    const isJpeg =
       buffer.subarray(0, 3).equals(jpegHeader) ||
       buffer.subarray(0, 4).equals(jpegHeader2) ||
       buffer.subarray(0, 4).equals(jpegHeader3);
@@ -713,7 +948,7 @@ Return ONLY a JSON object with:
     if (!isPng && !isJpeg) {
       throw new Error(
         "Invalid image format: buffer must start with PNG or JPEG headers. " +
-        `First bytes: ${buffer.subarray(0, 8).toString("hex")}`
+          `First bytes: ${buffer.subarray(0, 8).toString("hex")}`
       );
     }
   }
@@ -724,7 +959,9 @@ Return ONLY a JSON object with:
     }
 
     // Check PNG header
-    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const pngHeader = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
     if (buffer.subarray(0, 8).equals(pngHeader)) {
       return "png";
     }
