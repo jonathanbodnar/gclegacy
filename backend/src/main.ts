@@ -45,11 +45,25 @@ async function bootstrap() {
       exclude: ['health', '/'] // Exclude health check and root from prefix
     });
 
-    // CORS
-    app.enableCors({
-      origin: process.env.CORS_ORIGIN || '*',
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    // CORS - allow frontend domain
+    const allowedOrigins = process.env.CORS_ORIGIN 
+      ? process.env.CORS_ORIGIN.split(',')
+      : ['*'];
+    
+    console.log('🔒 CORS configuration:', {
+      origins: allowedOrigins,
       credentials: true,
+    });
+    
+    app.enableCors({
+      origin: allowedOrigins.length === 1 && allowedOrigins[0] === '*' 
+        ? true  // Allow all origins
+        : allowedOrigins,  // Specific domains
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      credentials: true,
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+      exposedHeaders: ['Content-Length', 'Content-Type'],
+      maxAge: 3600,
     });
 
     // Swagger documentation (only for full app)

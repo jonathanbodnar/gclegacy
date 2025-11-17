@@ -68,9 +68,15 @@ function App() {
           })
           .catch(err => {
             console.error('Failed to load job status:', err);
-            // If job not found, clear localStorage and reset
-            localStorage.clear();
-            resetApp();
+            // If job not found or auth failed, clear localStorage and reset
+            console.log('Clearing localStorage due to error');
+            localStorage.removeItem('currentJobId');
+            localStorage.removeItem('currentFileId');
+            localStorage.removeItem('currentStep');
+            setJobId(null);
+            setFileId(null);
+            setCurrentStep('upload');
+            setError('Failed to restore previous job. Please start a new analysis.');
           });
       }
     }

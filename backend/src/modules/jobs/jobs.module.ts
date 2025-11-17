@@ -1,4 +1,4 @@
-import { Module, DynamicModule } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bull";
 
 import { JobsController } from "./jobs.controller";
