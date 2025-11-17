@@ -1,6 +1,15 @@
-import { Injectable, BadRequestException } from "@nestjs/common";
+import {
+  Injectable,
+  BadRequestException,
+  ServiceUnavailableException,
+  Logger,
+} from "@nestjs/common";
 import { PrismaService } from "@/common/prisma/prisma.service";
 import { StorageService } from "./storage.service";
+import {
+  PrismaClientKnownRequestError,
+  PrismaClientInitializationError,
+} from "@prisma/client/runtime/library";
 import * as crypto from "crypto";
 import * as pdfParse from "pdf-parse";
 
@@ -13,6 +22,8 @@ export interface FileUploadResult {
 
 @Injectable()
 export class FilesService {
+  private readonly logger = new Logger(FilesService.name);
+
   constructor(
     private prisma: PrismaService,
     private storageService: StorageService
@@ -36,9 +47,29 @@ export class FilesService {
       .digest("hex");
 
     // Check if file already exists
-    const existingFile = await this.prisma.file.findUnique({
-      where: { checksum },
-    });
+    let existingFile;
+    try {
+      existingFile = await this.prisma.file.findUnique({
+        where: { checksum },
+      });
+    } catch (error) {
+      if (
+        error instanceof PrismaClientKnownRequestError ||
+        error instanceof PrismaClientInitializationError ||
+        error instanceof Error
+      ) {
+        if (
+          error.message?.includes("Can't reach database server") ||
+          error.message?.includes("database server")
+        ) {
+          this.logger.error("Database connection failed:", error.message);
+          throw new ServiceUnavailableException(
+            "Database service is currently unavailable. Please try again later."
+          );
+        }
+      }
+      throw error;
+    }
 
     if (existingFile) {
       return {
@@ -86,18 +117,53 @@ export class FilesService {
         },
       });
     } catch (error: any) {
+      if (
+        error instanceof PrismaClientKnownRequestError ||
+        error instanceof PrismaClientInitializationError ||
+        error instanceof Error
+      ) {
+        if (
+          error.message?.includes("Can't reach database server") ||
+          error.message?.includes("database server")
+        ) {
+          this.logger.error("Database connection failed:", error.message);
+          throw new ServiceUnavailableException(
+            "Database service is currently unavailable. Please try again later."
+          );
+        }
+      }
+
       if (error.code === "P2002" && error.meta?.target?.includes("checksum")) {
         // Another request created this file concurrently – reuse that record
-        const duplicate = await this.prisma.file.findUnique({
-          where: { checksum },
-        });
-        if (duplicate) {
-          return {
-            fileId: duplicate.id,
-            pages: duplicate.pages,
-            mime: duplicate.mime,
-            checksum: duplicate.checksum,
-          };
+        try {
+          const duplicate = await this.prisma.file.findUnique({
+            where: { checksum },
+          });
+          if (duplicate) {
+            return {
+              fileId: duplicate.id,
+              pages: duplicate.pages,
+              mime: duplicate.mime,
+              checksum: duplicate.checksum,
+            };
+          }
+        } catch (dupError: any) {
+          if (
+            dupError instanceof PrismaClientKnownRequestError ||
+            dupError instanceof PrismaClientInitializationError ||
+            dupError instanceof Error
+          ) {
+            if (
+              dupError.message?.includes("Can't reach database server") ||
+              dupError.message?.includes("database server")
+            ) {
+              this.logger.error("Database connection failed:", dupError.message);
+              throw new ServiceUnavailableException(
+                "Database service is currently unavailable. Please try again later."
+              );
+            }
+          }
+          throw dupError;
         }
       }
       throw error;
@@ -112,15 +178,37 @@ export class FilesService {
   }
 
   async getFile(fileId: string) {
-    const file = await this.prisma.file.findUnique({
-      where: { id: fileId },
-    });
+    try {
+      const file = await this.prisma.file.findUnique({
+        where: { id: fileId },
+      });
 
-    if (!file) {
-      throw new BadRequestException("File not found");
+      if (!file) {
+        throw new BadRequestException("File not found");
+      }
+
+      return file;
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      if (
+        error instanceof PrismaClientKnownRequestError ||
+        error instanceof PrismaClientInitializationError ||
+        error instanceof Error
+      ) {
+        if (
+          error.message?.includes("Can't reach database server") ||
+          error.message?.includes("database server")
+        ) {
+          this.logger.error("Database connection failed:", error.message);
+          throw new ServiceUnavailableException(
+            "Database service is currently unavailable. Please try again later."
+          );
+        }
+      }
+      throw error;
     }
-
-    return file;
   }
 
   async getFileBuffer(fileId: string): Promise<Buffer> {
@@ -135,8 +223,27 @@ export class FilesService {
     await this.storageService.deleteFile(file.storageKey);
 
     // Delete from database
-    await this.prisma.file.delete({
-      where: { id: fileId },
-    });
+    try {
+      await this.prisma.file.delete({
+        where: { id: fileId },
+      });
+    } catch (error) {
+      if (
+        error instanceof PrismaClientKnownRequestError ||
+        error instanceof PrismaClientInitializationError ||
+        error instanceof Error
+      ) {
+        if (
+          error.message?.includes("Can't reach database server") ||
+          error.message?.includes("database server")
+        ) {
+          this.logger.error("Database connection failed:", error.message);
+          throw new ServiceUnavailableException(
+            "Database service is currently unavailable. Please try again later."
+          );
+        }
+      }
+      throw error;
+    }
   }
 }
