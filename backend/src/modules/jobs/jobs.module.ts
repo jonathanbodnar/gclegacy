@@ -12,7 +12,7 @@ import { FilesModule } from "../files/files.module";
 @Module({
   imports: [
     // Conditionally register Bull queue only if Redis is available
-    ...(process.env.REDIS_HOST ? [
+    ...((process.env.REDIS_HOST || process.env.REDIS_URL) ? [
       BullModule.registerQueue({
         name: "job-processing",
       })
