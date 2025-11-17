@@ -23,7 +23,8 @@ export class PlanAnalysisService {
     fileName: string,
     disciplines: string[],
     targets: string[],
-    options?: any
+    options?: any,
+    progressCallback?: (current: number, total: number, message: string) => Promise<void>
   ): Promise<any> {
     this.logger.log(`Starting plan analysis for ${fileName}`);
 
@@ -100,6 +101,15 @@ export class PlanAnalysisService {
         results.push(...batchResults);
 
         this.logger.log(`Completed batch ${batchNumber}/${totalBatches} - Total analyzed: ${results.length}/${images.length}`);
+        
+        // Report progress via callback if provided
+        if (progressCallback) {
+          await progressCallback(
+            results.length, 
+            images.length, 
+            `Analyzing plans: ${results.length}/${images.length} pages completed`
+          );
+        }
       }
 
       return {

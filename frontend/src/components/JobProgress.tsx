@@ -79,15 +79,30 @@ export const JobProgress: React.FC<JobProgressProps> = ({
         {status === 'PROCESSING' && (
           <div className="mb-6">
             <div className="flex justify-between text-sm text-gray-600 mb-2">
-              <span>Processing plan analysis...</span>
-              <span>{Math.round(progress)}%</span>
+              <span className="font-medium">
+                {progress < 20 ? '🔄 Ingesting file...' :
+                 progress < 25 ? '📄 Parsing PDF pages...' :
+                 progress < 60 ? '🤖 AI analyzing plans...' :
+                 progress < 75 ? '📊 Extracting features...' :
+                 progress < 80 ? '💾 Saving to database...' :
+                 progress < 95 ? '🔧 Applying material rules...' :
+                 '✨ Finalizing results...'}
+              </span>
+              <span className="font-bold">{Math.round(progress)}%</span>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
               <div 
-                className="bg-blue-500 h-2 rounded-full transition-all duration-300 ease-out"
+                className="bg-gradient-to-r from-blue-500 to-blue-600 h-3 rounded-full transition-all duration-500 ease-out relative overflow-hidden"
                 style={{ width: `${progress}%` }}
-              ></div>
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-shimmer"></div>
+              </div>
             </div>
+            {progress >= 25 && progress < 60 && (
+              <div className="mt-2 text-xs text-gray-500 italic">
+                Analyzing each page with AI vision... This may take a few minutes for large plans.
+              </div>
+            )}
           </div>
         )}
 
