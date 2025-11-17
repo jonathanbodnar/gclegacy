@@ -48,9 +48,30 @@ function App() {
       if (savedFileId) setFileId(savedFileId);
       if (savedStep) setCurrentStep(savedStep);
       
-      // If we have a job ID, start polling immediately
-      if (savedStep === 'processing') {
+      // If we have a job ID, fetch its current status immediately
+      if (savedStep === 'processing' || savedStep === 'results') {
         console.log('Restored job from localStorage:', savedJobId);
+        
+        // Fetch job status immediately
+        apiService.getJobStatus(savedJobId)
+          .then(status => {
+            console.log('Restored job status:', status);
+            setJobStatus(status);
+            
+            // If job is completed, load results and move to results step
+            if (status.status === 'COMPLETED') {
+              setCurrentStep('results');
+              apiService.getTakeoffResults(savedJobId)
+                .then(results => setTakeoffData(results))
+                .catch(err => console.error('Failed to load results:', err));
+            }
+          })
+          .catch(err => {
+            console.error('Failed to load job status:', err);
+            // If job not found, clear localStorage and reset
+            localStorage.clear();
+            resetApp();
+          });
       }
     }
   }, []);
@@ -211,6 +232,11 @@ function App() {
     setJobStatus(null);
     setTakeoffData(null);
     setError(null);
+    
+    // Clear localStorage
+    localStorage.removeItem('currentJobId');
+    localStorage.removeItem('currentFileId');
+    localStorage.removeItem('currentStep');
   };
 
   const renderStepIndicator = () => {
@@ -366,15 +392,32 @@ function App() {
             </div>
           )}
 
-          {currentStep === "processing" && jobStatus && (
-            <JobProgress
-              jobId={jobStatus.jobId}
-              status={jobStatus.status}
-              progress={jobStatus.progress}
-              error={jobStatus.error}
-              startedAt={jobStatus.startedAt}
-              finishedAt={jobStatus.finishedAt}
-            />
+          {currentStep === "processing" && (
+            <>
+              {jobStatus ? (
+                <JobProgress
+                  jobId={jobStatus.jobId}
+                  status={jobStatus.status}
+                  progress={jobStatus.progress}
+                  error={jobStatus.error}
+                  startedAt={jobStatus.startedAt}
+                  finishedAt={jobStatus.finishedAt}
+                />
+              ) : (
+                <div className="text-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                  <p className="text-gray-600">Loading job status...</p>
+                </div>
+              )}
+              <div className="mt-6 text-center">
+                <button
+                  onClick={resetApp}
+                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  ← Start New Analysis
+                </button>
+              </div>
+            </>
           )}
 
           {currentStep === "results" && takeoffData && (
