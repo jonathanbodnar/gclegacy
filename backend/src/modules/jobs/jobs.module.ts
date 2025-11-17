@@ -10,13 +10,15 @@ import { VisionModule } from "../vision/vision.module";
 import { FilesModule } from "../files/files.module";
 
 // Conditionally include JobProcessor only if Redis is available
-const hasRedis = !!(process.env.REDIS_HOST || process.env.REDIS_URL);
+// Check for multiple possible variable names (REDISHOST, REDIS_HOST, REDIS_URL)
+const hasRedis = !!(process.env.REDIS_HOST || process.env.REDISHOST || process.env.REDIS_URL);
 const providers = hasRedis 
   ? [JobsService, JobProcessor]
   : [JobsService];
 
 console.log('🔍 JobsModule - Redis configured:', hasRedis);
 console.log('   REDIS_HOST:', !!process.env.REDIS_HOST);
+console.log('   REDISHOST:', !!process.env.REDISHOST);
 console.log('   REDIS_URL:', !!process.env.REDIS_URL);
 
 @Module({
