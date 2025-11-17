@@ -9,10 +9,20 @@ import { RulesEngineModule } from "../rules-engine/rules-engine.module";
 import { VisionModule } from "../vision/vision.module";
 import { FilesModule } from "../files/files.module";
 
+// Conditionally include JobProcessor only if Redis is available
+const hasRedis = !!(process.env.REDIS_HOST || process.env.REDIS_URL);
+const providers = hasRedis 
+  ? [JobsService, JobProcessor]
+  : [JobsService];
+
+console.log('🔍 JobsModule - Redis configured:', hasRedis);
+console.log('   REDIS_HOST:', !!process.env.REDIS_HOST);
+console.log('   REDIS_URL:', !!process.env.REDIS_URL);
+
 @Module({
   imports: [
     // Conditionally register Bull queue only if Redis is available
-    ...((process.env.REDIS_HOST || process.env.REDIS_URL) ? [
+    ...(hasRedis ? [
       BullModule.registerQueue({
         name: "job-processing",
       })
@@ -23,7 +33,7 @@ import { FilesModule } from "../files/files.module";
     FilesModule,
   ],
   controllers: [JobsController],
-  providers: [JobsService, JobProcessor],
+  providers,
   exports: [JobsService],
 })
 export class JobsModule {}
