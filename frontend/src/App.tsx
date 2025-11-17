@@ -37,6 +37,22 @@ function App() {
   useEffect(() => {
     // Check API health on startup
     checkApiHealth();
+    
+    // Restore job state from localStorage on page load
+    const savedJobId = localStorage.getItem('currentJobId');
+    const savedFileId = localStorage.getItem('currentFileId');
+    const savedStep = localStorage.getItem('currentStep') as AppStep;
+    
+    if (savedJobId) {
+      setJobId(savedJobId);
+      if (savedFileId) setFileId(savedFileId);
+      if (savedStep) setCurrentStep(savedStep);
+      
+      // If we have a job ID, start polling immediately
+      if (savedStep === 'processing') {
+        console.log('Restored job from localStorage:', savedJobId);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -51,9 +67,11 @@ function App() {
             clearInterval(pollInterval);
             await loadResults();
             setCurrentStep("results");
+            localStorage.setItem('currentStep', 'results');
           } else if (status.status === "FAILED") {
             clearInterval(pollInterval);
             setError(status.error || "Job processing failed");
+            // Keep in localStorage so user can see the error after refresh
           }
         } catch (error) {
           console.error("Error polling job status:", error);
@@ -63,6 +81,13 @@ function App() {
       return () => clearInterval(pollInterval);
     }
   }, [jobId, currentStep]);
+  
+  // Sync step changes to localStorage
+  useEffect(() => {
+    if (currentStep && jobId) {
+      localStorage.setItem('currentStep', currentStep);
+    }
+  }, [currentStep, jobId]);
 
   const checkApiHealth = async () => {
     try {
@@ -103,6 +128,11 @@ function App() {
 
       setJobId(response.jobId);
       setCurrentStep("processing");
+      
+      // Persist to localStorage so we can resume after refresh
+      localStorage.setItem('currentJobId', response.jobId);
+      localStorage.setItem('currentFileId', fileId);
+      localStorage.setItem('currentStep', 'processing');
     } catch (error) {
       setError(
         error instanceof Error ? error.message : "Failed to start analysis"
