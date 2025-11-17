@@ -31,39 +31,75 @@ export class PlanAnalysisService {
       // Convert PDF pages or plan sheets to images for vision analysis
       const images = await this.convertToImages(fileBuffer, fileName);
 
+      this.logger.log(`Starting parallel analysis of ${images.length} pages`);
+
+      // Process pages in parallel batches to speed up analysis
+      const batchSize = parseInt(process.env.VISION_BATCH_SIZE || '5', 10);
       const results = [];
 
-      for (const [pageIndex, imageBuffer] of images.entries()) {
-        this.logger.log(`Analyzing page ${pageIndex + 1}/${images.length}`);
+      for (let i = 0; i < images.length; i += batchSize) {
+        const batch = images.slice(i, i + batchSize);
+        const batchNumber = Math.floor(i / batchSize) + 1;
+        const totalBatches = Math.ceil(images.length / batchSize);
+        
+        this.logger.log(`Processing batch ${batchNumber}/${totalBatches} (pages ${i + 1}-${Math.min(i + batchSize, images.length)})`);
 
-        // Use OpenAI Vision to analyze each page
-        const pageResult = await this.openaiVision.analyzePlanImage(
-          imageBuffer,
-          disciplines,
-          targets,
-          options
-        );
+        // Process this batch in parallel
+        const batchPromises = batch.map(async (imageBuffer, batchIndex) => {
+          const pageIndex = i + batchIndex;
+          this.logger.log(`Analyzing page ${pageIndex + 1}/${images.length}`);
 
-        // Detect scale for this page
-        const scaleInfo = await this.openaiVision.detectScale(imageBuffer);
+          try {
+            // Use OpenAI Vision to analyze each page
+            const pageResult = await this.openaiVision.analyzePlanImage(
+              imageBuffer,
+              disciplines,
+              targets,
+              options
+            );
 
-        // Extract sheet title from vision analysis, fallback to generated name
-        const sheetTitle =
-          pageResult.sheetTitle || `${fileName}_page_${pageIndex + 1}`;
+            // Detect scale for this page
+            const scaleInfo = await this.openaiVision.detectScale(imageBuffer);
 
-        results.push({
-          pageIndex,
-          fileName: sheetTitle,
-          discipline: this.detectDisciplineFromContent(pageResult, disciplines),
-          scale: scaleInfo,
-          features: pageResult,
-          metadata: {
-            imageSize: imageBuffer.length,
-            analysisTimestamp: new Date().toISOString(),
-            viewType: this.detectViewType(pageResult),
-            sheetTitle: pageResult.sheetTitle,
-          },
+            // Extract sheet title from vision analysis, fallback to generated name
+            const sheetTitle =
+              pageResult.sheetTitle || `${fileName}_page_${pageIndex + 1}`;
+
+            return {
+              pageIndex,
+              fileName: sheetTitle,
+              discipline: this.detectDisciplineFromContent(pageResult, disciplines),
+              scale: scaleInfo,
+              features: pageResult,
+              metadata: {
+                imageSize: imageBuffer.length,
+                analysisTimestamp: new Date().toISOString(),
+                viewType: this.detectViewType(pageResult),
+                sheetTitle: pageResult.sheetTitle,
+              },
+            };
+          } catch (error: any) {
+            this.logger.error(`Failed to analyze page ${pageIndex + 1}:`, error.message);
+            // Return partial result with error
+            return {
+              pageIndex,
+              fileName: `${fileName}_page_${pageIndex + 1}`,
+              discipline: 'UNKNOWN',
+              scale: null,
+              features: { rooms: [], walls: [], openings: [], pipes: [], ducts: [], fixtures: [] },
+              metadata: {
+                error: error.message,
+                analysisTimestamp: new Date().toISOString(),
+              },
+            };
+          }
         });
+
+        // Wait for this batch to complete
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+
+        this.logger.log(`Completed batch ${batchNumber}/${totalBatches} - Total analyzed: ${results.length}/${images.length}`);
       }
 
       return {
