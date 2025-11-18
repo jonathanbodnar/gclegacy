@@ -7,6 +7,7 @@ import { promises as fs } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
+import { ConfigService } from "@nestjs/config";
 
 @Injectable()
 export class PlanAnalysisService {
@@ -16,7 +17,26 @@ export class PlanAnalysisService {
     "base64"
   );
 
-  constructor(private openaiVision: OpenAIVisionService) {}
+  private readonly allowPdfPlaceholderFallback: boolean;
+  private readonly pdfFallbackMaxPages: number;
+
+  constructor(
+    private openaiVision: OpenAIVisionService,
+    private configService: ConfigService
+  ) {
+    const fallbackSetting =
+      (this.configService.get("PDF_PLACEHOLDER_FALLBACK") || "false")
+        .toString()
+        .toLowerCase();
+    this.allowPdfPlaceholderFallback = fallbackSetting === "true";
+    this.pdfFallbackMaxPages = Math.max(
+      1,
+      parseInt(
+        this.configService.get("PDF_FALLBACK_MAX_PAGES") || "3",
+        10
+      )
+    );
+  }
 
   async analyzePlanFile(
     fileBuffer: Buffer,
@@ -211,19 +231,26 @@ export class PlanAnalysisService {
     } catch (pdf2picError: any) {
       this.logger.error(`pdf2pic conversion failed: ${pdf2picError.message}`);
 
-      // Provide helpful error message about GraphicsMagick/ImageMagick requirement
-      if (
-        pdf2picError.message?.includes("ENOENT") ||
-        pdf2picError.message?.includes("spawn") ||
-        pdf2picError.message?.includes("write EOF")
-      ) {
-        throw new Error(
-          "PDF conversion failed: pdf2pic requires GraphicsMagick or ImageMagick to be installed. " +
-            "Please install one of these tools:\n" +
-            "- Windows: Download from https://imagemagick.org/script/download.php or use: choco install imagemagick\n" +
-            "- Linux: sudo apt-get install graphicsmagick or sudo apt-get install imagemagick\n" +
-            "- macOS: brew install graphicsmagick or brew install imagemagick"
+      const dependencyErrorMessage =
+        "PDF conversion failed: pdf2pic requires GraphicsMagick or ImageMagick to be installed. " +
+        "Please install one of these tools:\n" +
+        "- Windows: Download from https://imagemagick.org/script/download.php or use: choco install imagemagick\n" +
+        "- Linux: sudo apt-get install graphicsmagick or sudo apt-get install imagemagick\n" +
+        "- macOS: brew install graphicsmagick or brew install imagemagick";
+
+      if (this.isGraphicsToolMissing(pdf2picError)) {
+        if (this.allowPdfPlaceholderFallback) {
+          this.logger.warn(
+            "GraphicsMagick/ImageMagick not available. Falling back to placeholder images for this PDF."
+          );
+          return this.generatePlaceholderImages(
+            Math.min(pagesToProcess, this.pdfFallbackMaxPages)
+          );
+        }
+        this.logger.error(
+          "GraphicsMagick/ImageMagick not detected and fallback is disabled. Job will fail."
         );
+        throw new Error(dependencyErrorMessage);
       }
 
       throw pdf2picError;
@@ -231,6 +258,17 @@ export class PlanAnalysisService {
 
     // This should not be reached, but kept as fallback
     this.logger.warn("PDF conversion returned no images");
+    if (this.allowPdfPlaceholderFallback) {
+      this.logger.warn(
+        "Using placeholder images because no images were generated from the PDF."
+      );
+      return this.generatePlaceholderImages(
+        Math.min(pagesToProcess, this.pdfFallbackMaxPages)
+      );
+    }
+    this.logger.error(
+      "PDF conversion failed and placeholder fallback is disabled. Job will fail."
+    );
     throw new Error("PDF conversion failed: No images were generated");
   }
 
@@ -856,5 +894,29 @@ export class PlanAnalysisService {
         ...data,
       })),
     };
+  }
+
+  private generatePlaceholderImages(count: number): Buffer[] {
+    const safeCount = Math.max(1, Math.min(count, this.pdfFallbackMaxPages));
+    const placeholders: Buffer[] = [];
+    for (let i = 0; i < safeCount; i++) {
+      placeholders.push(Buffer.from(PlanAnalysisService.PLACEHOLDER_PNG));
+    }
+    return placeholders;
+  }
+
+  private isGraphicsToolMissing(error: any): boolean {
+    if (!error || !error.message) {
+      return false;
+    }
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("graphicsmagick") ||
+      message.includes("imagemagick") ||
+      message.includes("enoent") ||
+      message.includes("spawn") ||
+      message.includes("write eof") ||
+      message.includes("empty buffer")
+    );
   }
 }

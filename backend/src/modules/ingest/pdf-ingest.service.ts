@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as pdfParse from 'pdf-parse';
+import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
 import { IngestResult, SheetData } from './ingest.service';
 
 @Injectable()
@@ -14,19 +18,44 @@ export class PdfIngestService {
   ): Promise<IngestResult> {
     this.logger.log(`Processing PDF file: ${fileId}`);
 
+    let tempPdfPath: string | null = null;
     try {
-      // Parse PDF to get basic information
+      // Parse PDF for quick metadata
       const pdfData = await pdfParse(fileBuffer);
-      
-      // Extract pages as sheets
+
+      // Load pdfjs for per-page text and dimensions
+      const pdfjsLib = await this.loadPdfJs();
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(fileBuffer),
+      });
+      const pdfDoc = await loadingTask.promise;
+
+      // Prepare pdf2pic converter for raster images
+      const converterInfo = await this.createPdfConverter(fileBuffer);
+      const { convert, tempPdfPath: tempPath, density } = converterInfo;
+      tempPdfPath = tempPath;
+
       const sheets: SheetData[] = [];
-      
-      for (let i = 0; i < pdfData.numpages; i++) {
+
+      for (let i = 0; i < pdfDoc.numPages; i++) {
         const pageNumber = i + 1;
-        
+        const page = await pdfDoc.getPage(pageNumber);
+
         // Extract text content for this page
-        const pageText = await this.extractPageText(fileBuffer, i);
-        
+        const pageText = await this.extractPageTextContent(page);
+
+        const sheetIdGuess = this.extractSheetName(pageText);
+
+        const viewport = page.getViewport({ scale: 1 });
+        const pageSize = {
+          widthPt: viewport.width,
+          heightPt: viewport.height,
+        };
+
+        const rasterResult = await this.renderPageImage(convert, pageNumber);
+        const { widthPx, heightPx } = await this.measureImage(rasterResult.buffer);
+        const imagePath = rasterResult.path;
+
         // Detect discipline from page content
         const discipline = this.detectDisciplineFromText(pageText);
         
@@ -36,14 +65,26 @@ export class PdfIngestService {
         // Create sheet data
         const sheet: SheetData = {
           index: i,
-          name: this.extractSheetName(pageText) || `Page ${pageNumber}`,
+          name: sheetIdGuess || `Page ${pageNumber}`,
           discipline,
           scale: scaleInfo.scale,
           units: scaleInfo.units,
+          sheetIdGuess,
+          widthPx,
+          heightPx,
+          imagePath,
+          pageSize,
+          renderDpi: density,
           content: {
             textData: pageText,
-            // rasterData would be generated from PDF page rendering
-            // vectorData would be extracted from PDF vector content
+            rasterData: rasterResult.buffer,
+            metadata: {
+              widthPx,
+              heightPx,
+              imagePath,
+              pageSize,
+              renderDpi: density,
+            },
           },
         };
         
@@ -65,14 +106,19 @@ export class PdfIngestService {
     } catch (error) {
       this.logger.error(`Error processing PDF ${fileId}:`, error);
       throw error;
+    } finally {
+      if (tempPdfPath) {
+        await fs.unlink(tempPdfPath).catch(() => undefined);
+      }
     }
   }
 
-  private async extractPageText(pdfBuffer: Buffer, pageIndex: number): Promise<string> {
-    // This is a simplified implementation
-    // In practice, you'd use a more sophisticated PDF parser that can extract text per page
-    const pdfData = await pdfParse(pdfBuffer);
-    return pdfData.text; // This gets all text, not per-page
+  private async loadPdfJs(): Promise<any> {
+    try {
+      return require('pdfjs-dist/legacy/build/pdf.js');
+    } catch (legacyError) {
+      return require('pdfjs-dist');
+    }
   }
 
   private detectDisciplineFromText(text: string): string | undefined {
@@ -131,5 +177,82 @@ export class PdfIngestService {
     }
 
     return undefined;
+  }
+
+  private async extractPageTextContent(page: any): Promise<string> {
+    const textContent = await page.getTextContent();
+    const strings: string[] = [];
+    for (const item of textContent.items || []) {
+      if (typeof item.str === 'string') {
+        strings.push(item.str);
+      }
+    }
+    return strings.join(' ').replace(/\s+/g, ' ').trim();
+  }
+
+  private async createPdfConverter(fileBuffer: Buffer): Promise<{
+    convert: (page: number, options?: any) => Promise<any>;
+    tempPdfPath: string;
+    density: number;
+  }> {
+    const pdf2picModule = await import('pdf2pic');
+    const pdf2pic = pdf2picModule.default || pdf2picModule;
+    const tempDir = tmpdir();
+    const tempPdfPath = join(tempDir, `pdf_preprocess_${randomUUID()}.pdf`);
+    await fs.writeFile(tempPdfPath, fileBuffer);
+
+    const density = parseInt(process.env.PDF_RENDER_DPI || '220', 10);
+    const convert = pdf2pic.fromPath(tempPdfPath, {
+      density,
+      format: 'png',
+      width: parseInt(process.env.PDF_RENDER_WIDTH || '2200', 10),
+      height: parseInt(process.env.PDF_RENDER_HEIGHT || '3400', 10),
+      preserveAspectRatio: true,
+      saveFilename: `sheet_${randomUUID()}`,
+      savePath: tempDir,
+    });
+
+    return { convert, tempPdfPath, density };
+  }
+
+  private async renderPageImage(convert: any, pageNumber: number): Promise<{ buffer: Buffer; path: string }> {
+    let result: any;
+    try {
+      result = await convert(pageNumber, { responseType: 'buffer' });
+    } catch (error) {
+      result = await convert(pageNumber, { responseType: 'image' });
+    }
+
+    let buffer: Buffer | null = null;
+    if (result?.buffer && Buffer.isBuffer(result.buffer)) {
+      buffer = result.buffer;
+    } else if (result?.base64 && typeof result.base64 === 'string') {
+      buffer = Buffer.from(result.base64, 'base64');
+    } else if (result?.path) {
+      buffer = await fs.readFile(result.path);
+    }
+
+    if (!buffer || buffer.length === 0) {
+      throw new Error('pdf2pic failed to render page image. Ensure GraphicsMagick/ImageMagick are installed.');
+    }
+
+    const tempImagePath = join(tmpdir(), `sheet_image_${randomUUID()}.png`);
+    await fs.writeFile(tempImagePath, buffer);
+    return { buffer, path: tempImagePath };
+  }
+
+  private async measureImage(buffer: Buffer): Promise<{ widthPx: number; heightPx: number }> {
+    let sharpModule: any;
+    try {
+      sharpModule = require('sharp');
+    } catch {
+      throw new Error('Sharp module is required to analyze page images. Please install: npm install sharp');
+    }
+
+    const metadata = await sharpModule(buffer).metadata();
+    return {
+      widthPx: metadata.width || 0,
+      heightPx: metadata.height || 0,
+    };
   }
 }

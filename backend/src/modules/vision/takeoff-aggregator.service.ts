@@ -6,7 +6,7 @@ import addFormats from 'ajv-formats';
 
 import { TAKEOFF_JSON_SCHEMA } from './takeoff.schema';
 
-const SYSTEM_PROMPT = `You are an expert construction takeoff analyst. Use ONLY the artifacts provided (text extracted from PDFs and low-res page images). 
+const SYSTEM_PROMPT = `You are an expert construction takeoff analyst. Use ONLY the artifacts provided (text extracted from PDFs and low-res page images). Your response MUST populate every section of the schema (project, sheets, levels, rooms, walls, electrical, meta) using observed data; when something is missing, return nulls and add notes/confidence rather than inventing data.
 
 Hard rules:
 - Read dimension strings exactly as printed (e.g., 26'-6"). Do not estimate.
@@ -31,11 +31,22 @@ room_aliases: {"SALES AREA":"Sales Area","BACK OF HOUSE":"Back of House","TOILET
 wire_conduit_rules: {"defaultWire":"#12 CU","conduitByCount":{"1-3":"1/2\\" EMT","4-6":"3/4\\" EMT","7-9":"1\\" EMT"}}
 `;
 
+const DATA_MODEL_GUIDE = `
+DATA MODEL EXPECTATIONS:
+- project: name/number/address plus total project area when available. Notes should cite sheet references for totals.
+- sheets: every analyzed sheet with id/name/number plus detected scale and pixelsPerFoot.
+- levels: building levels/elevations plus any ceiling heights per room. Tag the source (RCP, schedule, assumption).
+- rooms: include room number/name, level, sheet_refs, approximate area, finish schedule (floor/walls/ceiling/base), and bounding_box_px + centroid_px in image pixels.
+- walls: include ID, partition_type, new_or_existing, adjacent rooms, length/height, and polyline_px coordinates from the plan image.
+- electrical: keep panel location (if shown) and circuit heuristic outputs following the rules above.
+- meta: report units, schema version, and generatedAt (ISO timestamp).`;
+
 interface AggregatorInput {
   jobId: string;
   pages: any[];
   summary?: any;
   features: any[];
+  fusion?: any;
 }
 
 @Injectable()
@@ -81,13 +92,15 @@ export class TakeoffAggregatorService {
 
     const featureSummary = this.describeFeatureTotals(input.features);
     const summaryBlock = input.summary ? `\nSUMMARY_OVERVIEW:\n${JSON.stringify(input.summary)}` : '';
+    const fusionBlock = this.describeFusionData(input.fusion);
 
     let userContent = `AGGREGATED_SHEET_ARTIFACTS:
 ${sheetBlocks}
 
 FEATURE_SUMMARY:
-${featureSummary}${summaryBlock}
+${featureSummary}${summaryBlock}${fusionBlock}
 
+${DATA_MODEL_GUIDE}
 ${SETTINGS_FOOTER}
 OUTPUT: Return ONLY the final project JSON. No explanations. No markdown. No keys with undefined. Omit null numeric fields; keep null for scale fields when unknown.`;
 
@@ -136,6 +149,22 @@ FEATURE_COUNTS: ${JSON.stringify(featureCounts)}`;
     }, {} as Record<string, number>);
 
     return JSON.stringify(counts);
+  }
+
+  private describeFusionData(fusion: any): string {
+    if (!fusion) {
+      return '';
+    }
+    const summaryPayload = {
+      rooms: Array.isArray(fusion.rooms) ? fusion.rooms : [],
+      walls: Array.isArray(fusion.walls) ? fusion.walls : [],
+      meta: fusion.meta || {},
+    };
+    const json = JSON.stringify(summaryPayload);
+    const maxLen = 8000;
+    const truncated = json.length > maxLen ? `${json.slice(0, maxLen)}...` : json;
+    const label = json.length > maxLen ? 'FUSION_DATA (truncated)' : 'FUSION_DATA';
+    return `\n${label}:\n${truncated}`;
   }
 
   private async invokeModel(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]) {

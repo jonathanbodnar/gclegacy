@@ -1,7 +1,19 @@
 export const TAKEOFF_JSON_SCHEMA = {
   type: 'object',
-  required: ['sheets', 'rooms', 'walls', 'electrical', 'meta'],
+  required: ['project', 'sheets', 'levels', 'rooms', 'walls', 'meta'],
   properties: {
+    project: {
+      type: 'object',
+      properties: {
+        name: { type: ['string', 'null'] },
+        number: { type: ['string', 'null'] },
+        address: { type: ['string', 'null'] },
+        total_area_sqft: { type: ['number', 'null'] },
+        client: { type: ['string', 'null'] },
+        notes: { type: ['string', 'null'] },
+      },
+      additionalProperties: false,
+    },
     sheets: {
       type: 'array',
       items: {
@@ -17,40 +29,117 @@ export const TAKEOFF_JSON_SCHEMA = {
             type: ['string', 'null'],
             enum: ['dimension-calibration', 'title-block', 'fallback', null],
           },
+          disciplines: {
+            type: 'array',
+            items: { type: 'string' },
+          },
         },
+        additionalProperties: false,
+      },
+    },
+    levels: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: { type: 'string' },
+          elevation_ft: { type: ['number', 'null'] },
+          height_ft: { type: ['number', 'null'] },
+          reference_sheet: { type: ['string', 'null'] },
+          ceiling_heights: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                room_number: { type: ['string', 'null'] },
+                height_ft: { type: ['number', 'null'] },
+                heightSource: {
+                  type: ['string', 'null'],
+                  enum: ['rcp', 'schedule', 'assumption', null],
+                },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
       },
     },
     rooms: {
       type: 'array',
       items: {
         type: 'object',
-        required: ['id', 'name', 'area', 'areaSource', 'confidence'],
+        required: ['number', 'name'],
         properties: {
-          id: { type: 'string' },
+          number: { type: 'string' },
           name: { type: 'string' },
-          width: { type: ['number', 'null'] },
-          length: { type: ['number', 'null'] },
-          area: { type: 'number' },
-          areaSource: { type: 'string', enum: ['printed', 'computed', 'missing'] },
-          confidence: { type: 'number' },
+          level: { type: ['string', 'null'] },
+          sheet_refs: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+          approx_area_sqft: { type: ['number', 'null'] },
+          area_source: {
+            type: ['string', 'null'],
+            enum: ['printed', 'computed', 'assumed', null],
+          },
+          finish: {
+            type: ['object', 'null'],
+            properties: {
+              floor: { type: ['string', 'null'] },
+              walls: {
+                type: 'array',
+                items: { type: 'string' },
+              },
+              ceiling: { type: ['string', 'null'] },
+              base: { type: ['string', 'null'] },
+            },
+            additionalProperties: false,
+          },
+          bounding_box_px: {
+            type: ['array', 'null'],
+            items: { type: 'number' },
+            minItems: 4,
+            maxItems: 4,
+          },
+          centroid_px: {
+            type: ['array', 'null'],
+            items: { type: 'number' },
+            minItems: 2,
+            maxItems: 2,
+          },
+          confidence: { type: ['number', 'null'] },
           notes: { type: ['string', 'null'] },
         },
+        additionalProperties: false,
       },
     },
     walls: {
       type: 'array',
       items: {
         type: 'object',
-        required: ['id', 'type', 'length', 'confidence'],
+        required: ['id'],
         properties: {
           id: { type: 'string' },
-          type: { type: 'string' },
-          length: { type: 'number' },
-          height: { type: ['number', 'null'] },
+          partition_type: { type: ['string', 'null'] },
+          new_or_existing: { type: ['string', 'null'], enum: ['new', 'existing', 'demo', null] },
+          from_room: { type: ['string', 'null'] },
+          to_room: { type: ['string', 'null'] },
+          length_ft: { type: ['number', 'null'] },
+          height_ft: { type: ['number', 'null'] },
           heightSource: { type: ['string', 'null'], enum: ['rcp', 'assumption', null] },
-          areaSF: { type: ['number', 'null'] },
-          confidence: { type: 'number' },
+          polyline_px: {
+            type: ['array', 'null'],
+            items: {
+              type: 'array',
+              items: { type: 'number' },
+              minItems: 2,
+            },
+          },
+          notes: { type: ['string', 'null'] },
         },
+        additionalProperties: false,
       },
     },
     electrical: {
@@ -62,7 +151,9 @@ export const TAKEOFF_JSON_SCHEMA = {
           properties: {
             x: { type: ['number', 'null'] },
             y: { type: ['number', 'null'] },
+            sheet: { type: ['string', 'null'] },
           },
+          additionalProperties: false,
         },
         circuits: {
           type: 'array',
@@ -78,9 +169,11 @@ export const TAKEOFF_JSON_SCHEMA = {
               confidence: { type: 'number' },
               notes: { type: ['string', 'null'] },
             },
+            additionalProperties: false,
           },
         },
       },
+      additionalProperties: false,
     },
     meta: {
       type: 'object',
@@ -92,9 +185,13 @@ export const TAKEOFF_JSON_SCHEMA = {
             linear: { type: 'string' },
             area: { type: 'string' },
           },
+          additionalProperties: false,
         },
         version: { type: 'string' },
+        generatedAt: { type: ['string', 'null'], format: 'date-time' },
       },
+      additionalProperties: false,
     },
   },
+  additionalProperties: false,
 } as const;

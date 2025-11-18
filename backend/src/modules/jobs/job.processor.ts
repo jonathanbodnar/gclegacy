@@ -9,7 +9,18 @@ import { RulesEngineService } from '../rules-engine/rules-engine.service';
 import { PlanAnalysisService } from '../vision/plan-analysis.service';
 import { FeatureExtractionService } from '../vision/feature-extraction.service';
 import { TakeoffAggregatorService } from '../vision/takeoff-aggregator.service';
+import { SheetClassificationService } from '../vision/sheet-classification.service';
 import { FilesService } from '../files/files.service';
+import { ScopeDiagnosisService } from '../scope-diagnosis/scope-diagnosis.service';
+import { CostIntelligenceService } from '../cost-intelligence/cost-intelligence.service';
+import { LaborModelingService } from '../cost-intelligence/labor-modeling.service';
+import { RoomScheduleExtractionService } from '../vision/room-schedule-extraction.service';
+import { RoomSpatialMappingService } from '../vision/room-spatial-mapping.service';
+import { PartitionTypeExtractionService } from '../vision/partition-type-extraction.service';
+import { WallRunExtractionService } from '../vision/wall-run-extraction.service';
+import { CeilingHeightExtractionService } from '../vision/ceiling-height-extraction.service';
+import { FinalDataFusionService } from '../vision/final-data-fusion.service';
+import { ScaleExtractionService, ScaleAnnotation } from '../vision/scale-extraction.service';
 
 interface ProcessJobData {
   jobId: string;
@@ -33,6 +44,17 @@ export class JobProcessor {
     private featureExtractionService: FeatureExtractionService,
     private takeoffAggregator: TakeoffAggregatorService,
     private filesService: FilesService,
+    private scopeDiagnosisService: ScopeDiagnosisService,
+    private costIntelligenceService: CostIntelligenceService,
+    private laborModelingService: LaborModelingService,
+    private roomScheduleExtractionService: RoomScheduleExtractionService,
+    private roomSpatialMappingService: RoomSpatialMappingService,
+    private sheetClassificationService: SheetClassificationService,
+    private partitionTypeExtractionService: PartitionTypeExtractionService,
+    private wallRunExtractionService: WallRunExtractionService,
+    private ceilingHeightExtractionService: CeilingHeightExtractionService,
+    private scaleExtractionService: ScaleExtractionService,
+    private finalDataFusionService: FinalDataFusionService,
   ) {}
 
   @Process('process-job')
@@ -49,6 +71,134 @@ export class JobProcessor {
       await this.reportProgress(job, 10);
       const ingestResult = await this.ingestService.ingestFile(fileId, disciplines, options);
       await this.reportProgress(job, 20);
+
+      // Stage 1: classify sheets using GPT (know which pages drive which prompts)
+      try {
+        const sheetClassifications = await this.sheetClassificationService.classifySheets(
+          ingestResult.sheets || [],
+        );
+        await this.jobsService.mergeJobOptions(jobId, {
+          sheetClassifications,
+        });
+      } catch (classificationError) {
+        this.logger.warn(
+          `Sheet classification failed for job ${jobId}: ${classificationError.message}`,
+        );
+      }
+
+      // Stage 2A: extract room schedules from text
+      let roomSchedules: any[] = [];
+      try {
+        roomSchedules = await this.roomScheduleExtractionService.extractRoomSchedules(
+          ingestResult.sheets || [],
+        );
+        if (roomSchedules.length) {
+          await this.jobsService.mergeJobOptions(jobId, { roomSchedules });
+        }
+      } catch (scheduleError) {
+        this.logger.warn(
+          `Room schedule extraction failed for job ${jobId}: ${scheduleError.message}`,
+        );
+      }
+
+      // Stage 2B: map rooms on floor plans using schedule context
+      let roomSpatialMappings: any[] = [];
+      try {
+        roomSpatialMappings = await this.roomSpatialMappingService.mapRooms(
+          roomSchedules,
+          ingestResult.sheets || [],
+        );
+        if (roomSpatialMappings.length) {
+          await this.jobsService.mergeJobOptions(jobId, { roomSpatialMappings });
+        }
+      } catch (spatialError) {
+        this.logger.warn(
+          `Room spatial mapping failed for job ${jobId}: ${spatialError.message}`,
+        );
+      }
+
+      // Stage 3A: extract partition type definitions
+      let partitionTypes: any[] = [];
+      try {
+        partitionTypes = await this.partitionTypeExtractionService.extractPartitionTypes(
+          ingestResult.sheets || [],
+        );
+        if (partitionTypes.length) {
+          await this.jobsService.mergeJobOptions(jobId, { partitionTypes });
+        }
+      } catch (partitionError) {
+        this.logger.warn(
+          `Partition type extraction failed for job ${jobId}: ${partitionError.message}`,
+        );
+      }
+
+      // Stage 3B: wall run extraction using floor plan imagery
+      let wallRuns: any[] = [];
+      try {
+        wallRuns = await this.wallRunExtractionService.extractWallRuns(
+          ingestResult.sheets || [],
+          partitionTypes,
+        );
+        if (wallRuns.length) {
+          await this.jobsService.mergeJobOptions(jobId, { wallRuns });
+        }
+      } catch (wallError) {
+        this.logger.warn(
+          `Wall run extraction failed for job ${jobId}: ${wallError.message}`,
+        );
+      }
+
+      // Stage 4: ceiling heights from reflected ceiling plans
+      let ceilingHeights: any[] = [];
+      try {
+        ceilingHeights = await this.ceilingHeightExtractionService.extractHeights(
+          ingestResult.sheets || [],
+          roomSpatialMappings || [],
+        );
+        if (ceilingHeights.length) {
+          await this.jobsService.mergeJobOptions(jobId, { ceilingHeights });
+        }
+      } catch (ceilingError) {
+        this.logger.warn(
+          `Ceiling height extraction failed for job ${jobId}: ${ceilingError.message}`,
+        );
+      }
+
+      // Stage 5: extract sheet/viewport scale annotations
+      let scaleAnnotations: ScaleAnnotation[] = [];
+      try {
+        scaleAnnotations = await this.scaleExtractionService.extractScales(
+          ingestResult.sheets || [],
+        );
+        if (scaleAnnotations.length) {
+          await this.jobsService.mergeJobOptions(jobId, { scaleAnnotations });
+        }
+      } catch (scaleError) {
+        this.logger.warn(
+          `Scale extraction failed for job ${jobId}: ${scaleError.message}`,
+        );
+      }
+
+      // Stage 6: fuse room/wall data for final aggregation
+      let fusionData: any;
+      try {
+        fusionData = this.finalDataFusionService.fuse({
+          sheets: ingestResult.sheets || [],
+          roomSchedules,
+          roomSpatialMappings,
+          ceilingHeights,
+          wallRuns,
+          partitionTypes,
+          scaleAnnotations,
+        });
+        if (fusionData) {
+          await this.jobsService.mergeJobOptions(jobId, { fusionData });
+        }
+      } catch (fusionError) {
+        this.logger.warn(
+          `Final data fusion failed for job ${jobId}: ${fusionError.message}`,
+        );
+      }
 
       // Step 2: Real plan analysis with OpenAI Vision (25% -> 60% progress)
       await this.reportProgress(job, 25);
@@ -96,13 +246,61 @@ export class JobProcessor {
       // Step 3: Save features to database (80% progress)
       await this.saveFeatures(jobId, features);
       await this.reportProgress(job, 80);
-      await this.generateSchemaTakeoff(jobId, analysisResult.pages || [], analysisResult.summary, features);
+
+      // Scope diagnosis upgrade - capture CSI divisions, vertical context, fittings
+      let scopeDiagnosis: any = undefined;
+      try {
+        scopeDiagnosis = await this.scopeDiagnosisService.diagnoseScope({
+          jobId,
+          fileId,
+          disciplines,
+          targets,
+          ingestResult,
+          analysisSummary: analysisResult.summary,
+          features,
+        });
+        await this.jobsService.mergeJobOptions(jobId, {
+          scopeDiagnosis,
+        });
+      } catch (scopeError) {
+        this.logger.warn(
+          `Scope diagnosis failed for job ${jobId}: ${scopeError.message}`,
+        );
+      }
+
+      await this.generateSchemaTakeoff(jobId, analysisResult.pages || [], analysisResult.summary, features, fusionData);
 
       // Step 4: Apply materials rules if specified (95% progress)
       if (materialsRuleSetId) {
         await this.rulesEngineService.applyRules(jobId, materialsRuleSetId, features);
       }
       await this.reportProgress(job, 95);
+
+      // Cost intelligence & labor modeling snapshot
+      try {
+        const costIntelligence =
+          this.costIntelligenceService.generateCostSnapshot({
+            jobId,
+            features,
+            scopeDiagnosis,
+            materialsRuleSetId,
+          });
+        const laborModel = this.laborModelingService.buildLaborPlan({
+          jobId,
+          features,
+          disciplines,
+          scopeDiagnosis,
+        });
+
+        await this.jobsService.mergeJobOptions(jobId, {
+          costIntelligence,
+          laborModel,
+        });
+      } catch (costError) {
+        this.logger.warn(
+          `Cost/labor modeling failed for job ${jobId}: ${costError.message}`,
+        );
+      }
 
       // Step 5: Generate artifacts and complete (100% progress)
       await this.generateArtifacts(jobId, ingestResult, features);
@@ -250,6 +448,7 @@ export class JobProcessor {
     pages: any[],
     summary: any,
     features: any[],
+    fusionData?: any,
   ): Promise<void> {
     try {
       const result = await this.takeoffAggregator.aggregate({
@@ -257,6 +456,7 @@ export class JobProcessor {
         pages,
         summary,
         features,
+        fusion: fusionData,
       });
       if (result) {
         await this.jobsService.mergeJobOptions(jobId, { takeoff: result });

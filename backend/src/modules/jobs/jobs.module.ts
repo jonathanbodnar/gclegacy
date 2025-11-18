@@ -8,6 +8,8 @@ import { IngestModule } from "../ingest/ingest.module";
 import { RulesEngineModule } from "../rules-engine/rules-engine.module";
 import { VisionModule } from "../vision/vision.module";
 import { FilesModule } from "../files/files.module";
+import { ScopeDiagnosisModule } from "../scope-diagnosis/scope-diagnosis.module";
+import { CostIntelligenceModule } from "../cost-intelligence/cost-intelligence.module";
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { FilesModule } from "../files/files.module";
     RulesEngineModule,
     VisionModule,
     FilesModule,
+    ScopeDiagnosisModule,
+    CostIntelligenceModule,
   ],
   controllers: [JobsController],
   providers: [JobsService, JobProcessor],

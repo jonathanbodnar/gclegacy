@@ -22,13 +22,42 @@ export interface SheetData {
   discipline?: string;
   scale?: string;
   units?: string;
+  sheetIdGuess?: string;
+  widthPx?: number;
+  heightPx?: number;
+  imagePath?: string;
+  pageSize?: {
+    widthPt: number;
+    heightPt: number;
+  };
+  renderDpi?: number;
   content: {
     rasterData?: Buffer;
     vectorData?: any;
     textData?: any;
     layerData?: any;
     modelData?: any;
+    metadata?: Record<string, any>;
   };
+  classification?: SheetClassificationMetadata;
+}
+
+export interface SheetClassificationMetadata {
+  sheetId?: string | null;
+  title?: string | null;
+  discipline: string[];
+  category:
+    | 'floor_plan'
+    | 'fixture_plan'
+    | 'finish_plan'
+    | 'reflected_ceiling'
+    | 'roof_plan'
+    | 'door_schedule'
+    | 'room_schedule'
+    | 'code_data'
+    | 'other';
+  confidence?: number | null;
+  notes?: string | null;
 }
 
 @Injectable()
