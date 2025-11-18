@@ -4,13 +4,16 @@ import OpenAI from 'openai';
 
 import { SheetData } from '../ingest/ingest.service';
 import { RoomSpatialMapping } from './room-spatial-mapping.service';
+import { SpaceDefinition } from './space-extraction.service';
 
 export interface RoomCeilingHeight {
   sheetIndex: number;
   sheetName?: string;
   room_number: string;
+  space_id?: string | null;
   height_ft?: number | null;
   source_note?: string | null;
+  source_sheet?: string | null;
   confidence?: number | null;
   notes?: string | null;
 }
@@ -19,11 +22,13 @@ const CEILING_HEIGHT_SCHEMA = {
   type: 'array',
   items: {
     type: 'object',
-    required: ['room_number'],
+    required: ['space_id'],
     properties: {
-      room_number: { type: 'string' },
+      space_id: { type: 'string' },
+      room_number: { type: ['string', 'null'] },
       height_ft: { type: ['number', 'null'] },
       source_note: { type: ['string', 'null'] },
+      source_sheet: { type: ['string', 'null'] },
       confidence: { type: ['number', 'null'] },
       notes: { type: ['string', 'null'] },
     },
@@ -64,14 +69,15 @@ export class CeilingHeightExtractionService {
   async extractHeights(
     sheets: SheetData[],
     roomSpatialMappings: RoomSpatialMapping[],
+    spaces: SpaceDefinition[] = [],
   ): Promise<RoomCeilingHeight[]> {
-    if (!this.openai || !roomSpatialMappings.length) {
+    if (!this.openai) {
       return [];
     }
 
     const rcSheets = sheets.filter(
       (sheet) =>
-        sheet.classification?.category === 'reflected_ceiling' &&
+        sheet.classification?.category === 'rcp' &&
         sheet.content?.rasterData &&
         sheet.content.rasterData.length > 0,
     );
@@ -80,29 +86,57 @@ export class CeilingHeightExtractionService {
       return [];
     }
 
-    const roomContextJson = JSON.stringify(
-      roomSpatialMappings.map((mapping) => ({
-        room_number: mapping.room_number,
-        room_name: mapping.room_name,
-        bounding_box_px: mapping.bounding_box_px,
-      })),
-    );
+    if (!roomSpatialMappings.length && !spaces.length) {
+      return [];
+    }
 
-    const roomContext =
-      roomContextJson.length > this.roomContextBudget
-        ? roomContextJson.slice(0, this.roomContextBudget) + '...'
-        : roomContextJson;
+    const spatialBySheet = new Map<number, Array<{ space_id: string; name?: string | null; bbox_px?: [number, number, number, number] | null }>>();
+    for (const space of spaces) {
+      if (!spatialBySheet.has(space.sheetIndex)) {
+        spatialBySheet.set(space.sheetIndex, []);
+      }
+      spatialBySheet.get(space.sheetIndex)!.push({
+        space_id: space.space_id,
+        name: space.name || space.space_id,
+        bbox_px: space.bbox_px,
+      });
+    }
+
+    const roomMappingBySheet = new Map<number, Array<{ space_id: string; name?: string | null; bbox_px?: [number, number, number, number] | null }>>();
+    for (const mapping of roomSpatialMappings) {
+      if (!roomMappingBySheet.has(mapping.sheetIndex)) {
+        roomMappingBySheet.set(mapping.sheetIndex, []);
+      }
+      roomMappingBySheet.get(mapping.sheetIndex)!.push({
+        space_id: mapping.room_number,
+        name: mapping.room_name || mapping.room_number,
+        bbox_px: mapping.bounding_box_px || null,
+      });
+    }
 
     const results: RoomCeilingHeight[] = [];
 
     for (const sheet of rcSheets) {
       try {
-        const entries = await this.extractFromSheet(sheet, roomContext);
+        const contextEntries =
+          spatialBySheet.get(sheet.index) || roomMappingBySheet.get(sheet.index) || [];
+        const contextJson = JSON.stringify(contextEntries);
+        const trimmedContext =
+          contextJson.length > this.roomContextBudget
+            ? contextJson.slice(0, this.roomContextBudget) + '...'
+            : contextJson;
+        const entries = await this.extractFromSheet(sheet, trimmedContext);
         for (const entry of entries) {
           results.push({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
-            ...entry,
+            room_number: entry.room_number || entry.space_id,
+            space_id: entry.space_id,
+            height_ft: entry.height_ft,
+            source_note: entry.source_note,
+            source_sheet: entry.source_sheet ?? sheet.classification?.category ?? null,
+            confidence: entry.confidence,
+            notes: entry.notes,
           });
         }
       } catch (error: any) {
@@ -116,7 +150,7 @@ export class CeilingHeightExtractionService {
   }
 
   private async extractFromSheet(sheet: SheetData, roomContext: string) {
-    const text = sheet.content?.textData || '';
+    const text = sheet.content?.textData || sheet.text || '';
     const snippet =
       text.length > this.textBudget ? `${text.slice(0, this.textBudget)}...` : text;
     const buffer = sheet.content?.rasterData;
@@ -126,10 +160,10 @@ export class CeilingHeightExtractionService {
 
     const base64Image = buffer.toString('base64');
     const instructions =
-      `You are extracting ceiling heights by room from a reflected ceiling plan.\n` +
+      `You are extracting ceiling heights by space from a reflected ceiling plan or elevation.\n` +
       `Text snippet:\n${snippet}\n` +
-      `rooms_from_floor_plan:\n${roomContext}\n` +
-      `For each room_number, output height_ft (numeric) if visible, source_note text, confidence (0-1), and notes if ambiguous.\n` +
+      `spaces_from_plan:\n${roomContext}\n` +
+      `For each space_id, output height_ft (numeric) if visible, source_sheet label (e.g., RCP, ELEVATIONS), source_note text, confidence (0-1), and notes if ambiguous.\n` +
       `Return JSON array only.`;
 
     const response = await this.openai!.chat.completions.create({

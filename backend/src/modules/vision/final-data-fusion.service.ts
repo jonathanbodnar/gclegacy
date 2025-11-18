@@ -8,6 +8,8 @@ import { RoomCeilingHeight } from './ceiling-height-extraction.service';
 import { WallRunSegment } from './wall-run-extraction.service';
 import { PartitionTypeDefinition } from './partition-type-extraction.service';
 import { ScaleAnnotation, ScaleRatio } from './scale-extraction.service';
+import { SpaceDefinition } from './space-extraction.service';
+import { SpaceFinishDefinition, SpaceFinishCategory } from './materials-extraction.service';
 
 export interface FusedRoom {
   room_number: string;
@@ -16,9 +18,16 @@ export interface FusedRoom {
   wall_finish_code?: string | null;
   ceiling_finish_code?: string | null;
   base_code?: string | null;
+  space_id?: string | null;
   bounding_box_px?: number[] | null;
   label_center_px?: [number, number] | null;
   height_ft?: number | null;
+  finishes?: {
+    floor?: string | null;
+    walls?: (string | null)[];
+    ceiling?: string | null;
+    base?: string | null;
+  };
   notes?: string[];
   sheet_refs?: string[];
 }
@@ -29,6 +38,7 @@ export interface FusedWall {
   new_or_existing?: string | null;
   endpoints_px: [number, number][];
   adjacent_rooms?: (string | null)[];
+  adjacent_spaces?: (string | null)[];
   length_px: number;
   length_ft?: number | null;
   notes?: string | null;
@@ -41,6 +51,8 @@ export interface FusedDataSummary {
     partitionTypes?: PartitionTypeDefinition[];
     sheetCount: number;
     scaleAnnotations?: ScaleAnnotation[];
+    spaces?: SpaceDefinition[];
+    spaceFinishes?: SpaceFinishDefinition[];
   };
 }
 
@@ -60,6 +72,8 @@ export class FinalDataFusionService {
     wallRuns?: WallRunSegment[];
     partitionTypes?: PartitionTypeDefinition[];
     scaleAnnotations?: ScaleAnnotation[];
+    spaces?: SpaceDefinition[];
+    spaceFinishes?: SpaceFinishDefinition[];
   }): FusedDataSummary {
     const sheetsByIndex = new Map<number, SheetData>();
     for (const sheet of input.sheets || []) {
@@ -72,6 +86,8 @@ export class FinalDataFusionService {
       input.roomSchedules || [],
       input.roomSpatialMappings || [],
       input.ceilingHeights || [],
+      input.spaces || [],
+      input.spaceFinishes || [],
     );
     const walls = this.combineWalls(
       input.wallRuns || [],
@@ -86,6 +102,8 @@ export class FinalDataFusionService {
         partitionTypes: input.partitionTypes || [],
         sheetCount: input.sheets?.length || 0,
         scaleAnnotations: input.scaleAnnotations || [],
+        spaces: input.spaces || [],
+        spaceFinishes: input.spaceFinishes || [],
       },
     };
   }
@@ -94,6 +112,8 @@ export class FinalDataFusionService {
     schedules: RoomScheduleEntry[],
     mappings: RoomSpatialMapping[],
     heights: RoomCeilingHeight[],
+    spaces: SpaceDefinition[],
+    spaceFinishes: SpaceFinishDefinition[],
   ): FusedRoom[] {
     const roomMap = new Map<string, {
       room: FusedRoom;
@@ -154,6 +174,34 @@ export class FinalDataFusionService {
       if (height.sheetName) entry.sheetRefs.add(height.sheetName);
     }
 
+    const spaceFinishesByCategory = spaceFinishes.reduce((acc, finish) => {
+      acc[finish.category] = finish;
+      return acc;
+    }, {} as Record<SpaceFinishCategory, SpaceFinishDefinition>);
+
+    const spaceLookup = new Map<string, SpaceDefinition>();
+    for (const space of spaces) {
+      spaceLookup.set(space.space_id, space);
+    }
+
+    for (const space of spaces) {
+      const entry = ensureRoom(space.space_id, space.name);
+      entry.room.space_id = space.space_id;
+      entry.room.bounding_box_px = space.bbox_px || entry.room.bounding_box_px || null;
+      if (space.sheetName) {
+        entry.sheetRefs.add(space.sheetName);
+      }
+      const finish = spaceFinishesByCategory[space.category];
+      if (finish) {
+        entry.room.finishes = {
+          floor: finish.floor || null,
+          walls: finish.walls,
+          ceiling: finish.ceiling || null,
+          base: finish.base || null,
+        };
+      }
+    }
+
     return Array.from(roomMap.values()).map(({ room, notes, sheetRefs }) => ({
       ...room,
       notes: notes.size ? Array.from(notes) : undefined,
@@ -181,6 +229,7 @@ export class FinalDataFusionService {
         new_or_existing: segment.new_or_existing || null,
         endpoints_px: segment.endpoints_px,
         adjacent_rooms: segment.adjacent_rooms,
+        adjacent_spaces: segment.space_ids,
         length_px: Number(lengthPx.toFixed(2)),
         length_ft: lengthFt !== undefined ? Number(lengthFt.toFixed(2)) : null,
         notes: segment.notes || null,

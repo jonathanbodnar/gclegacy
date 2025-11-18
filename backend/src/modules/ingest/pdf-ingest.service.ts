@@ -4,7 +4,8 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-import { IngestResult, SheetData } from './ingest.service';
+import { IngestResult, SheetData, RawPage } from './ingest.service';
+import { renderPdfPage } from '../../common/pdf/pdf-renderer';
 
 @Injectable()
 export class PdfIngestService {
@@ -18,7 +19,6 @@ export class PdfIngestService {
   ): Promise<IngestResult> {
     this.logger.log(`Processing PDF file: ${fileId}`);
 
-    let tempPdfPath: string | null = null;
     try {
       // Parse PDF for quick metadata
       const pdfData = await pdfParse(fileBuffer);
@@ -30,12 +30,9 @@ export class PdfIngestService {
       });
       const pdfDoc = await loadingTask.promise;
 
-      // Prepare pdf2pic converter for raster images
-      const converterInfo = await this.createPdfConverter(fileBuffer);
-      const { convert, tempPdfPath: tempPath, density } = converterInfo;
-      tempPdfPath = tempPath;
-
+      const renderDpi = parseInt(process.env.PDF_RENDER_DPI || '220', 10);
       const sheets: SheetData[] = [];
+      const rawPages: RawPage[] = [];
 
       for (let i = 0; i < pdfDoc.numPages; i++) {
         const pageNumber = i + 1;
@@ -52,9 +49,9 @@ export class PdfIngestService {
           heightPt: viewport.height,
         };
 
-        const rasterResult = await this.renderPageImage(convert, pageNumber);
-        const { widthPx, heightPx } = await this.measureImage(rasterResult.buffer);
-        const imagePath = rasterResult.path;
+        const renderedImage = await renderPdfPage(page, { dpi: renderDpi });
+        const imagePath = await this.saveTempImage(renderedImage.buffer);
+        const { widthPx, heightPx } = renderedImage;
 
         // Detect discipline from page content
         const discipline = this.detectDisciplineFromText(pageText);
@@ -70,25 +67,33 @@ export class PdfIngestService {
           scale: scaleInfo.scale,
           units: scaleInfo.units,
           sheetIdGuess,
+          text: pageText,
           widthPx,
           heightPx,
           imagePath,
           pageSize,
-          renderDpi: density,
+          renderDpi,
           content: {
             textData: pageText,
-            rasterData: rasterResult.buffer,
+            rasterData: renderedImage.buffer,
             metadata: {
               widthPx,
               heightPx,
               imagePath,
               pageSize,
-              renderDpi: density,
+              renderDpi,
             },
           },
         };
         
         sheets.push(sheet);
+        rawPages.push({
+          index: i,
+          text: pageText,
+          imagePath,
+          widthPx,
+          heightPx,
+        });
       }
 
       const detectedDisciplines = [...new Set(sheets.map(s => s.discipline).filter(Boolean))];
@@ -96,6 +101,7 @@ export class PdfIngestService {
       return {
         fileId,
         sheets,
+        rawPages,
         metadata: {
           totalPages: pdfData.numpages,
           detectedDisciplines,
@@ -106,10 +112,6 @@ export class PdfIngestService {
     } catch (error) {
       this.logger.error(`Error processing PDF ${fileId}:`, error);
       throw error;
-    } finally {
-      if (tempPdfPath) {
-        await fs.unlink(tempPdfPath).catch(() => undefined);
-      }
     }
   }
 
@@ -190,69 +192,9 @@ export class PdfIngestService {
     return strings.join(' ').replace(/\s+/g, ' ').trim();
   }
 
-  private async createPdfConverter(fileBuffer: Buffer): Promise<{
-    convert: (page: number, options?: any) => Promise<any>;
-    tempPdfPath: string;
-    density: number;
-  }> {
-    const pdf2picModule = await import('pdf2pic');
-    const pdf2pic = pdf2picModule.default || pdf2picModule;
-    const tempDir = tmpdir();
-    const tempPdfPath = join(tempDir, `pdf_preprocess_${randomUUID()}.pdf`);
-    await fs.writeFile(tempPdfPath, fileBuffer);
-
-    const density = parseInt(process.env.PDF_RENDER_DPI || '220', 10);
-    const convert = pdf2pic.fromPath(tempPdfPath, {
-      density,
-      format: 'png',
-      width: parseInt(process.env.PDF_RENDER_WIDTH || '2200', 10),
-      height: parseInt(process.env.PDF_RENDER_HEIGHT || '3400', 10),
-      preserveAspectRatio: true,
-      saveFilename: `sheet_${randomUUID()}`,
-      savePath: tempDir,
-    });
-
-    return { convert, tempPdfPath, density };
-  }
-
-  private async renderPageImage(convert: any, pageNumber: number): Promise<{ buffer: Buffer; path: string }> {
-    let result: any;
-    try {
-      result = await convert(pageNumber, { responseType: 'buffer' });
-    } catch (error) {
-      result = await convert(pageNumber, { responseType: 'image' });
-    }
-
-    let buffer: Buffer | null = null;
-    if (result?.buffer && Buffer.isBuffer(result.buffer)) {
-      buffer = result.buffer;
-    } else if (result?.base64 && typeof result.base64 === 'string') {
-      buffer = Buffer.from(result.base64, 'base64');
-    } else if (result?.path) {
-      buffer = await fs.readFile(result.path);
-    }
-
-    if (!buffer || buffer.length === 0) {
-      throw new Error('pdf2pic failed to render page image. Ensure GraphicsMagick/ImageMagick are installed.');
-    }
-
+  private async saveTempImage(buffer: Buffer): Promise<string> {
     const tempImagePath = join(tmpdir(), `sheet_image_${randomUUID()}.png`);
     await fs.writeFile(tempImagePath, buffer);
-    return { buffer, path: tempImagePath };
-  }
-
-  private async measureImage(buffer: Buffer): Promise<{ widthPx: number; heightPx: number }> {
-    let sharpModule: any;
-    try {
-      sharpModule = require('sharp');
-    } catch {
-      throw new Error('Sharp module is required to analyze page images. Please install: npm install sharp');
-    }
-
-    const metadata = await sharpModule(buffer).metadata();
-    return {
-      widthPx: metadata.width || 0,
-      heightPx: metadata.height || 0,
-    };
+    return tempImagePath;
   }
 }

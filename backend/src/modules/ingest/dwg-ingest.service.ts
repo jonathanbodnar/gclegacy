@@ -27,6 +27,7 @@ export class DwgIngestService {
         discipline: this.detectDisciplineFromLayers(dwgData.layers),
         scale: dwgData.scale,
         units: dwgData.units,
+        text: '',
         content: {
           vectorData: dwgData.entities,
           // Layer information is crucial for DWG files
@@ -35,10 +36,18 @@ export class DwgIngestService {
       };
 
       const detectedDisciplines = sheet.discipline ? [sheet.discipline] : [];
+      const rawPages = [{
+        index: sheet.index,
+        text: sheet.text || '',
+        imagePath: sheet.imagePath,
+        widthPx: sheet.widthPx,
+        heightPx: sheet.heightPx,
+      }];
 
       return {
         fileId,
         sheets: [sheet],
+        rawPages,
         metadata: {
           totalPages: 1,
           detectedDisciplines,

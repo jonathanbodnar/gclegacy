@@ -4,6 +4,7 @@ import OpenAI from 'openai';
 
 import { SheetData } from '../ingest/ingest.service';
 import { PartitionTypeDefinition } from './partition-type-extraction.service';
+import { SpaceDefinition } from './space-extraction.service';
 
 export interface WallRunSegment {
   sheetIndex: number;
@@ -13,6 +14,7 @@ export interface WallRunSegment {
   new_or_existing?: 'new' | 'existing' | 'demo' | null;
   endpoints_px: [number, number][];
   adjacent_rooms?: (string | null)[];
+  space_ids?: (string | null)[];
   notes?: string | null;
   confidence?: number | null;
 }
@@ -40,6 +42,11 @@ const WALL_RUN_SCHEMA = {
         minItems: 2,
       },
       adjacent_rooms: {
+        type: 'array',
+        items: { type: ['string', 'null'] },
+        maxItems: 2,
+      },
+      space_ids: {
         type: 'array',
         items: { type: ['string', 'null'] },
         maxItems: 2,
@@ -79,15 +86,21 @@ export class WallRunExtractionService {
   async extractWallRuns(
     sheets: SheetData[],
     partitionTypes: PartitionTypeDefinition[],
+    spaces: SpaceDefinition[] = [],
   ): Promise<WallRunSegment[]> {
     if (!this.openai) return [];
 
-    const floorPlanSheets = sheets.filter(
-      (sheet) =>
-        sheet.classification?.category === 'floor_plan' &&
+    const floorPlanSheets = sheets.filter((sheet) => {
+      const category = sheet.classification?.category;
+      const isPlanCategory =
+        category === 'floor' || category === 'demo_floor';
+      const isPrimaryPlan = sheet.classification?.isPrimaryPlan;
+      return (
+        (isPlanCategory || isPrimaryPlan) &&
         sheet.content?.rasterData &&
-        sheet.content.rasterData.length > 0,
-    );
+        sheet.content.rasterData.length > 0
+      );
+    });
 
     if (!floorPlanSheets.length) {
       return [];
@@ -108,8 +121,9 @@ export class WallRunExtractionService {
     const results: WallRunSegment[] = [];
 
     for (const sheet of floorPlanSheets) {
+      const sheetSpaces = spaces.filter((space) => space.sheetIndex === sheet.index);
       try {
-        const segments = await this.extractFromSheet(sheet, partitionContext);
+        const segments = await this.extractFromSheet(sheet, partitionContext, sheetSpaces);
         for (const segment of segments) {
           results.push({
             sheetIndex: sheet.index,
@@ -127,18 +141,35 @@ export class WallRunExtractionService {
     return results;
   }
 
-  private async extractFromSheet(sheet: SheetData, partitionContext: string) {
+  private async extractFromSheet(
+    sheet: SheetData,
+    partitionContext: string,
+    sheetSpaces: SpaceDefinition[],
+  ) {
     const buffer = sheet.content?.rasterData;
     if (!buffer || !buffer.length) {
       throw new Error('Missing raster data for wall extraction');
     }
 
     const base64Image = buffer.toString('base64');
+    const spacesContextJson = JSON.stringify(
+      sheetSpaces.map((space) => ({
+        space_id: space.space_id,
+        name: space.name,
+        category: space.category,
+        bbox_px: space.bbox_px,
+      })),
+    );
+    const spacesContext =
+      spacesContextJson.length > this.partitionContextBudget
+        ? spacesContextJson.slice(0, this.partitionContextBudget) + '...'
+        : spacesContextJson;
     const instructions =
       `You are analyzing an architectural floor plan to enumerate wall segments.\n` +
       `Partition type definitions:\n${partitionContext}\n` +
+      `Spaces on this sheet:\n${spacesContext || '[]'}\n` +
       `For each straight wall segment, return id, partition_type_id, new_or_existing, endpoints_px (pixel coordinates), ` +
-      `adjacent_rooms (room numbers separated by the wall), confidence, and notes if uncertain.\n` +
+      `space_ids (space ids adjacent to the wall), adjacent_rooms if noted, confidence, and notes if uncertain.\n` +
       `Use "existing" if a segment appears existing/dashed. If type or rooms are unclear, return null but keep the segment.`;
 
     const response = await this.openai!.chat.completions.create({

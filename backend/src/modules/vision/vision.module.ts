@@ -11,6 +11,8 @@ import { WallRunExtractionService } from './wall-run-extraction.service';
 import { CeilingHeightExtractionService } from './ceiling-height-extraction.service';
 import { FinalDataFusionService } from './final-data-fusion.service';
 import { ScaleExtractionService } from './scale-extraction.service';
+import { SpaceExtractionService } from './space-extraction.service';
+import { MaterialsExtractionService } from './materials-extraction.service';
 
 @Module({
   providers: [
@@ -26,6 +28,8 @@ import { ScaleExtractionService } from './scale-extraction.service';
     CeilingHeightExtractionService,
     FinalDataFusionService,
     ScaleExtractionService,
+    SpaceExtractionService,
+    MaterialsExtractionService,
   ],
   exports: [
     OpenAIVisionService,
@@ -40,6 +44,8 @@ import { ScaleExtractionService } from './scale-extraction.service';
     CeilingHeightExtractionService,
     FinalDataFusionService,
     ScaleExtractionService,
+    SpaceExtractionService,
+    MaterialsExtractionService,
   ],
 })
 export class VisionModule {}

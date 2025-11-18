@@ -21,6 +21,8 @@ import { WallRunExtractionService } from '../vision/wall-run-extraction.service'
 import { CeilingHeightExtractionService } from '../vision/ceiling-height-extraction.service';
 import { FinalDataFusionService } from '../vision/final-data-fusion.service';
 import { ScaleExtractionService, ScaleAnnotation } from '../vision/scale-extraction.service';
+import { SpaceExtractionService, SpaceDefinition } from '../vision/space-extraction.service';
+import { MaterialsExtractionService, SpaceFinishDefinition } from '../vision/materials-extraction.service';
 
 interface ProcessJobData {
   jobId: string;
@@ -54,6 +56,8 @@ export class JobProcessor {
     private wallRunExtractionService: WallRunExtractionService,
     private ceilingHeightExtractionService: CeilingHeightExtractionService,
     private scaleExtractionService: ScaleExtractionService,
+    private spaceExtractionService: SpaceExtractionService,
+    private materialsExtractionService: MaterialsExtractionService,
     private finalDataFusionService: FinalDataFusionService,
   ) {}
 
@@ -83,6 +87,34 @@ export class JobProcessor {
       } catch (classificationError) {
         this.logger.warn(
           `Sheet classification failed for job ${jobId}: ${classificationError.message}`,
+        );
+      }
+
+      // Stage 2: extract generic spaces from plan sheets
+      let spaces: SpaceDefinition[] = [];
+      try {
+        spaces = await this.spaceExtractionService.extractSpaces(ingestResult.sheets || []);
+        if (spaces.length) {
+          await this.jobsService.mergeJobOptions(jobId, { spaces });
+        }
+      } catch (spaceError) {
+        this.logger.warn(
+          `Space extraction failed for job ${jobId}: ${spaceError.message}`,
+        );
+      }
+
+      // Stage 2B: finishes/materials extraction for materials sheets
+      let spaceFinishes: SpaceFinishDefinition[] = [];
+      try {
+        spaceFinishes = await this.materialsExtractionService.extractFinishes(
+          ingestResult.sheets || [],
+        );
+        if (spaceFinishes.length) {
+          await this.jobsService.mergeJobOptions(jobId, { spaceFinishes });
+        }
+      } catch (materialsError) {
+        this.logger.warn(
+          `Materials extraction failed for job ${jobId}: ${materialsError.message}`,
         );
       }
 
@@ -138,6 +170,7 @@ export class JobProcessor {
         wallRuns = await this.wallRunExtractionService.extractWallRuns(
           ingestResult.sheets || [],
           partitionTypes,
+          spaces,
         );
         if (wallRuns.length) {
           await this.jobsService.mergeJobOptions(jobId, { wallRuns });
@@ -154,6 +187,7 @@ export class JobProcessor {
         ceilingHeights = await this.ceilingHeightExtractionService.extractHeights(
           ingestResult.sheets || [],
           roomSpatialMappings || [],
+          spaces || [],
         );
         if (ceilingHeights.length) {
           await this.jobsService.mergeJobOptions(jobId, { ceilingHeights });
@@ -190,6 +224,8 @@ export class JobProcessor {
           wallRuns,
           partitionTypes,
           scaleAnnotations,
+          spaces,
+          spaceFinishes,
         });
         if (fusionData) {
           await this.jobsService.mergeJobOptions(jobId, { fusionData });

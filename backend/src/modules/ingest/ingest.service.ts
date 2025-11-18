@@ -9,6 +9,7 @@ export interface IngestResult {
   jobId?: string;
   fileId: string;
   sheets: SheetData[];
+  rawPages?: RawPage[];
   metadata: {
     totalPages: number;
     detectedDisciplines: string[];
@@ -16,7 +17,15 @@ export interface IngestResult {
   };
 }
 
-export interface SheetData {
+export interface RawPage {
+  index: number;
+  text: string;
+  imagePath?: string;
+  widthPx?: number;
+  heightPx?: number;
+}
+
+export interface SheetData extends RawPage {
   index: number;
   name?: string;
   discipline?: string;
@@ -47,17 +56,21 @@ export interface SheetClassificationMetadata {
   title?: string | null;
   discipline: string[];
   category:
-    | 'floor_plan'
-    | 'fixture_plan'
-    | 'finish_plan'
-    | 'reflected_ceiling'
-    | 'roof_plan'
-    | 'door_schedule'
-    | 'room_schedule'
-    | 'code_data'
+    | 'site'
+    | 'demo_floor'
+    | 'floor'
+    | 'fixture'
+    | 'rcp'
+    | 'elevations'
+    | 'sections'
+    | 'materials'
+    | 'furniture'
+    | 'artwork'
+    | 'rr_details'
     | 'other';
   confidence?: number | null;
   notes?: string | null;
+  isPrimaryPlan?: boolean | null;
 }
 
 @Injectable()
