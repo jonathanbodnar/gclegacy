@@ -19,28 +19,30 @@ export interface SpaceFinishDefinition {
 
 const FINISH_SCHEMA = {
   type: 'object',
-  properties: {
-    cafe: { $ref: '#/$defs/finish' },
-    boh: { $ref: '#/$defs/finish' },
-    restroom: { $ref: '#/$defs/finish' },
-    patio: { $ref: '#/$defs/finish' },
-    other: { $ref: '#/$defs/finish' },
-  },
+  required: ['entries'],
   additionalProperties: false,
-  $defs: {
-    finish: {
-      type: 'object',
-      properties: {
-        floor: { type: ['string', 'null'] },
-        wall: {
-          type: 'array',
-          items: { type: ['string', 'null'] },
+  properties: {
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['category', 'floor', 'walls', 'ceiling', 'base', 'notes'],
+        properties: {
+          category: {
+            type: 'string',
+            enum: ['cafe', 'boh', 'restroom', 'patio', 'other'],
+          },
+          floor: { type: ['string', 'null'] },
+          walls: {
+            type: 'array',
+            items: { type: ['string', 'null'] },
+          },
+          ceiling: { type: ['string', 'null'] },
+          base: { type: ['string', 'null'] },
+          notes: { type: ['string', 'null'] },
         },
-        ceiling: { type: ['string', 'null'] },
-        base: { type: ['string', 'null'] },
-        notes: { type: ['string', 'null'] },
+        additionalProperties: false,
       },
-      additionalProperties: false,
     },
   },
 };
@@ -85,17 +87,17 @@ export class MaterialsExtractionService {
     const results: SpaceFinishDefinition[] = [];
     for (const sheet of finishSheets) {
       const parsed = await this.extractFromSheet(sheet);
-      for (const [category, finishRaw] of Object.entries(parsed)) {
-        const finish = finishRaw as Record<string, any> | null;
+      const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+      for (const finish of entries) {
         results.push({
           sheetIndex: sheet.index,
           sheetName: sheet.name,
-          category: category as SpaceFinishCategory,
-          floor: finish?.floor ?? null,
-          walls: Array.isArray(finish?.wall) ? finish.wall : undefined,
-          ceiling: finish?.ceiling ?? null,
-          base: finish?.base ?? null,
-          notes: finish?.notes ?? null,
+          category: finish.category as SpaceFinishCategory,
+          floor: finish.floor ?? null,
+          walls: Array.isArray(finish.walls) ? finish.walls : undefined,
+          ceiling: finish.ceiling ?? null,
+          base: finish.base ?? null,
+          notes: finish.notes ?? null,
         });
       }
     }
@@ -112,6 +114,7 @@ export class MaterialsExtractionService {
       `You are extracting finishes/materials keyed by space type from a materials/finishes sheet.\n` +
       `Space types: "cafe","boh","restroom","patio","other".\n` +
       `For each type, return floor, wall (array), ceiling, base, and optional notes if the sheet specifies them.\n` +
+      `Return a top-level object {"entries": [...]} where each entry has category plus those fields (use null if unknown).\n` +
       `TEXT_SNIPPET:\n${textSnippet || '(no text extracted)'}`;
 
     const response = await this.openai!.chat.completions.create({
@@ -140,6 +143,6 @@ export class MaterialsExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    return parsed && typeof parsed === 'object' ? parsed : { entries: [] };
   }
 }

@@ -20,29 +20,36 @@ export interface SpaceDefinition {
 }
 
 const SPACE_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['space_id', 'category', 'bbox_px'],
-    properties: {
-      space_id: { type: 'string' },
-      name: { type: ['string', 'null'] },
-      category: {
-        type: 'string',
-        enum: ['cafe', 'sales', 'boh', 'restroom', 'patio', 'other'],
+  type: 'object',
+  required: ['spaces'],
+  additionalProperties: false,
+  properties: {
+    spaces: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['space_id', 'name', 'category', 'bbox_px', 'sheet_ref', 'approx_area_sqft', 'confidence', 'notes'],
+        properties: {
+          space_id: { type: 'string' },
+          name: { type: ['string', 'null'] },
+          category: {
+            type: 'string',
+            enum: ['cafe', 'sales', 'boh', 'restroom', 'patio', 'other'],
+          },
+          bbox_px: {
+            type: 'array',
+            minItems: 4,
+            maxItems: 4,
+            items: { type: 'number' },
+          },
+          sheet_ref: { type: ['string', 'null'] },
+          approx_area_sqft: { type: ['number', 'null'] },
+          confidence: { type: ['number', 'null'] },
+          notes: { type: ['string', 'null'] },
+        },
+        additionalProperties: false,
       },
-      bbox_px: {
-        type: 'array',
-        minItems: 4,
-        maxItems: 4,
-        items: { type: 'number' },
-      },
-      sheet_ref: { type: ['string', 'null'] },
-      approx_area_sqft: { type: ['number', 'null'] },
-      confidence: { type: ['number', 'null'] },
-      notes: { type: ['string', 'null'] },
     },
-    additionalProperties: false,
   },
 };
 
@@ -89,7 +96,8 @@ export class SpaceExtractionService {
     for (const sheet of targetSheets) {
       try {
         const parsed = await this.extractFromSheet(sheet);
-        for (const entry of parsed) {
+        const spaceEntries = Array.isArray(parsed?.spaces) ? parsed.spaces : [];
+        for (const entry of spaceEntries) {
           spaces.push({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
@@ -127,7 +135,7 @@ export class SpaceExtractionService {
       `You are extracting logical spaces (rooms or zones) from a plan.\n` +
       `A "space" is a region of the plan with a distinct use (Cafe, Lounge, Back of House, Restroom, Sales Area, Patio, etc.).\n` +
       `If formal room numbers exist, keep them as space ids; otherwise synthesize descriptive ids (e.g., CAFE, RR-1).\n` +
-      `Return JSON array with: space_id, name, category (cafe/sales/boh/restroom/patio/other), bbox_px [x1,y1,x2,y2], sheet_ref, approx_area_sqft, confidence, notes.\n` +
+      `Return JSON with a top-level object {"spaces": [...]} where each entry includes: space_id, name, category (cafe/sales/boh/restroom/patio/other), bbox_px [x1,y1,x2,y2], sheet_ref, approx_area_sqft, confidence, notes (use null when unknown).\n` +
       `TEXT_SNIPPET:\n${textSnippet || '(no text extracted)'}`;
 
     const base64 = rasterBuffer.toString('base64');
@@ -170,6 +178,6 @@ export class SpaceExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
+    return parsed && typeof parsed === 'object' ? parsed : { spaces: [] };
   }
 }
