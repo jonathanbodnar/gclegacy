@@ -19,20 +19,27 @@ export interface RoomCeilingHeight {
 }
 
 const CEILING_HEIGHT_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['space_id'],
-    properties: {
-      space_id: { type: 'string' },
-      room_number: { type: ['string', 'null'] },
-      height_ft: { type: ['number', 'null'] },
-      source_note: { type: ['string', 'null'] },
-      source_sheet: { type: ['string', 'null'] },
-      confidence: { type: ['number', 'null'] },
-      notes: { type: ['string', 'null'] },
+  type: 'object',
+  required: ['entries'],
+  additionalProperties: false,
+  properties: {
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['space_id', 'room_number', 'height_ft', 'source_sheet', 'source_note', 'confidence', 'notes'],
+        properties: {
+          space_id: { type: 'string' },
+          room_number: { type: ['string', 'null'] },
+          height_ft: { type: ['number', 'null'] },
+          source_note: { type: ['string', 'null'] },
+          source_sheet: { type: ['string', 'null'] },
+          confidence: { type: ['number', 'null'] },
+          notes: { type: ['string', 'null'] },
+        },
+        additionalProperties: false,
+      },
     },
-    additionalProperties: false,
   },
 };
 
@@ -126,7 +133,8 @@ export class CeilingHeightExtractionService {
             ? contextJson.slice(0, this.roomContextBudget) + '...'
             : contextJson;
         const entries = await this.extractFromSheet(sheet, trimmedContext);
-        for (const entry of entries) {
+        const heightEntries = Array.isArray(entries?.entries) ? entries.entries : [];
+        for (const entry of heightEntries) {
           results.push({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
@@ -163,8 +171,8 @@ export class CeilingHeightExtractionService {
       `You are extracting ceiling heights by space from a reflected ceiling plan or elevation.\n` +
       `Text snippet:\n${snippet}\n` +
       `spaces_from_plan:\n${roomContext}\n` +
-      `For each space_id, output height_ft (numeric) if visible, source_sheet label (e.g., RCP, ELEVATIONS), source_note text, confidence (0-1), and notes if ambiguous.\n` +
-      `Return JSON array only.`;
+      `Return JSON with a top-level object {"entries": [...]} where each entry includes space_id, room_number, height_ft (or null), source_sheet label (e.g., RCP, ELEVATIONS), source_note text, confidence (0-1), and notes if ambiguous.\n` +
+      `If a height is not present, set height_ft to null and explain in notes.`;
 
     const response = await this.openai!.chat.completions.create({
       model: this.model,
@@ -204,6 +212,6 @@ export class CeilingHeightExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
+    return parsed && typeof parsed === 'object' ? parsed : { entries: [] };
   }
 }

@@ -189,9 +189,18 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
           targets,
           message: analysisText.slice(0, 500),
         });
-        throw new Error(
-          "OpenAI vision model refused the request (insufficient access or policy restriction)"
+
+        if (this.allowMockFallback) {
+          this.logger.warn(
+            '⚠️  OpenAI vision refusal – falling back to mock data (VISION_ALLOW_MOCK=true)'
+          );
+          return this.generateMockAnalysis(disciplines, targets);
+        }
+
+        this.logger.warn(
+          '⚠️  OpenAI vision refusal detected – returning empty analysis so pipeline can continue.'
         );
+        return this.generateEmptyAnalysis(targets);
       }
 
       await appendVisionLog("OpenAI vision raw response", {
@@ -238,7 +247,8 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
         this.logger.warn('⚠️  Falling back to mock data (VISION_ALLOW_MOCK=true)');
         return this.generateMockAnalysis(disciplines, targets);
       }
-      throw error;
+      this.logger.warn('⚠️  Returning empty analysis due to failure.');
+      return this.generateEmptyAnalysis(targets);
     }
   }
 
@@ -835,6 +845,25 @@ IMPORTANT:
           }
         : undefined,
       scale: { detected: '1/4"=1\'-0"', units: "ft", ratio: 48 },
+    };
+  }
+
+  private generateEmptyAnalysis(targets: string[]): VisionAnalysisResult {
+    const includes = (key: string) => targets.includes(key);
+    return {
+      sheetTitle: undefined,
+      rooms: includes('rooms') ? [] : [],
+      walls: includes('walls') ? [] : [],
+      openings: includes('doors') || includes('windows') ? [] : [],
+      pipes: includes('pipes') ? [] : [],
+      ducts: includes('ducts') ? [] : [],
+      fixtures: includes('fixtures') ? [] : [],
+      levels: includes('levels') ? [] : [],
+      elevations: includes('elevations') ? [] : [],
+      sections: includes('sections') ? [] : [],
+      risers: includes('risers') ? [] : [],
+      verticalMetadata: undefined,
+      scale: undefined,
     };
   }
 

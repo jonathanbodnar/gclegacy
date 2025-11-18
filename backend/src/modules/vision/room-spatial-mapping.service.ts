@@ -17,29 +17,36 @@ export interface RoomSpatialMapping {
 }
 
 const ROOM_SPATIAL_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['room_number'],
-    properties: {
-      room_number: { type: 'string' },
-      room_name: { type: ['string', 'null'] },
-      label_center_px: {
-        type: ['array', 'null'],
-        items: { type: 'number' },
-        minItems: 2,
-        maxItems: 2,
+  type: 'object',
+  required: ['mappings'],
+  additionalProperties: false,
+  properties: {
+    mappings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['room_number', 'room_name', 'label_center_px', 'bounding_box_px', 'confidence', 'notes'],
+        properties: {
+          room_number: { type: 'string' },
+          room_name: { type: ['string', 'null'] },
+          label_center_px: {
+            type: ['array', 'null'],
+            items: { type: 'number' },
+            minItems: 2,
+            maxItems: 2,
+          },
+          bounding_box_px: {
+            type: ['array', 'null'],
+            items: { type: 'number' },
+            minItems: 4,
+            maxItems: 4,
+          },
+          confidence: { type: ['number', 'null'] },
+          notes: { type: ['string', 'null'] },
+        },
+        additionalProperties: false,
       },
-      bounding_box_px: {
-        type: ['array', 'null'],
-        items: { type: 'number' },
-        minItems: 4,
-        maxItems: 4,
-      },
-      confidence: { type: ['number', 'null'] },
-      notes: { type: ['string', 'null'] },
     },
-    additionalProperties: false,
   },
 };
 
@@ -108,7 +115,8 @@ export class RoomSpatialMappingService {
     for (const sheet of floorPlanSheets) {
       try {
         const sheetMappings = await this.mapSheet(sheet, scheduleContext);
-        for (const mapping of sheetMappings) {
+        const entries = Array.isArray(sheetMappings?.mappings) ? sheetMappings.mappings : [];
+        for (const mapping of entries) {
           results.push({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
@@ -135,9 +143,8 @@ export class RoomSpatialMappingService {
     const instructions =
       `You are analyzing an architectural floor plan image.\n` +
       `Use the provided rooms_from_schedule list to locate each room on the plan.\n` +
-      `For each room, output room_number, room_name, label_center_px (x,y), ` +
-      `bounding_box_px [x1,y1,x2,y2], and optional confidence (0-1).\n` +
-      `If a room cannot be located, return nulls for coordinates and add a note.\n` +
+      `Return JSON with a top-level object {"mappings": [...]} where each entry includes room_number, room_name, label_center_px (x,y), bounding_box_px [x1,y1,x2,y2], confidence, and notes (use nulls when unknown).\n` +
+      `If a room cannot be located, set both label_center_px and bounding_box_px to null and explain in notes.\n` +
       `rooms_from_schedule:\n${scheduleContext}`;
 
     const response = await this.openai!.chat.completions.create({
@@ -178,6 +185,6 @@ export class RoomSpatialMappingService {
     }
 
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
+    return parsed && typeof parsed === 'object' ? parsed : { mappings: [] };
   }
 }

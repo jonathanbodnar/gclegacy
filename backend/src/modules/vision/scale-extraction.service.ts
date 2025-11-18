@@ -23,28 +23,35 @@ export interface ScaleAnnotation {
 }
 
 const SCALE_EXTRACTION_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['sheet_id', 'viewport_label', 'scale_note'],
-    properties: {
-      sheet_id: { type: ['string', 'null'] },
-      viewport_label: { type: ['string', 'null'] },
-      scale_note: { type: ['string', 'null'] },
-      scale_ratio: {
-        type: ['object', 'null'],
+  type: 'object',
+  required: ['annotations'],
+  additionalProperties: false,
+  properties: {
+    annotations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['sheet_id', 'viewport_label', 'scale_note', 'scale_ratio', 'confidence', 'notes'],
         properties: {
-          plan_units: { type: ['string', 'null'] },
-          plan_value: { type: ['number', 'null'] },
-          real_units: { type: ['string', 'null'] },
-          real_value: { type: ['number', 'null'] },
+          sheet_id: { type: ['string', 'null'] },
+          viewport_label: { type: ['string', 'null'] },
+          scale_note: { type: ['string', 'null'] },
+          scale_ratio: {
+            type: ['object', 'null'],
+            properties: {
+              plan_units: { type: ['string', 'null'] },
+              plan_value: { type: ['number', 'null'] },
+              real_units: { type: ['string', 'null'] },
+              real_value: { type: ['number', 'null'] },
+            },
+            additionalProperties: false,
+          },
+          confidence: { type: ['number', 'null'] },
+          notes: { type: ['string', 'null'] },
         },
         additionalProperties: false,
       },
-      confidence: { type: ['number', 'null'] },
-      notes: { type: ['string', 'null'] },
     },
-    additionalProperties: false,
   },
 };
 
@@ -110,12 +117,10 @@ export class ScaleExtractionService {
 
     const instructions =
       `You extract drawing scales from architectural sheet text. ` +
-      `Return JSON array entries for each viewport/plan that declares a scale. ` +
-      `Fields required: sheet_id (e.g., ${sheet.sheetIdGuess || 'A-1.1'}), viewport_label/title, ` +
-      `scale_note (verbatim text like "1/4\" = 1'-0""), ` +
-      `scale_ratio { plan_units (inch/mm/etc), plan_value (numeric), real_units (foot/meter/etc), real_value }. ` +
-      `Omit entries where the scale cannot be parsed. ` +
-      `If multiple scales exist, include each separately. ` +
+      `Return JSON with a top-level object {"annotations": [...]} where each entry contains: ` +
+      `sheet_id (e.g., ${sheet.sheetIdGuess || 'A-1.1'}), viewport_label/title, scale_note (verbatim text like "1/4\" = 1'-0""), ` +
+      `scale_ratio { plan_units (inch/mm/etc), plan_value (numeric), real_units (foot/meter/etc), real_value }, confidence, and notes. ` +
+      `Omit entries where the scale cannot be parsed. If multiple scales exist, include each separately. ` +
       `TEXT_SNIPPET:\n${snippet}`;
 
     const response = await this.openai!.chat.completions.create({
@@ -144,6 +149,7 @@ export class ScaleExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
+    const annotations = Array.isArray(parsed?.annotations) ? parsed.annotations : [];
+    return annotations;
   }
 }
