@@ -17,7 +17,11 @@ export class PlanAnalysisService {
     disciplines: string[],
     targets: string[],
     options?: any,
-    progressCallback?: (current: number, total: number, message: string) => Promise<void>
+    progressCallback?: (
+      current: number,
+      total: number,
+      message: string
+    ) => Promise<void>
   ): Promise<any> {
     this.logger.log(`Starting plan analysis for ${fileName}`);
 
@@ -28,15 +32,17 @@ export class PlanAnalysisService {
       this.logger.log(`Starting parallel analysis of ${images.length} pages`);
 
       // Process pages in parallel batches to speed up analysis
-      const batchSize = parseInt(process.env.VISION_BATCH_SIZE || '5', 10);
+      const batchSize = parseInt(process.env.VISION_BATCH_SIZE || "5", 10);
       const results = [];
 
       for (let i = 0; i < images.length; i += batchSize) {
         const batch = images.slice(i, i + batchSize);
         const batchNumber = Math.floor(i / batchSize) + 1;
         const totalBatches = Math.ceil(images.length / batchSize);
-        
-        this.logger.log(`Processing batch ${batchNumber}/${totalBatches} (pages ${i + 1}-${Math.min(i + batchSize, images.length)})`);
+
+        this.logger.log(
+          `Processing batch ${batchNumber}/${totalBatches} (pages ${i + 1}-${Math.min(i + batchSize, images.length)})`
+        );
 
         // Process this batch in parallel
         const batchPromises = batch.map(async (imageBuffer, batchIndex) => {
@@ -62,7 +68,10 @@ export class PlanAnalysisService {
             return {
               pageIndex,
               fileName: sheetTitle,
-              discipline: this.detectDisciplineFromContent(pageResult, disciplines),
+              discipline: this.detectDisciplineFromContent(
+                pageResult,
+                disciplines
+              ),
               scale: scaleInfo,
               features: pageResult,
               metadata: {
@@ -73,14 +82,24 @@ export class PlanAnalysisService {
               },
             };
           } catch (error: any) {
-            this.logger.error(`Failed to analyze page ${pageIndex + 1}:`, error.message);
+            this.logger.error(
+              `Failed to analyze page ${pageIndex + 1}:`,
+              error.message
+            );
             // Return partial result with error
             return {
               pageIndex,
               fileName: `${fileName}_page_${pageIndex + 1}`,
-              discipline: 'UNKNOWN',
+              discipline: "UNKNOWN",
               scale: null,
-              features: { rooms: [], walls: [], openings: [], pipes: [], ducts: [], fixtures: [] },
+              features: {
+                rooms: [],
+                walls: [],
+                openings: [],
+                pipes: [],
+                ducts: [],
+                fixtures: [],
+              },
               metadata: {
                 error: error.message,
                 analysisTimestamp: new Date().toISOString(),
@@ -93,13 +112,15 @@ export class PlanAnalysisService {
         const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
 
-        this.logger.log(`Completed batch ${batchNumber}/${totalBatches} - Total analyzed: ${results.length}/${images.length}`);
-        
+        this.logger.log(
+          `Completed batch ${batchNumber}/${totalBatches} - Total analyzed: ${results.length}/${images.length}`
+        );
+
         // Report progress via callback if provided
         if (progressCallback) {
           await progressCallback(
-            results.length, 
-            images.length, 
+            results.length,
+            images.length,
             `Analyzing plans: ${results.length}/${images.length} pages completed`
           );
         }
@@ -178,7 +199,7 @@ export class PlanAnalysisService {
         `Canvas-based PDF rendering failed: ${renderError.message}`
       );
       throw new Error(
-        "PDF conversion failed: Unable to render pages with pdfjs/canvas. Ensure the 'canvas' dependency and its native prerequisites are installed."
+        "PDF conversion failed: Unable to render pages with pdfjs/canvas. Ensure the '@napi-rs/canvas' dependency is installed."
       );
     }
 
@@ -212,7 +233,6 @@ export class PlanAnalysisService {
       throw error;
     }
   }
-
 
   private async convertCadToImages(_cadBuffer: Buffer): Promise<Buffer[]> {
     throw new Error(
@@ -367,5 +387,4 @@ export class PlanAnalysisService {
       })),
     };
   }
-
 }
