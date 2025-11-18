@@ -21,11 +21,7 @@ import { WallRunExtractionService } from '../vision/wall-run-extraction.service'
 import { CeilingHeightExtractionService } from '../vision/ceiling-height-extraction.service';
 import { FinalDataFusionService } from '../vision/final-data-fusion.service';
 import { ScaleExtractionService, ScaleAnnotation } from '../vision/scale-extraction.service';
-import {
-  SpaceExtractionService,
-  SpaceDefinition,
-  SheetTrustSummary,
-} from '../vision/space-extraction.service';
+import { SpaceExtractionService, SpaceDefinition } from '../vision/space-extraction.service';
 import { MaterialsExtractionService, SpaceFinishDefinition } from '../vision/materials-extraction.service';
 
 interface ProcessJobData {
@@ -60,6 +56,8 @@ export class JobProcessor {
     private wallRunExtractionService: WallRunExtractionService,
     private ceilingHeightExtractionService: CeilingHeightExtractionService,
     private scaleExtractionService: ScaleExtractionService,
+    private spaceExtractionService: SpaceExtractionService,
+    private materialsExtractionService: MaterialsExtractionService,
     private finalDataFusionService: FinalDataFusionService,
   ) {}
 
@@ -94,25 +92,10 @@ export class JobProcessor {
 
       // Stage 2: extract generic spaces from plan sheets
       let spaces: SpaceDefinition[] = [];
-      let spaceTrustSummaries: SheetTrustSummary[] = [];
       try {
-        const spaceResult = await this.spaceExtractionService.extractSpaces(ingestResult.sheets || []);
-        spaces = spaceResult.spaces;
-        spaceTrustSummaries = spaceResult.sheets;
+        spaces = await this.spaceExtractionService.extractSpaces(ingestResult.sheets || []);
         if (spaces.length) {
           await this.jobsService.mergeJobOptions(jobId, { spaces });
-        }
-        if (spaceTrustSummaries.length) {
-          await this.jobsService.mergeJobOptions(jobId, { spaceTrustSummaries });
-        }
-        const lowTrustSheets = spaceTrustSummaries.filter((summary) => summary.trustScore < 0.6);
-        if (lowTrustSheets.length) {
-          this.logger.warn(
-            `Job ${jobId} flagged for manual review: ${lowTrustSheets.length} sheet(s) scored below trust threshold`,
-          );
-          await this.jobsService.mergeJobOptions(jobId, {
-            lowTrustSheets,
-          });
         }
       } catch (spaceError) {
         this.logger.warn(
@@ -187,6 +170,7 @@ export class JobProcessor {
         wallRuns = await this.wallRunExtractionService.extractWallRuns(
           ingestResult.sheets || [],
           partitionTypes,
+          spaces,
         );
         if (wallRuns.length) {
           await this.jobsService.mergeJobOptions(jobId, { wallRuns });
@@ -203,6 +187,7 @@ export class JobProcessor {
         ceilingHeights = await this.ceilingHeightExtractionService.extractHeights(
           ingestResult.sheets || [],
           roomSpatialMappings || [],
+          spaces || [],
         );
         if (ceilingHeights.length) {
           await this.jobsService.mergeJobOptions(jobId, { ceilingHeights });
@@ -239,6 +224,8 @@ export class JobProcessor {
           wallRuns,
           partitionTypes,
           scaleAnnotations,
+          spaces,
+          spaceFinishes,
         });
         if (fusionData) {
           await this.jobsService.mergeJobOptions(jobId, { fusionData });

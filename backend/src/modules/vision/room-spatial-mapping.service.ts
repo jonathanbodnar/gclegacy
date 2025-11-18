@@ -83,12 +83,17 @@ export class RoomSpatialMappingService {
       return [];
     }
 
-    const floorPlanSheets = sheets.filter(
-      (sheet) =>
-        sheet.classification?.category === 'floor_plan' &&
+    const floorPlanSheets = sheets.filter((sheet) => {
+      const category = sheet.classification?.category;
+      const isPlanCategory =
+        category === 'floor' || category === 'demo_floor';
+      const isPrimaryPlan = sheet.classification?.isPrimaryPlan;
+      return (
+        (isPlanCategory || isPrimaryPlan) &&
         sheet.content?.rasterData &&
-        sheet.content.rasterData.length > 0,
-    );
+        sheet.content.rasterData.length > 0
+      );
+    });
 
     if (!floorPlanSheets.length) {
       return [];

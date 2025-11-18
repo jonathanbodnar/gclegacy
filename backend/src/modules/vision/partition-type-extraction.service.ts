@@ -67,7 +67,7 @@ export class PartitionTypeExtractionService {
 
     const definitions: PartitionTypeDefinition[] = [];
     const candidateSheets = sheets.filter((sheet) => {
-      const text = (sheet.content?.textData || '').toUpperCase();
+      const text = (sheet.content?.textData || sheet.text || '').toUpperCase();
       return (
         text.includes('PARTITION') &&
         text.includes('TYPE')
@@ -95,7 +95,7 @@ export class PartitionTypeExtractionService {
   }
 
   private async extractFromSheet(sheet: SheetData) {
-    const text = sheet.content?.textData || '';
+    const text = sheet.content?.textData || sheet.text || '';
     if (!text.trim()) {
       return [];
     }

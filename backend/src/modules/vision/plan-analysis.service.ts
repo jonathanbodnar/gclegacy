@@ -3,36 +3,13 @@ import {
   OpenAIVisionService,
   VisionAnalysisResult,
 } from "./openai-vision.service";
-import { renderPdfToImages, getPdfJsLib } from "../../common/pdf/pdf-renderer";
+import { renderPdfToImages } from "../../common/pdf/pdf-renderer";
 
 @Injectable()
 export class PlanAnalysisService {
   private readonly logger = new Logger(PlanAnalysisService.name);
-  private static readonly PLACEHOLDER_PNG = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=",
-    "base64"
-  );
 
-  private readonly allowPdfPlaceholderFallback: boolean;
-  private readonly pdfFallbackMaxPages: number;
-
-  constructor(
-    private openaiVision: OpenAIVisionService,
-    private configService: ConfigService
-  ) {
-    const fallbackSetting =
-      (this.configService.get("PDF_PLACEHOLDER_FALLBACK") || "false")
-        .toString()
-        .toLowerCase();
-    this.allowPdfPlaceholderFallback = fallbackSetting === "true";
-    this.pdfFallbackMaxPages = Math.max(
-      1,
-      parseInt(
-        this.configService.get("PDF_FALLBACK_MAX_PAGES") || "3",
-        10
-      )
-    );
-  }
+  constructor(private openaiVision: OpenAIVisionService) {}
 
   async analyzePlanFile(
     fileBuffer: Buffer,
@@ -179,10 +156,9 @@ export class PlanAnalysisService {
         // Already an image
         return [fileBuffer];
       default:
-        this.logger.warn(
-          `Unsupported file extension "${extension}" - using placeholder image`
+        throw new Error(
+          `Unsupported file extension "${extension}" - only PDF, DWG/DXF, and raster images are supported.`
         );
-        return [PlanAnalysisService.PLACEHOLDER_PNG];
     }
   }
 
@@ -200,95 +176,33 @@ export class PlanAnalysisService {
       );
     }
 
-    try {
-      // Try extracting embedded images first using pdfjs-dist
-      const buffers = await this.extractEmbeddedImagesFromPdf(pdfBuffer);
+    const density = parseInt(process.env.PDF_RENDER_DPI || "220", 10);
+    const pagesToProcess =
+      totalPages > 0
+        ? totalPages
+        : parseInt(process.env.PDF_RENDER_MAX_PAGES || "100", 10);
 
-      if (buffers.length > 0) {
-        this.logger.log(`Extracted ${buffers.length} embedded images from PDF`);
-        // If we got embedded images but they're fewer than total pages,
-        // we should still render all pages to ensure complete coverage
-        if (totalPages > 0 && buffers.length < totalPages) {
-          this.logger.log(
-            `Only ${buffers.length} embedded images found but PDF has ${totalPages} pages. ` +
-              `Rendering all pages to ensure complete coverage.`
-          );
-          // Continue to pdf2pic to render all pages
-        } else {
-          return buffers;
-        }
+    try {
+      const rendered = await renderPdfToImages(pdfBuffer, {
+        dpi: density,
+        maxPages: pagesToProcess,
+      });
+
+      if (rendered.length > 0) {
+        this.logger.log(
+          `Successfully rendered ${rendered.length} pages from PDF via pdfjs/canvas`
+        );
+        return rendered.map((page) => page.buffer);
       }
     } catch (renderError: any) {
       this.logger.error(
         `Canvas-based PDF rendering failed: ${renderError.message}`
       );
       throw new Error(
-        "PDF conversion failed: Unable to render pages with pdfjs/canvas. Ensure the '@napi-rs/canvas' dependency is installed."
+        "PDF conversion failed: Unable to render pages with pdfjs/canvas. Ensure the 'canvas' dependency and its native prerequisites are installed."
       );
     }
 
-    // Use pdf2pic for rendering full pages - process ALL pages
-    const density = parseInt(process.env.PDF_RENDER_DPI || "220", 10);
-    // Use totalPages if available, otherwise use a high default or env var
-    const pagesToProcess =
-      totalPages > 0
-        ? totalPages
-        : parseInt(process.env.PDF_RENDER_MAX_PAGES || "100", 10); // Default to 100 if page count unknown
-
-    try {
-      const buffers = await this.convertPdfWithPdf2Pic(
-        pdfBuffer,
-        density,
-        pagesToProcess
-      );
-
-      if (buffers.length > 0) {
-        this.logger.log(
-          `Successfully converted ${buffers.length} pages from PDF to images`
-        );
-        return buffers;
-      }
-    } catch (pdf2picError: any) {
-      this.logger.error(`pdf2pic conversion failed: ${pdf2picError.message}`);
-
-      const dependencyErrorMessage =
-        "PDF conversion failed: pdf2pic requires GraphicsMagick or ImageMagick to be installed. " +
-        "Please install one of these tools:\n" +
-        "- Windows: Download from https://imagemagick.org/script/download.php or use: choco install imagemagick\n" +
-        "- Linux: sudo apt-get install graphicsmagick or sudo apt-get install imagemagick\n" +
-        "- macOS: brew install graphicsmagick or brew install imagemagick";
-
-      if (this.isGraphicsToolMissing(pdf2picError)) {
-        if (this.allowPdfPlaceholderFallback) {
-          this.logger.warn(
-            "GraphicsMagick/ImageMagick not available. Falling back to placeholder images for this PDF."
-          );
-          return this.generatePlaceholderImages(
-            Math.min(pagesToProcess, this.pdfFallbackMaxPages)
-          );
-        }
-        this.logger.error(
-          "GraphicsMagick/ImageMagick not detected and fallback is disabled. Job will fail."
-        );
-        throw new Error(dependencyErrorMessage);
-      }
-
-      throw pdf2picError;
-    }
-
-    // This should not be reached, but kept as fallback
-    this.logger.warn("PDF conversion returned no images");
-    if (this.allowPdfPlaceholderFallback) {
-      this.logger.warn(
-        "Using placeholder images because no images were generated from the PDF."
-      );
-      return this.generatePlaceholderImages(
-        Math.min(pagesToProcess, this.pdfFallbackMaxPages)
-      );
-    }
-    this.logger.error(
-      "PDF conversion failed and placeholder fallback is disabled. Job will fail."
-    );
     throw new Error("PDF conversion failed: No images were generated");
   }
 
@@ -313,7 +227,6 @@ export class PlanAnalysisService {
     throw new Error(
       "DWG/DXF conversion is not implemented for plan analysis yet."
     );
-    return [PlanAnalysisService.PLACEHOLDER_PNG];
   }
 
   private detectDisciplineFromContent(

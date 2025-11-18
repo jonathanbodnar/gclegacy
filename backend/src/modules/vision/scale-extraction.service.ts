@@ -88,7 +88,7 @@ export class ScaleExtractionService {
 
     const annotations: ScaleAnnotation[] = [];
     for (const sheet of sheets) {
-      const text = sheet.content?.textData || '';
+      const text = sheet.content?.textData || sheet.text || '';
       if (!text.trim()) {
         continue;
       }

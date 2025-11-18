@@ -4,9 +4,24 @@ import OpenAI from 'openai';
 
 import { SheetData, SheetClassificationMetadata } from '../ingest/ingest.service';
 
+const SHEET_CATEGORIES = [
+  'site',
+  'demo_floor',
+  'floor',
+  'fixture',
+  'rcp',
+  'elevations',
+  'sections',
+  'materials',
+  'furniture',
+  'artwork',
+  'rr_details',
+  'other',
+] as const;
+
 const SHEET_CLASSIFICATION_SCHEMA = {
   type: 'object',
-  required: ['sheet_id', 'title', 'discipline', 'category', 'confidence', 'is_primary_plan', 'notes'],
+  required: ['sheet_id', 'title', 'discipline', 'category', 'is_primary_plan'],
   properties: {
     sheet_id: { type: ['string', 'null'] },
     title: { type: ['string', 'null'] },
@@ -19,20 +34,11 @@ const SHEET_CLASSIFICATION_SCHEMA = {
     },
     category: {
       type: 'string',
-      enum: [
-        'floor_plan',
-        'fixture_plan',
-        'finish_plan',
-        'reflected_ceiling',
-        'roof_plan',
-        'door_schedule',
-        'room_schedule',
-        'code_data',
-        'other',
-      ],
+      enum: SHEET_CATEGORIES,
     },
     confidence: { type: ['number', 'null'] },
     notes: { type: ['string', 'null'] },
+    is_primary_plan: { type: ['boolean', 'null'] },
   },
   additionalProperties: false,
 };
@@ -71,7 +77,7 @@ export class SheetClassificationService {
     const results: SheetClassificationMetadata[] = [];
     for (const sheet of sheets) {
       try {
-        const classification = await this.classifySingleSheet(sheet);
+    const classification = await this.classifySingleSheet(sheet);
         sheet.classification = classification;
         results.push(classification);
       } catch (error: any) {
@@ -84,6 +90,7 @@ export class SheetClassificationService {
           discipline: [],
           category: 'other',
           notes: `Classification failed: ${error.message}`,
+          isPrimaryPlan: null,
         };
         sheet.classification = fallback;
         results.push(fallback);
@@ -94,7 +101,8 @@ export class SheetClassificationService {
   }
 
   private async classifySingleSheet(sheet: SheetData): Promise<SheetClassificationMetadata> {
-    const textSnippet = (sheet.content?.textData || '').slice(0, this.textBudget);
+    const rawText = sheet.content?.textData || sheet.text || '';
+    const textSnippet = rawText.slice(0, this.textBudget);
     const trimmedText =
       textSnippet.length === this.textBudget ? `${textSnippet}...` : textSnippet;
     const rasterBuffer: Buffer | undefined = sheet.content?.rasterData;
@@ -112,9 +120,9 @@ export class SheetClassificationService {
     }
 
     const instructions =
-      `You are an architectural sheet classifier. Analyze the provided low-res page image and OCR text.\n` +
+      `You are classifying architectural and interior design sheets. Analyze the provided low-res page image and OCR text.\n` +
       `Return JSON with: sheet_id, title, discipline array (Architectural/Electrical/Mechanical/Plumbing/Fire Protection), ` +
-      `category from the allowed list, optional confidence (0-1), and notes if uncertain.\n` +
+      `category from ${JSON.stringify(SHEET_CATEGORIES)}, confidence (0-1), notes if uncertain, and is_primary_plan (true if this sheet shows the primary interior plan).\n` +
       `TEXT_SNIPPET (first ${this.textBudget} chars):\n${trimmedText || '(no text extracted)'}`;
 
     const userContent: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [
@@ -159,6 +167,8 @@ export class SheetClassificationService {
       category: parsed.category ?? 'other',
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : null,
       notes: parsed.notes ?? null,
+      isPrimaryPlan:
+        typeof parsed.is_primary_plan === 'boolean' ? parsed.is_primary_plan : null,
     };
   }
 }

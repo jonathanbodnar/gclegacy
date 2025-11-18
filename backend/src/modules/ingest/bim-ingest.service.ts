@@ -31,6 +31,7 @@ export class BimIngestService {
           discipline: this.detectDisciplineFromElements(view.elements),
           scale: view.scale,
           units: bimData.units,
+          text: '',
           content: {
             vectorData: view.elements,
             // BIM-specific data
@@ -52,6 +53,7 @@ export class BimIngestService {
           name: 'Model',
           discipline: this.detectDisciplineFromElements(bimData.elements),
           units: bimData.units,
+          text: '',
           content: {
             vectorData: bimData.elements,
             modelData: {
@@ -64,10 +66,18 @@ export class BimIngestService {
       }
 
       const detectedDisciplines = [...new Set(sheets.map(s => s.discipline).filter(Boolean))];
+      const rawPages = sheets.map((sheet, idx) => ({
+        index: sheet.index ?? idx,
+        text: sheet.text || '',
+        imagePath: sheet.imagePath,
+        widthPx: sheet.widthPx,
+        heightPx: sheet.heightPx,
+      }));
 
       return {
         fileId,
         sheets,
+        rawPages,
         metadata: {
           totalPages: sheets.length,
           detectedDisciplines,

@@ -43,10 +43,10 @@ const ROOM_SCHEDULE_SCHEMA = {
 };
 
 const ROOM_SCHEDULE_CATEGORIES = new Set([
-  'finish_plan',
-  'room_schedule',
-  'door_schedule',
-  'code_data',
+  'materials',
+  'rr_details',
+  'fixture',
+  'other',
 ]);
 
 @Injectable()
@@ -83,7 +83,7 @@ export class RoomScheduleExtractionService {
     const relevantSheets = sheets.filter((sheet) =>
       sheet.classification &&
       ROOM_SCHEDULE_CATEGORIES.has(sheet.classification.category) &&
-      sheet.content?.textData,
+      (sheet.content?.textData || sheet.text),
     );
 
     for (const sheet of relevantSheets) {
@@ -108,7 +108,7 @@ export class RoomScheduleExtractionService {
   }
 
   private async extractFromSheet(sheet: SheetData) {
-    const rawText = sheet.content?.textData || '';
+    const rawText = sheet.content?.textData || sheet.text || '';
     if (!rawText.trim()) {
       return [];
     }
