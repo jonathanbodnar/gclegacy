@@ -11,7 +11,7 @@ export interface WallRunSegment {
   id: string;
   partition_type_id?: string | null;
   new_or_existing?: 'new' | 'existing' | 'demo' | null;
-  endpoints_px: [number, number][];
+  polyline_px: [number, number][];
   adjacent_rooms?: (string | null)[];
   notes?: string | null;
   confidence?: number | null;
@@ -26,7 +26,7 @@ const WALL_RUN_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['id', 'endpoints_px', 'partition_type_id', 'new_or_existing', 'adjacent_rooms', 'space_ids', 'confidence', 'notes'],
+        required: ['id', 'polyline_px', 'partition_type_id', 'new_or_existing', 'adjacent_rooms', 'space_ids', 'confidence', 'notes'],
         properties: {
           id: { type: 'string' },
           partition_type_id: { type: ['string', 'null'] },
@@ -34,7 +34,7 @@ const WALL_RUN_SCHEMA = {
             type: ['string', 'null'],
             enum: ['new', 'existing', 'demo', null],
           },
-          endpoints_px: {
+          polyline_px: {
             type: 'array',
             items: {
               type: 'array',
@@ -151,8 +151,8 @@ export class WallRunExtractionService {
       `You are analyzing an architectural floor plan to enumerate wall segments.\n` +
       `Partition type definitions:\n${partitionContext}\n` +
       `Spaces on this sheet:\n${spacesContext || '[]'}\n` +
-      `Return JSON with a top-level object {"segments": [...]} where each entry contains id, partition_type_id, new_or_existing, endpoints_px (pixel coordinates), space_ids, adjacent_rooms, confidence, and notes (use nulls when unknown).\n` +
-      `Use "existing" if a segment appears existing/dashed. If type or rooms are unclear, return null but keep the segment.`;
+      `Return JSON with a top-level object {"segments": [...]} where each entry contains id, partition_type_id, new_or_existing, polyline_px (an ordered list of 2D pixel vertices along the wall path), space_ids, adjacent_rooms, confidence, and notes (use nulls when unknown).\n` +
+      `Do NOT compute physical lengths or areas. Provide only the raw geometry (>=2 vertices; include intermediate bend points when walls jog) and semantic labels. Use "existing" if a segment appears existing/dashed. If type or rooms are unclear, return null but keep the segment.`;
 
     const response = await this.openai!.chat.completions.create({
       model: this.model,

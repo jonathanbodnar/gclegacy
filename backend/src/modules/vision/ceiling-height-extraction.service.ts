@@ -11,6 +11,8 @@ export interface RoomCeilingHeight {
   room_number: string;
   height_ft?: number | null;
   source_note?: string | null;
+  source_text?: string | null;
+  source_sheet?: string | null;
   confidence?: number | null;
   notes?: string | null;
 }
@@ -24,12 +26,12 @@ const CEILING_HEIGHT_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['space_id', 'room_number', 'height_ft', 'source_sheet', 'source_note', 'confidence', 'notes'],
+        required: ['space_id', 'room_number', 'height_ft', 'source_sheet', 'source_text', 'confidence', 'notes'],
         properties: {
           space_id: { type: 'string' },
           room_number: { type: ['string', 'null'] },
           height_ft: { type: ['number', 'null'] },
-          source_note: { type: ['string', 'null'] },
+          source_text: { type: ['string', 'null'] },
           source_sheet: { type: ['string', 'null'] },
           confidence: { type: ['number', 'null'] },
           notes: { type: ['string', 'null'] },
@@ -116,10 +118,23 @@ export class CeilingHeightExtractionService {
         const entries = await this.extractFromSheet(sheet, trimmedContext);
         const heightEntries = Array.isArray(entries?.entries) ? entries.entries : [];
         for (const entry of heightEntries) {
+          if (!this.isValidHeightEntry(entry)) {
+            this.logger.debug(
+              `Skipping height for space ${entry.space_id} on sheet ${sheet.index}: missing or inconsistent source text.`
+            );
+            continue;
+          }
           results.push({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
-            ...entry,
+            room_number: entry.room_number || entry.space_id,
+            space_id: entry.space_id,
+            height_ft: entry.height_ft,
+            source_note: entry.source_text ?? entry.source_note ?? null,
+            source_text: entry.source_text ?? entry.source_note ?? null,
+            source_sheet: entry.source_sheet ?? sheet.classification?.category ?? null,
+            confidence: entry.confidence,
+            notes: entry.notes,
           });
         }
       } catch (error: any) {
@@ -146,8 +161,9 @@ export class CeilingHeightExtractionService {
       `You are extracting ceiling heights by room from a reflected ceiling plan.\n` +
       `Text snippet:\n${snippet}\n` +
       `spaces_from_plan:\n${roomContext}\n` +
-      `Return JSON with a top-level object {"entries": [...]} where each entry includes space_id, room_number, height_ft (or null), source_sheet label (e.g., RCP, ELEVATIONS), source_note text, confidence (0-1), and notes if ambiguous.\n` +
-      `If a height is not present, set height_ft to null and explain in notes.`;
+      `Return JSON with a top-level object {"entries": [...]} where each entry includes space_id, room_number, height_ft (or null), source_sheet label (e.g., RCP, ELEVATIONS), source_text (exact note copied from the sheet that contains the height), confidence (0-1), and notes if ambiguous.\n` +
+      `If a height is not present, set height_ft to null and explain in notes.\n` +
+      `Never invent numbers: every numeric height must appear inside source_text.`;
 
     const response = await this.openai!.chat.completions.create({
       model: this.model,
@@ -188,5 +204,43 @@ export class CeilingHeightExtractionService {
 
     const parsed = JSON.parse(content);
     return parsed && typeof parsed === 'object' ? parsed : { entries: [] };
+  }
+
+  private isValidHeightEntry(entry: any): boolean {
+    if (!entry || typeof entry !== 'object') {
+      return false;
+    }
+    if (!entry.space_id) return false;
+    const height = entry.height_ft;
+    const sourceText: string | undefined =
+      entry.source_text || entry.source_note || '';
+    if (!sourceText || typeof sourceText !== 'string' || !sourceText.trim()) {
+      return height == null; // allow null height with missing sourceText
+    }
+    if (height == null) {
+      return true;
+    }
+    const normalizedSource = sourceText.toLowerCase();
+    const decimalToken = height.toFixed(2).replace(/\.?0+$/, '');
+    if (normalizedSource.includes(decimalToken)) {
+      return true;
+    }
+    const imperialToken = this.toElevationToken(height);
+    if (imperialToken && normalizedSource.includes(imperialToken)) {
+      return true;
+    }
+    return false;
+  }
+
+  private toElevationToken(value: number): string | null {
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    const feet = Math.trunc(value);
+    const inchesDecimal = Math.round((value - feet) * 12);
+    if (inchesDecimal === 0) {
+      return `${feet}'`.toLowerCase();
+    }
+    return `${feet}'-${inchesDecimal}"`.toLowerCase();
   }
 }

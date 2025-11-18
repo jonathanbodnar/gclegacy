@@ -21,6 +21,12 @@ import { WallRunExtractionService } from '../vision/wall-run-extraction.service'
 import { CeilingHeightExtractionService } from '../vision/ceiling-height-extraction.service';
 import { FinalDataFusionService } from '../vision/final-data-fusion.service';
 import { ScaleExtractionService, ScaleAnnotation } from '../vision/scale-extraction.service';
+import {
+  SpaceExtractionService,
+  SpaceDefinition,
+  SheetTrustSummary,
+} from '../vision/space-extraction.service';
+import { MaterialsExtractionService, SpaceFinishDefinition } from '../vision/materials-extraction.service';
 
 interface ProcessJobData {
   jobId: string;
@@ -83,6 +89,49 @@ export class JobProcessor {
       } catch (classificationError) {
         this.logger.warn(
           `Sheet classification failed for job ${jobId}: ${classificationError.message}`,
+        );
+      }
+
+      // Stage 2: extract generic spaces from plan sheets
+      let spaces: SpaceDefinition[] = [];
+      let spaceTrustSummaries: SheetTrustSummary[] = [];
+      try {
+        const spaceResult = await this.spaceExtractionService.extractSpaces(ingestResult.sheets || []);
+        spaces = spaceResult.spaces;
+        spaceTrustSummaries = spaceResult.sheets;
+        if (spaces.length) {
+          await this.jobsService.mergeJobOptions(jobId, { spaces });
+        }
+        if (spaceTrustSummaries.length) {
+          await this.jobsService.mergeJobOptions(jobId, { spaceTrustSummaries });
+        }
+        const lowTrustSheets = spaceTrustSummaries.filter((summary) => summary.trustScore < 0.6);
+        if (lowTrustSheets.length) {
+          this.logger.warn(
+            `Job ${jobId} flagged for manual review: ${lowTrustSheets.length} sheet(s) scored below trust threshold`,
+          );
+          await this.jobsService.mergeJobOptions(jobId, {
+            lowTrustSheets,
+          });
+        }
+      } catch (spaceError) {
+        this.logger.warn(
+          `Space extraction failed for job ${jobId}: ${spaceError.message}`,
+        );
+      }
+
+      // Stage 2B: finishes/materials extraction for materials sheets
+      let spaceFinishes: SpaceFinishDefinition[] = [];
+      try {
+        spaceFinishes = await this.materialsExtractionService.extractFinishes(
+          ingestResult.sheets || [],
+        );
+        if (spaceFinishes.length) {
+          await this.jobsService.mergeJobOptions(jobId, { spaceFinishes });
+        }
+      } catch (materialsError) {
+        this.logger.warn(
+          `Materials extraction failed for job ${jobId}: ${materialsError.message}`,
         );
       }
 

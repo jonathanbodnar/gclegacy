@@ -27,7 +27,7 @@ export interface FusedWall {
   id: string;
   partition_type_id?: string | null;
   new_or_existing?: string | null;
-  endpoints_px: [number, number][];
+  polyline_px: [number, number][];
   adjacent_rooms?: (string | null)[];
   length_px: number;
   length_ft?: number | null;
@@ -168,7 +168,8 @@ export class FinalDataFusionService {
   ): FusedWall[] {
     return wallRuns.map((segment) => {
       const sheet = sheetsByIndex.get(segment.sheetIndex);
-      const lengthPx = this.calculatePolylineLength(segment.endpoints_px);
+      const polyline = Array.isArray(segment.polyline_px) ? segment.polyline_px : [];
+      const lengthPx = this.calculatePolylineLength(polyline);
       const scaleAnnotations = scaleLookup.get(segment.sheetIndex) || [];
       const preferredScale = this.selectScaleAnnotation(scaleAnnotations, sheet);
       const lengthFt = sheet
@@ -179,7 +180,7 @@ export class FinalDataFusionService {
         id: segment.id,
         partition_type_id: segment.partition_type_id || null,
         new_or_existing: segment.new_or_existing || null,
-        endpoints_px: segment.endpoints_px,
+        polyline_px: polyline,
         adjacent_rooms: segment.adjacent_rooms,
         length_px: Number(lengthPx.toFixed(2)),
         length_ft: lengthFt !== undefined ? Number(lengthFt.toFixed(2)) : null,

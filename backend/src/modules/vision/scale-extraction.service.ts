@@ -44,6 +44,7 @@ const SCALE_EXTRACTION_SCHEMA = {
               real_units: { type: ['string', 'null'] },
               real_value: { type: ['number', 'null'] },
             },
+            required: ['plan_units', 'plan_value', 'real_units', 'real_value'],
             additionalProperties: false,
           },
           confidence: { type: ['number', 'null'] },
