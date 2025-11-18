@@ -6,7 +6,7 @@ import { SheetData, SheetClassificationMetadata } from '../ingest/ingest.service
 
 const SHEET_CLASSIFICATION_SCHEMA = {
   type: 'object',
-  required: ['sheet_id', 'title', 'discipline', 'category'],
+  required: ['sheet_id', 'title', 'discipline', 'category', 'confidence', 'is_primary_plan', 'notes'],
   properties: {
     sheet_id: { type: ['string', 'null'] },
     title: { type: ['string', 'null'] },

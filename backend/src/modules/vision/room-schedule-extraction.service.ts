@@ -18,20 +18,27 @@ export interface RoomScheduleEntry {
 }
 
 const ROOM_SCHEDULE_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['room_number', 'room_name'],
-    properties: {
-      room_number: { type: 'string' },
-      room_name: { type: 'string' },
-      floor_finish_code: { type: ['string', 'null'] },
-      wall_finish_code: { type: ['string', 'null'] },
-      ceiling_finish_code: { type: ['string', 'null'] },
-      base_code: { type: ['string', 'null'] },
-      notes: { type: ['string', 'null'] },
+  type: 'object',
+  required: ['rows'],
+  additionalProperties: false,
+  properties: {
+    rows: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['room_number', 'room_name', 'floor_finish_code', 'wall_finish_code', 'ceiling_finish_code', 'base_code', 'notes'],
+        properties: {
+          room_number: { type: 'string' },
+          room_name: { type: 'string' },
+          floor_finish_code: { type: ['string', 'null'] },
+          wall_finish_code: { type: ['string', 'null'] },
+          ceiling_finish_code: { type: ['string', 'null'] },
+          base_code: { type: ['string', 'null'] },
+          notes: { type: ['string', 'null'] },
+        },
+        additionalProperties: false,
+      },
     },
-    additionalProperties: false,
   },
 };
 
@@ -116,6 +123,7 @@ export class RoomScheduleExtractionService {
       `The OCR text below may include ROOM FINISH SCHEDULE tables. Extract each schedule row with fields:\n` +
       `room_number, room_name, floor_finish_code, wall_finish_code, ceiling_finish_code, base_code.\n` +
       `Ignore text outside the schedule. If a field is blank, return null.\n` +
+      `Return an object {"rows": [...]} where each row contains those fields plus optional notes.\n` +
       `TEXT_SNIPPET:\n${textSnippet}`;
 
     const response = await this.openai!.chat.completions.create({
@@ -144,6 +152,7 @@ export class RoomScheduleExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
+    const rows = Array.isArray(parsed?.rows) ? parsed.rows : [];
+    return rows;
   }
 }
