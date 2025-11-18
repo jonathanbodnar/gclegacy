@@ -16,18 +16,27 @@ export interface RoomCeilingHeight {
 }
 
 const CEILING_HEIGHT_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['room_number'],
-    properties: {
-      room_number: { type: 'string' },
-      height_ft: { type: ['number', 'null'] },
-      source_note: { type: ['string', 'null'] },
-      confidence: { type: ['number', 'null'] },
-      notes: { type: ['string', 'null'] },
+  type: 'object',
+  required: ['entries'],
+  additionalProperties: false,
+  properties: {
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['space_id', 'room_number', 'height_ft', 'source_sheet', 'source_note', 'confidence', 'notes'],
+        properties: {
+          space_id: { type: 'string' },
+          room_number: { type: ['string', 'null'] },
+          height_ft: { type: ['number', 'null'] },
+          source_note: { type: ['string', 'null'] },
+          source_sheet: { type: ['string', 'null'] },
+          confidence: { type: ['number', 'null'] },
+          notes: { type: ['string', 'null'] },
+        },
+        additionalProperties: false,
+      },
     },
-    additionalProperties: false,
   },
 };
 
@@ -97,8 +106,16 @@ export class CeilingHeightExtractionService {
 
     for (const sheet of rcSheets) {
       try {
-        const entries = await this.extractFromSheet(sheet, roomContext);
-        for (const entry of entries) {
+        const contextEntries =
+          spatialBySheet.get(sheet.index) || roomMappingBySheet.get(sheet.index) || [];
+        const contextJson = JSON.stringify(contextEntries);
+        const trimmedContext =
+          contextJson.length > this.roomContextBudget
+            ? contextJson.slice(0, this.roomContextBudget) + '...'
+            : contextJson;
+        const entries = await this.extractFromSheet(sheet, trimmedContext);
+        const heightEntries = Array.isArray(entries?.entries) ? entries.entries : [];
+        for (const entry of heightEntries) {
           results.push({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
@@ -128,9 +145,9 @@ export class CeilingHeightExtractionService {
     const instructions =
       `You are extracting ceiling heights by room from a reflected ceiling plan.\n` +
       `Text snippet:\n${snippet}\n` +
-      `rooms_from_floor_plan:\n${roomContext}\n` +
-      `For each room_number, output height_ft (numeric) if visible, source_note text, confidence (0-1), and notes if ambiguous.\n` +
-      `Return JSON array only.`;
+      `spaces_from_plan:\n${roomContext}\n` +
+      `Return JSON with a top-level object {"entries": [...]} where each entry includes space_id, room_number, height_ft (or null), source_sheet label (e.g., RCP, ELEVATIONS), source_note text, confidence (0-1), and notes if ambiguous.\n` +
+      `If a height is not present, set height_ft to null and explain in notes.`;
 
     const response = await this.openai!.chat.completions.create({
       model: this.model,
@@ -170,6 +187,6 @@ export class CeilingHeightExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
+    return parsed && typeof parsed === 'object' ? parsed : { entries: [] };
   }
 }

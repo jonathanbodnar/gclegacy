@@ -18,36 +18,48 @@ export interface WallRunSegment {
 }
 
 const WALL_RUN_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['id', 'endpoints_px'],
-    properties: {
-      id: { type: 'string' },
-      partition_type_id: { type: ['string', 'null'] },
-      new_or_existing: {
-        type: ['string', 'null'],
-        enum: ['new', 'existing', 'demo', null],
-      },
-      endpoints_px: {
-        type: 'array',
-        items: {
-          type: 'array',
-          items: { type: 'number' },
-          minItems: 2,
-          maxItems: 2,
+  type: 'object',
+  required: ['segments'],
+  additionalProperties: false,
+  properties: {
+    segments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'endpoints_px', 'partition_type_id', 'new_or_existing', 'adjacent_rooms', 'space_ids', 'confidence', 'notes'],
+        properties: {
+          id: { type: 'string' },
+          partition_type_id: { type: ['string', 'null'] },
+          new_or_existing: {
+            type: ['string', 'null'],
+            enum: ['new', 'existing', 'demo', null],
+          },
+          endpoints_px: {
+            type: 'array',
+            items: {
+              type: 'array',
+              items: { type: 'number' },
+              minItems: 2,
+              maxItems: 2,
+            },
+            minItems: 2,
+          },
+          adjacent_rooms: {
+            type: 'array',
+            items: { type: ['string', 'null'] },
+            maxItems: 2,
+          },
+          space_ids: {
+            type: 'array',
+            items: { type: ['string', 'null'] },
+            maxItems: 2,
+          },
+          confidence: { type: ['number', 'null'] },
+          notes: { type: ['string', 'null'] },
         },
-        minItems: 2,
+        additionalProperties: false,
       },
-      adjacent_rooms: {
-        type: 'array',
-        items: { type: ['string', 'null'] },
-        maxItems: 2,
-      },
-      confidence: { type: ['number', 'null'] },
-      notes: { type: ['string', 'null'] },
     },
-    additionalProperties: false,
   },
 };
 
@@ -109,8 +121,9 @@ export class WallRunExtractionService {
 
     for (const sheet of floorPlanSheets) {
       try {
-        const segments = await this.extractFromSheet(sheet, partitionContext);
-        for (const segment of segments) {
+        const segments = await this.extractFromSheet(sheet, partitionContext, sheetSpaces);
+        const entries = Array.isArray(segments?.segments) ? segments.segments : [];
+        for (const segment of entries) {
           results.push({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
@@ -137,8 +150,8 @@ export class WallRunExtractionService {
     const instructions =
       `You are analyzing an architectural floor plan to enumerate wall segments.\n` +
       `Partition type definitions:\n${partitionContext}\n` +
-      `For each straight wall segment, return id, partition_type_id, new_or_existing, endpoints_px (pixel coordinates), ` +
-      `adjacent_rooms (room numbers separated by the wall), confidence, and notes if uncertain.\n` +
+      `Spaces on this sheet:\n${spacesContext || '[]'}\n` +
+      `Return JSON with a top-level object {"segments": [...]} where each entry contains id, partition_type_id, new_or_existing, endpoints_px (pixel coordinates), space_ids, adjacent_rooms, confidence, and notes (use nulls when unknown).\n` +
       `Use "existing" if a segment appears existing/dashed. If type or rooms are unclear, return null but keep the segment.`;
 
     const response = await this.openai!.chat.completions.create({
@@ -179,6 +192,6 @@ export class WallRunExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
+    return parsed && typeof parsed === 'object' ? parsed : { segments: [] };
   }
 }

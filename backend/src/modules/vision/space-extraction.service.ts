@@ -12,6 +12,8 @@ export interface SpaceDefinition {
   sheetRef?: string | null;
   space_id: string;
   name?: string | null;
+  raw_label_text?: string | null;
+  raw_area_string?: string | null;
   category: SpaceCategory;
   bbox_px: [number, number, number, number];
   approx_area_sqft?: number | null;
@@ -28,10 +30,12 @@ const SPACE_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['space_id', 'name', 'category', 'bbox_px', 'sheet_ref', 'approx_area_sqft', 'confidence', 'notes'],
+        required: ['space_id', 'name', 'raw_label_text', 'raw_area_string', 'category', 'bbox_px', 'sheet_ref', 'confidence', 'notes'],
         properties: {
           space_id: { type: 'string' },
           name: { type: ['string', 'null'] },
+          raw_label_text: { type: ['string', 'null'] },
+          raw_area_string: { type: ['string', 'null'] },
           category: {
             type: 'string',
             enum: ['cafe', 'sales', 'boh', 'restroom', 'patio', 'other'],
@@ -43,7 +47,6 @@ const SPACE_SCHEMA = {
             items: { type: 'number' },
           },
           sheet_ref: { type: ['string', 'null'] },
-          approx_area_sqft: { type: ['number', 'null'] },
           confidence: { type: ['number', 'null'] },
           notes: { type: ['string', 'null'] },
         },
@@ -98,15 +101,18 @@ export class SpaceExtractionService {
         const parsed = await this.extractFromSheet(sheet);
         const spaceEntries = Array.isArray(parsed?.spaces) ? parsed.spaces : [];
         for (const entry of spaceEntries) {
+          const approxArea = this.parseArea(entry.raw_area_string);
           spaces.push({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
             sheetRef: entry.sheet_ref ?? sheet.sheetIdGuess ?? sheet.name,
             space_id: entry.space_id,
             name: entry.name ?? null,
+            raw_label_text: entry.raw_label_text ?? null,
+            raw_area_string: entry.raw_area_string ?? null,
             category: entry.category,
             bbox_px: entry.bbox_px,
-            approx_area_sqft: entry.approx_area_sqft ?? null,
+            approx_area_sqft: approxArea,
             confidence: entry.confidence ?? null,
             notes: entry.notes ?? null,
           });
@@ -135,7 +141,8 @@ export class SpaceExtractionService {
       `You are extracting logical spaces (rooms or zones) from a plan.\n` +
       `A "space" is a region of the plan with a distinct use (Cafe, Lounge, Back of House, Restroom, Sales Area, Patio, etc.).\n` +
       `If formal room numbers exist, keep them as space ids; otherwise synthesize descriptive ids (e.g., CAFE, RR-1).\n` +
-      `Return JSON with a top-level object {"spaces": [...]} where each entry includes: space_id, name, category (cafe/sales/boh/restroom/patio/other), bbox_px [x1,y1,x2,y2], sheet_ref, approx_area_sqft, confidence, notes (use null when unknown).\n` +
+      `Return JSON with a top-level object {"spaces": [...]} where each entry includes: space_id, name, raw_label_text (exact text string from the sheet that identifies the space), raw_area_string (exact substring like "1208 SQFT"), category (cafe/sales/boh/restroom/patio/other), bbox_px [x1,y1,x2,y2], sheet_ref, confidence, and notes (use null when unknown).\n` +
+      `Every name MUST be a substring of raw_label_text. If area text is not visible, set raw_area_string to null and do not invent an area.\n` +
       `TEXT_SNIPPET:\n${textSnippet || '(no text extracted)'}`;
 
     const base64 = rasterBuffer.toString('base64');
@@ -179,5 +186,23 @@ export class SpaceExtractionService {
 
     const parsed = JSON.parse(content);
     return parsed && typeof parsed === 'object' ? parsed : { spaces: [] };
+  }
+
+  private parseArea(raw?: string | null): number | null {
+    if (!raw) {
+      return null;
+    }
+    const normalized = raw.replace(/,/g, '');
+    const match = normalized.match(/([\d.]+)\s*(sq\s*ft|sf|ft²|square\s*feet|sf\.)/i);
+    if (!match) {
+      const numeric = normalized.match(/([\d.]+)/);
+      if (!numeric) {
+        return null;
+      }
+      const val = parseFloat(numeric[1]);
+      return Number.isFinite(val) ? val : null;
+    }
+    const value = parseFloat(match[1]);
+    return Number.isFinite(value) ? value : null;
   }
 }
