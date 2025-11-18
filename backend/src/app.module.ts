@@ -44,12 +44,13 @@ import { VisionModule } from './modules/vision/vision.module';
     ]),
 
     // Queue management - make Redis connection optional for health checks
-    ...(process.env.REDIS_HOST ? [
+    // Support multiple variable name formats: REDIS_URL, REDIS_HOST, REDISHOST
+    ...((process.env.REDIS_HOST || process.env.REDISHOST || process.env.REDIS_URL) ? [
       BullModule.forRoot({
-        redis: {
-          host: process.env.REDIS_HOST,
-          port: parseInt(process.env.REDIS_PORT || '6379'),
-          password: process.env.REDIS_PASSWORD || undefined,
+        redis: process.env.REDIS_URL || {
+          host: process.env.REDIS_HOST || process.env.REDISHOST,
+          port: parseInt(process.env.REDIS_PORT || process.env.REDISPORT || '6379'),
+          password: process.env.REDIS_PASSWORD || process.env.REDISPASSWORD || undefined,
         },
       })
     ] : []),

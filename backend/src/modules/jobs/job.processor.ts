@@ -50,7 +50,7 @@ export class JobProcessor {
       const ingestResult = await this.ingestService.ingestFile(fileId, disciplines, options);
       await this.reportProgress(job, 20);
 
-      // Step 2: Real plan analysis with OpenAI Vision (60% progress)
+      // Step 2: Real plan analysis with OpenAI Vision (25% -> 60% progress)
       await this.reportProgress(job, 25);
       
       // Get the actual uploaded file
@@ -59,13 +59,20 @@ export class JobProcessor {
       
       this.logger.log(`Starting real plan analysis for ${file.filename} (${file.pages || 'unknown'} pages)`);
       
-      // Use OpenAI Vision to analyze the actual plan
+      // Use OpenAI Vision to analyze the actual plan with progress reporting
       const analysisResult = await this.planAnalysisService.analyzePlanFile(
         fileBuffer,
         file.filename,
         disciplines,
         targets,
-        options
+        options,
+        // Progress callback: Map pages analyzed to 25%-60% range
+        async (currentPage: number, totalPages: number, message: string) => {
+          const analysisProgress = (currentPage / totalPages);
+          const overallProgress = 25 + (analysisProgress * 35); // 25% + up to 35% = 60% max
+          await this.reportProgress(job, Math.round(overallProgress));
+          this.logger.log(`Progress: ${Math.round(overallProgress)}% - ${message}`);
+        }
       );
       
       await this.reportProgress(job, 60);

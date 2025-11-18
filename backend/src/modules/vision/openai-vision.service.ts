@@ -149,7 +149,7 @@ export class OpenAIVisionService {
       const prompt = this.createAnalysisPrompt(disciplines, targets);
 
       const response = await this.openai.chat.completions.create({
-        model: "gpt-5-mini-2025-08-07",
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
@@ -210,16 +210,32 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       );
 
       return result;
-    } catch (error) {
-      this.logger.error("OpenAI vision analysis failed:", error.message);
+    } catch (error: any) {
+      const errorDetails = {
+        message: error.message,
+        status: error.status,
+        code: error.code,
+        type: error.type,
+      };
+      
+      this.logger.error("OpenAI vision analysis failed:", errorDetails);
+      
+      // Check for authentication errors
+      if (error.status === 401 || error.message?.includes('Incorrect API key') || error.message?.includes('authentication')) {
+        this.logger.error('❌ OpenAI API Key is invalid or missing! Set OPENAI_API_KEY in Railway environment variables.');
+        throw new Error('OpenAI API authentication failed. Please configure a valid OPENAI_API_KEY.');
+      }
+      
       await appendVisionLog("OpenAI vision analysis failed", {
         disciplines,
         targets,
         error: error.message,
+        errorDetails,
       });
 
       // Fallback to mock data for testing
       if (this.allowMockFallback) {
+        this.logger.warn('⚠️  Falling back to mock data (VISION_ALLOW_MOCK=true)');
         return this.generateMockAnalysis(disciplines, targets);
       }
       throw error;
@@ -825,7 +841,7 @@ IMPORTANT:
   async analyzeText(text: string, context: string): Promise<any> {
     try {
       const response = await this.openai.chat.completions.create({
-        model: "gpt-5-mini-2025-08-07",
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
@@ -868,7 +884,7 @@ Return as structured JSON.`,
       const imageUrl = `data:image/png;base64,${base64Image}`;
 
       const response = await this.openai.chat.completions.create({
-        model: "gpt-5-mini-2025-08-07",
+        model: "gpt-4o",
         messages: [
           {
             role: "user",

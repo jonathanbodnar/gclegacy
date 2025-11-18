@@ -79,20 +79,53 @@ export const JobProgress: React.FC<JobProgressProps> = ({
         {status === 'PROCESSING' && (
           <div className="mb-6">
             <div className="flex justify-between text-sm text-gray-600 mb-2">
-              <span>Processing plan analysis...</span>
-              <span>{Math.round(progress)}%</span>
+              <span className="font-medium">
+                {progress < 20 ? '🔄 Ingesting file...' :
+                 progress < 25 ? '📄 Parsing PDF pages...' :
+                 progress < 60 ? '🤖 AI analyzing plans...' :
+                 progress < 75 ? '📊 Extracting features...' :
+                 progress < 80 ? '💾 Saving to database...' :
+                 progress < 95 ? '🔧 Applying material rules...' :
+                 '✨ Finalizing results...'}
+              </span>
+              <span className="font-bold">{Math.round(progress)}%</span>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
               <div 
-                className="bg-blue-500 h-2 rounded-full transition-all duration-300 ease-out"
+                className="bg-gradient-to-r from-blue-500 to-blue-600 h-3 rounded-full transition-all duration-500 ease-out relative overflow-hidden"
                 style={{ width: `${progress}%` }}
-              ></div>
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-shimmer"></div>
+              </div>
             </div>
+            {progress >= 25 && progress < 60 && (
+              <div className="mt-2 text-xs text-gray-500 italic">
+                Analyzing each page with AI vision... This may take a few minutes for large plans.
+              </div>
+            )}
           </div>
         )}
 
+        {/* Warning for QUEUED status with error */}
+        {status === 'QUEUED' && error && error.includes('Queue not available') && (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div className="flex items-start space-x-3">
+              <svg className="w-5 h-5 text-yellow-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <div className="flex-1">
+                <h4 className="text-sm font-medium text-yellow-800 mb-1">Job Queue Not Available</h4>
+                <p className="text-sm text-yellow-700">
+                  This job is queued but won't process automatically because Redis is not configured. 
+                  Ask your admin to add a Redis service to Railway for background job processing.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
         {/* Error Message */}
-        {error && (
+        {error && !error.includes('Queue not available') && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
             <div className="flex items-start space-x-3">
               <svg className="w-5 h-5 text-red-500 mt-0.5" fill="currentColor" viewBox="0 0 20 20">

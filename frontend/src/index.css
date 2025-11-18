@@ -35,3 +35,17 @@ code {
 .card {
   @apply bg-white rounded-lg shadow-md p-6;
 }
+
+/* Progress bar shimmer animation */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}

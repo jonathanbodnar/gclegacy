@@ -1,4 +1,4 @@
-import { Module, DynamicModule } from "@nestjs/common";
+import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bull";
 
 import { JobsController } from "./jobs.controller";
@@ -12,7 +12,8 @@ import { FilesModule } from "../files/files.module";
 @Module({
   imports: [
     // Conditionally register Bull queue only if Redis is available
-    ...(process.env.REDIS_HOST ? [
+    // Support multiple variable name formats: REDIS_URL, REDIS_HOST, REDISHOST
+    ...((process.env.REDIS_HOST || process.env.REDISHOST || process.env.REDIS_URL) ? [
       BullModule.registerQueue({
         name: "job-processing",
       })

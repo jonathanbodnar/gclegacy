@@ -37,32 +37,100 @@ function App() {
   useEffect(() => {
     // Check API health on startup
     checkApiHealth();
+    
+    // Restore job state from localStorage on page load
+    const savedJobId = localStorage.getItem('currentJobId');
+    const savedFileId = localStorage.getItem('currentFileId');
+    const savedStep = localStorage.getItem('currentStep') as AppStep;
+    
+    if (savedJobId) {
+      setJobId(savedJobId);
+      if (savedFileId) setFileId(savedFileId);
+      if (savedStep) setCurrentStep(savedStep);
+      
+      // If we have a job ID, fetch its current status immediately
+      if (savedStep === 'processing' || savedStep === 'results') {
+        console.log('Restored job from localStorage:', savedJobId);
+        
+        // Fetch job status immediately
+        apiService.getJobStatus(savedJobId)
+          .then(status => {
+            console.log('Restored job status:', status);
+            setJobStatus(status);
+            
+            // If job is completed, load results and move to results step
+            if (status.status === 'COMPLETED') {
+              setCurrentStep('results');
+              apiService.getTakeoffResults(savedJobId)
+                .then(results => setTakeoffData(results))
+                .catch(err => console.error('Failed to load results:', err));
+            }
+          })
+          .catch(err => {
+            console.error('Failed to load job status:', err);
+            // If job not found or auth failed, clear localStorage and reset
+            console.log('Clearing localStorage due to error');
+            localStorage.removeItem('currentJobId');
+            localStorage.removeItem('currentFileId');
+            localStorage.removeItem('currentStep');
+            setJobId(null);
+            setFileId(null);
+            setCurrentStep('upload');
+            setError('Failed to restore previous job. Please start a new analysis.');
+          });
+      }
+    }
   }, []);
 
   useEffect(() => {
     // Poll job status when processing
     if (jobId && currentStep === "processing") {
+      let failureCount = 0;
+      const MAX_FAILURES = 3;
+      
       const pollInterval = setInterval(async () => {
         try {
           const status = await apiService.getJobStatus(jobId);
           setJobStatus(status);
+          failureCount = 0; // Reset on success
 
           if (status.status === "COMPLETED") {
             clearInterval(pollInterval);
             await loadResults();
             setCurrentStep("results");
+            localStorage.setItem('currentStep', 'results');
           } else if (status.status === "FAILED") {
             clearInterval(pollInterval);
             setError(status.error || "Job processing failed");
+            // Keep in localStorage so user can see the error after refresh
           }
         } catch (error) {
           console.error("Error polling job status:", error);
+          failureCount++;
+          
+          // After 3 consecutive failures, assume job doesn't exist and reset
+          if (failureCount >= MAX_FAILURES) {
+            console.log(`Failed to poll job status ${MAX_FAILURES} times, resetting...`);
+            clearInterval(pollInterval);
+            localStorage.clear();
+            setCurrentStep('upload');
+            setJobId(null);
+            setJobStatus(null);
+            setError('Lost connection to job. Please start a new analysis.');
+          }
         }
-      }, 10000);
+      }, 5000); // Poll every 5 seconds
 
       return () => clearInterval(pollInterval);
     }
   }, [jobId, currentStep]);
+  
+  // Sync step changes to localStorage
+  useEffect(() => {
+    if (currentStep && jobId) {
+      localStorage.setItem('currentStep', currentStep);
+    }
+  }, [currentStep, jobId]);
 
   const checkApiHealth = async () => {
     try {
@@ -103,6 +171,11 @@ function App() {
 
       setJobId(response.jobId);
       setCurrentStep("processing");
+      
+      // Persist to localStorage so we can resume after refresh
+      localStorage.setItem('currentJobId', response.jobId);
+      localStorage.setItem('currentFileId', fileId);
+      localStorage.setItem('currentStep', 'processing');
     } catch (error) {
       setError(
         error instanceof Error ? error.message : "Failed to start analysis"
@@ -181,6 +254,11 @@ function App() {
     setJobStatus(null);
     setTakeoffData(null);
     setError(null);
+    
+    // Clear localStorage
+    localStorage.removeItem('currentJobId');
+    localStorage.removeItem('currentFileId');
+    localStorage.removeItem('currentStep');
   };
 
   const renderStepIndicator = () => {
@@ -336,15 +414,32 @@ function App() {
             </div>
           )}
 
-          {currentStep === "processing" && jobStatus && (
-            <JobProgress
-              jobId={jobStatus.jobId}
-              status={jobStatus.status}
-              progress={jobStatus.progress}
-              error={jobStatus.error}
-              startedAt={jobStatus.startedAt}
-              finishedAt={jobStatus.finishedAt}
-            />
+          {currentStep === "processing" && (
+            <>
+              {jobStatus ? (
+                <JobProgress
+                  jobId={jobStatus.jobId}
+                  status={jobStatus.status}
+                  progress={jobStatus.progress}
+                  error={jobStatus.error}
+                  startedAt={jobStatus.startedAt}
+                  finishedAt={jobStatus.finishedAt}
+                />
+              ) : (
+                <div className="text-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                  <p className="text-gray-600">Loading job status...</p>
+                </div>
+              )}
+              <div className="mt-6 text-center">
+                <button
+                  onClick={resetApp}
+                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  ← Start New Analysis
+                </button>
+              </div>
+            </>
           )}
 
           {currentStep === "results" && takeoffData && (
