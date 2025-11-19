@@ -62,7 +62,7 @@ export class RoomSpatialMappingService {
     this.model =
       this.configService.get<string>('OPENAI_ROOM_SPATIAL_MODEL') ||
       this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-5-mini-2025-08-07';
+      'gpt-4o-mini';
     this.scheduleContextBudget = parseInt(
       this.configService.get<string>('ROOM_SPATIAL_SCHEDULE_LIMIT') || '8000',
       10,
