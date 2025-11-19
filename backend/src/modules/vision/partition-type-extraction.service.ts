@@ -17,24 +17,31 @@ export interface PartitionTypeDefinition {
 }
 
 const PARTITION_TYPE_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['partition_type_id'],
-    properties: {
-      partition_type_id: { type: 'string' },
-      fire_rating: { type: ['string', 'null'] },
-      layer_description: {
-        type: 'array',
-        items: { type: 'string' },
+  type: 'object',
+  required: ['partitions'],
+  properties: {
+    partitions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['partition_type_id'],
+        properties: {
+          partition_type_id: { type: 'string' },
+          fire_rating: { type: ['string', 'null'] },
+          layer_description: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+          stud_size: { type: ['string', 'null'] },
+          stud_gauge: { type: ['string', 'null'] },
+          has_acoustical_insulation: { type: ['boolean', 'null'] },
+          notes: { type: ['string', 'null'] },
+        },
+        additionalProperties: false,
       },
-      stud_size: { type: ['string', 'null'] },
-      stud_gauge: { type: ['string', 'null'] },
-      has_acoustical_insulation: { type: ['boolean', 'null'] },
-      notes: { type: ['string', 'null'] },
     },
-    additionalProperties: false,
   },
+  additionalProperties: false,
 };
 
 @Injectable()
@@ -134,6 +141,6 @@ export class PartitionTypeExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed?.partitions) ? parsed.partitions : [];
   }
 }
