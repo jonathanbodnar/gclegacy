@@ -15,6 +15,15 @@ export class HealthController {
     };
   }
 
+  @Get('health/version')
+  version() {
+    return {
+      node: process.version,
+      pid: process.pid,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   @Get()
   root() {
     return { 
