@@ -61,8 +61,9 @@ export class PlanAnalysisService {
               options
             );
 
-            // Detect scale for this page
-            const scaleInfo = await this.openaiVision.detectScale(imageBuffer);
+            // Detect scale for this page (skip if disabled for speed)
+            const skipScale = process.env.SKIP_SCALE_DETECTION === 'true';
+            const scaleInfo = skipScale ? null : await this.openaiVision.detectScale(imageBuffer);
 
             // Extract sheet title from vision analysis, fallback to generated name
             const sheetTitle =
