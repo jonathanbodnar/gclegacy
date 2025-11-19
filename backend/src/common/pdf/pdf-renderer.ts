@@ -1,17 +1,12 @@
+import { promises as fs } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
+import { randomUUID } from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
-type CanvasFactory = {
-  createCanvas: (width: number, height: number) => {
-    width: number;
-    height: number;
-    getContext: (type: '2d') => any;
-    toBuffer: (type?: string) => Buffer;
-  };
-  Path2D?: any;
-};
-
-let canvasModule: CanvasFactory | null = null;
-let standardFontDataUrl: string | null = null;
+const execFileAsync = promisify(execFile);
+const DEFAULT_DPI = 220;
 
 export interface PdfPageImage {
   buffer: Buffer;
@@ -28,103 +23,131 @@ export interface PdfPageRenderOptions {
   dpi?: number;
 }
 
-export async function getPdfJsLib(): Promise<any> {
-  return loadPdfJs();
-}
-
 export async function renderPdfToImages(
   pdfBuffer: Buffer,
   options: PdfRenderOptions = {},
 ): Promise<PdfPageImage[]> {
-  const pdfjsLib = await loadPdfJs();
-  const loadingTask = pdfjsLib.getDocument({
-    data: new Uint8Array(pdfBuffer),
-    standardFontDataUrl: getStandardFontPath(),
+  return withTempPdf(pdfBuffer, async (pdfPath) => {
+    const totalPages = await getPdfPageCountFromPath(pdfPath);
+    const dpi = normalizeDpi(options.dpi);
+    const limit = options.maxPages ? Math.min(options.maxPages, totalPages) : totalPages;
+    const results: PdfPageImage[] = [];
+    for (let pageNum = 1; pageNum <= limit; pageNum++) {
+      results.push(await renderPdfPageFromPath(pdfPath, pageNum, dpi));
+    }
+    return results;
   });
-  const pdfDoc = await loadingTask.promise;
-  const dpi = normalizeDpi(options.dpi);
-  const totalPages = pdfDoc.numPages;
-  const limit = options.maxPages ? Math.min(options.maxPages, totalPages) : totalPages;
-
-  const results: PdfPageImage[] = [];
-  for (let pageNum = 1; pageNum <= limit; pageNum++) {
-    const page = await pdfDoc.getPage(pageNum);
-    results.push(await renderPageWithDpi(page, dpi));
-  }
-
-  return results;
 }
 
-export async function renderPdfPage(
-  page: any,
-  options: PdfPageRenderOptions = {},
+export async function renderPdfPageFromPath(
+  pdfPath: string,
+  pageNumber: number,
+  dpi: number = DEFAULT_DPI,
 ): Promise<PdfPageImage> {
-  const dpi = normalizeDpi(options.dpi);
-  return renderPageWithDpi(page, dpi);
-}
+  const prefix = join(tmpdir(), `plantakeoff-${randomUUID()}`);
+  const args = [
+    '-png',
+    '-singlefile',
+    '-r',
+    dpi.toString(),
+    '-f',
+    pageNumber.toString(),
+    '-l',
+    pageNumber.toString(),
+    pdfPath,
+    prefix,
+  ];
 
-async function loadPdfJs(): Promise<any> {
+  await execFileAsync('pdftoppm', args);
+  const imagePath = `${prefix}.png`;
+
   try {
-    const lib = require('pdfjs-dist/legacy/build/pdf.js');
-    return lib;
-  } catch (legacyError) {
-    const lib = require('pdfjs-dist');
-    return lib;
+    const buffer = await fs.readFile(imagePath);
+    const { width, height } = await getImageDimensions(imagePath);
+    return {
+      buffer,
+      widthPx: width,
+      heightPx: height,
+    };
+  } finally {
+    await fs.unlink(imagePath).catch(() => undefined);
   }
 }
 
-function normalizeDpi(dpi?: number): number {
-  const value = typeof dpi === 'number' && dpi > 0 ? dpi : 220;
-  return Math.max(value, 1);
-}
-
-async function renderPageWithDpi(page: any, dpi: number): Promise<PdfPageImage> {
-  const canvasLib = loadCanvasModule();
-  const { createCanvas } = canvasLib;
-  const scale = dpi / 72;
-  const viewport = page.getViewport({ scale });
-  const width = Math.max(Math.ceil(viewport.width), 1);
-  const height = Math.max(Math.ceil(viewport.height), 1);
-  const canvas = createCanvas(width, height);
-  const context = canvas.getContext('2d');
-
-  await page.render({ canvasContext: context, viewport }).promise;
-
-  return {
-    buffer: canvas.toBuffer('image/png'),
-    widthPx: width,
-    heightPx: height,
+export interface PdfDocumentInfo {
+  pages: number;
+  pageSize?: {
+    widthPt: number;
+    heightPt: number;
   };
 }
 
-function loadCanvasModule(): CanvasFactory {
-  if (canvasModule) {
-    return canvasModule;
+export async function getPdfPageCount(pdfBuffer: Buffer): Promise<number> {
+  const info = await withTempPdf(pdfBuffer, (pdfPath) => getPdfInfoFromPath(pdfPath));
+  return info.pages;
+}
+
+export async function getPdfPageCountFromPath(pdfPath: string): Promise<number> {
+  const info = await getPdfInfoFromPath(pdfPath);
+  return info.pages;
+}
+
+export async function getPdfInfoFromPath(pdfPath: string): Promise<PdfDocumentInfo> {
+  const { stdout } = await execFileAsync('pdfinfo', [pdfPath]);
+  const pagesMatch = stdout.match(/Pages:\s+(\d+)/i);
+  if (!pagesMatch) {
+    throw new Error('Unable to determine PDF page count via pdfinfo');
   }
 
+  const info: PdfDocumentInfo = { pages: parseInt(pagesMatch[1], 10) };
+  const sizeMatch = stdout.match(/Page size:\s+([\d.]+)\s+x\s+([\d.]+)\s+pts/i);
+  if (sizeMatch) {
+    info.pageSize = {
+      widthPt: parseFloat(sizeMatch[1]),
+      heightPt: parseFloat(sizeMatch[2]),
+    };
+  }
+  return info;
+}
+
+export async function extractPdfPageText(pdfPath: string, pageNumber: number): Promise<string> {
+  const args = [
+    '-layout',
+    '-enc',
+    'UTF-8',
+    '-f',
+    pageNumber.toString(),
+    '-l',
+    pageNumber.toString(),
+    pdfPath,
+    '-',
+  ];
+  const { stdout } = await execFileAsync('pdftotext', args);
+  return stdout.toString().replace(/\s+/g, ' ').trim();
+}
+
+function normalizeDpi(dpi?: number): number {
+  const value = typeof dpi === 'number' && dpi > 0 ? dpi : DEFAULT_DPI;
+  return Math.max(value, 1);
+}
+
+async function withTempPdf<T>(buffer: Buffer, handler: (pdfPath: string) => Promise<T>): Promise<T> {
+  const pdfPath = join(tmpdir(), `plantakeoff-${randomUUID()}.pdf`);
+  await fs.writeFile(pdfPath, buffer);
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    canvasModule = require('canvas');
-    if (canvasModule && canvasModule.Path2D && typeof (globalThis as any).Path2D === 'undefined') {
-      (globalThis as any).Path2D = canvasModule.Path2D;
-    }
-    return canvasModule!;
-  } catch (error: any) {
-    const hint =
-      "The 'canvas' package is required for PDF rendering. Install it with `npm install canvas` and ensure its native dependencies (cairo/pango/libpng/jpeg/giflib) are available.";
-    const message = error?.message
-      ? `${error.message}. ${hint}`
-      : hint;
-    throw new Error(message);
+    return await handler(pdfPath);
+  } finally {
+    await fs.unlink(pdfPath).catch(() => undefined);
   }
 }
 
-function getStandardFontPath(): string {
-  if (standardFontDataUrl) {
-    return standardFontDataUrl;
+async function getImageDimensions(imagePath: string): Promise<{ width: number; height: number }> {
+  const { stdout } = await execFileAsync('identify', ['-format', '%w %h', imagePath]);
+  const [widthStr, heightStr] = stdout.trim().split(/\s+/);
+  const width = parseInt(widthStr, 10);
+  const height = parseInt(heightStr, 10);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    throw new Error(`Unable to detect image dimensions for ${imagePath}`);
   }
-  const pkgPath = require.resolve('pdfjs-dist/package.json');
-  const baseDir = join(pkgPath, '..', 'build', 'standard_fonts');
-  standardFontDataUrl = baseDir.endsWith('/') ? baseDir : `${baseDir}/`;
-  return standardFontDataUrl;
+  return { width, height };
 }

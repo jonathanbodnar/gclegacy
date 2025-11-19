@@ -3,7 +3,10 @@ import {
   OpenAIVisionService,
   VisionAnalysisResult,
 } from "./openai-vision.service";
-import { renderPdfToImages, getPdfJsLib } from "../../common/pdf/pdf-renderer";
+import {
+  renderPdfToImages,
+  getPdfPageCount as getPdfPageCountFromRenderer,
+} from "../../common/pdf/pdf-renderer";
 
 @Injectable()
 export class PlanAnalysisService {
@@ -190,16 +193,16 @@ export class PlanAnalysisService {
 
       if (rendered.length > 0) {
         this.logger.log(
-          `Successfully rendered ${rendered.length} pages from PDF via pdfjs/canvas`
+          `Successfully rendered ${rendered.length} pages from PDF using Poppler`
         );
         return rendered.map((page) => page.buffer);
       }
     } catch (renderError: any) {
       this.logger.error(
-        `Canvas-based PDF rendering failed: ${renderError.message}`
+        `CLI-based PDF rendering failed: ${renderError.message}`
       );
       throw new Error(
-        "PDF conversion failed: Unable to render pages with pdfjs/canvas. Ensure the 'canvas' dependency and its native prerequisites are installed."
+        "PDF conversion failed: Unable to render pages with Poppler (pdftoppm). Ensure poppler utilities are installed."
       );
     }
 
@@ -207,16 +210,8 @@ export class PlanAnalysisService {
   }
 
   private async getPdfPageCount(pdfBuffer: Buffer): Promise<number> {
-    const pdfjsLib = await getPdfJsLib();
-
     try {
-      const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(pdfBuffer),
-        disableWorker: true,
-      });
-
-      const pdfDoc = await loadingTask.promise;
-      return pdfDoc.numPages;
+      return await getPdfPageCountFromRenderer(pdfBuffer);
     } catch (error: any) {
       this.logger.warn(`Failed to get PDF page count: ${error.message}`);
       throw error;

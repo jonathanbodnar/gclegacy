@@ -1,11 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as pdfParse from 'pdf-parse';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { IngestResult, SheetData, RawPage } from './ingest.service';
-import { renderPdfPage, getPdfJsLib } from '../../common/pdf/pdf-renderer';
+import {
+  renderPdfPageFromPath,
+  extractPdfPageText,
+  getPdfInfoFromPath,
+} from '../../common/pdf/pdf-renderer';
 
 @Injectable()
 export class PdfIngestService {
@@ -20,81 +23,70 @@ export class PdfIngestService {
     this.logger.log(`Processing PDF file: ${fileId}`);
 
     try {
-      // Parse PDF for quick metadata
-      const pdfData = await pdfParse(fileBuffer);
-
-      // Load pdfjs for per-page text and dimensions
-      const pdfjsLib = await getPdfJsLib();
-      const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(fileBuffer),
-        disableWorker: true,
-      });
-      const pdfDoc = await loadingTask.promise;
-
+      const tempPdfPath = await this.saveTempPdf(fileBuffer);
+      const pdfInfo = await getPdfInfoFromPath(tempPdfPath);
       const renderDpi = parseInt(process.env.PDF_RENDER_DPI || '220', 10);
       const sheets: SheetData[] = [];
       const rawPages: RawPage[] = [];
 
-      for (let i = 0; i < pdfDoc.numPages; i++) {
-        const pageNumber = i + 1;
-        const page = await pdfDoc.getPage(pageNumber);
+      try {
+        for (let i = 0; i < pdfInfo.pages; i++) {
+          const pageNumber = i + 1;
+          const pageText = await extractPdfPageText(tempPdfPath, pageNumber);
 
-        // Extract text content for this page
-        const pageText = await this.extractPageTextContent(page);
+          const sheetIdGuess = this.extractSheetName(pageText);
 
-        const sheetIdGuess = this.extractSheetName(pageText);
+          const renderedImage = await renderPdfPageFromPath(
+            tempPdfPath,
+            pageNumber,
+            renderDpi,
+          );
+          const imagePath = await this.saveTempImage(renderedImage.buffer);
+          const { widthPx, heightPx } = renderedImage;
 
-        const viewport = page.getViewport({ scale: 1 });
-        const pageSize = {
-          widthPt: viewport.width,
-          heightPt: viewport.height,
-        };
+          // Detect discipline from page content
+          const discipline = this.detectDisciplineFromText(pageText);
 
-        const renderedImage = await renderPdfPage(page, { dpi: renderDpi });
-        const imagePath = await this.saveTempImage(renderedImage.buffer);
-        const { widthPx, heightPx } = renderedImage;
+          // Detect scale from page content
+          const scaleInfo = this.detectScaleFromText(pageText);
 
-        // Detect discipline from page content
-        const discipline = this.detectDisciplineFromText(pageText);
-        
-        // Detect scale from page content
-        const scaleInfo = this.detectScaleFromText(pageText);
-        
-        // Create sheet data
-        const sheet: SheetData = {
-          index: i,
-          name: sheetIdGuess || `Page ${pageNumber}`,
-          discipline,
-          scale: scaleInfo.scale,
-          units: scaleInfo.units,
-          sheetIdGuess,
-          text: pageText,
-          widthPx,
-          heightPx,
-          imagePath,
-          pageSize,
-          renderDpi,
-          content: {
-            textData: pageText,
-            rasterData: renderedImage.buffer,
-            metadata: {
-              widthPx,
-              heightPx,
-              imagePath,
-              pageSize,
-              renderDpi,
+          const sheet: SheetData = {
+            index: i,
+            name: sheetIdGuess || `Page ${pageNumber}`,
+            discipline,
+            scale: scaleInfo.scale,
+            units: scaleInfo.units,
+            sheetIdGuess,
+            text: pageText,
+            widthPx,
+            heightPx,
+            imagePath,
+            pageSize: pdfInfo.pageSize,
+            renderDpi,
+            content: {
+              textData: pageText,
+              rasterData: renderedImage.buffer,
+              metadata: {
+                widthPx,
+                heightPx,
+                imagePath,
+                pageSize: pdfInfo.pageSize,
+                renderDpi,
+              },
             },
-          },
-        };
-        
-        sheets.push(sheet);
-        rawPages.push({
-          index: i,
-          text: pageText,
-          imagePath,
-          widthPx,
-          heightPx,
-        });
+          };
+
+          sheets.push(sheet);
+          rawPages.push({
+            index: i,
+            text: pageText,
+            imagePath,
+            widthPx,
+            heightPx,
+          });
+        }
+      } finally {
+        await fs.unlink(tempPdfPath).catch(() => undefined);
       }
 
       const detectedDisciplines = [...new Set(sheets.map(s => s.discipline).filter(Boolean))];
@@ -104,7 +96,7 @@ export class PdfIngestService {
         sheets,
         rawPages,
         metadata: {
-          totalPages: pdfData.numpages,
+          totalPages: pdfInfo.pages,
           detectedDisciplines,
           fileType: 'PDF',
         },
@@ -174,20 +166,15 @@ export class PdfIngestService {
     return undefined;
   }
 
-  private async extractPageTextContent(page: any): Promise<string> {
-    const textContent = await page.getTextContent();
-    const strings: string[] = [];
-    for (const item of textContent.items || []) {
-      if (typeof item.str === 'string') {
-        strings.push(item.str);
-      }
-    }
-    return strings.join(' ').replace(/\s+/g, ' ').trim();
-  }
-
   private async saveTempImage(buffer: Buffer): Promise<string> {
     const tempImagePath = join(tmpdir(), `sheet_image_${randomUUID()}.png`);
     await fs.writeFile(tempImagePath, buffer);
     return tempImagePath;
+  }
+
+  private async saveTempPdf(buffer: Buffer): Promise<string> {
+    const tempPdfPath = join(tmpdir(), `uploaded_pdf_${randomUUID()}.pdf`);
+    await fs.writeFile(tempPdfPath, buffer);
+    return tempPdfPath;
   }
 }
