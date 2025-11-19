@@ -21,7 +21,7 @@ const SHEET_CATEGORIES = [
 
 const SHEET_CLASSIFICATION_SCHEMA = {
   type: 'object',
-  required: ['sheet_id', 'title', 'discipline', 'category', 'confidence', 'is_primary_plan'],
+  required: ['sheet_id', 'title', 'discipline', 'category', 'confidence', 'notes', 'is_primary_plan'],
   properties: {
     sheet_id: { type: ['string', 'null'] },
     title: { type: ['string', 'null'] },

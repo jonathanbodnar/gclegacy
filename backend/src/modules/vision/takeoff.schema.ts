@@ -4,7 +4,7 @@ export const TAKEOFF_JSON_SCHEMA = {
   properties: {
     project: {
       type: 'object',
-      required: ['name'],
+      required: ['name', 'number'],
       properties: {
         name: { type: ['string', 'null'] },
         number: { type: ['string', 'null'] },
