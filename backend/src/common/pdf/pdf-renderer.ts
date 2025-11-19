@@ -93,21 +93,31 @@ export async function getPdfPageCountFromPath(pdfPath: string): Promise<number> 
 }
 
 export async function getPdfInfoFromPath(pdfPath: string): Promise<PdfDocumentInfo> {
-  const { stdout } = await execFileAsync('pdfinfo', [pdfPath]);
-  const pagesMatch = stdout.match(/Pages:\s+(\d+)/i);
-  if (!pagesMatch) {
-    throw new Error('Unable to determine PDF page count via pdfinfo');
-  }
+  try {
+    const { stdout } = await execFileAsync('pdfinfo', [pdfPath]);
+    const pagesMatch = stdout.match(/Pages:\s+(\d+)/i);
+    if (!pagesMatch) {
+      throw new Error('Unable to determine PDF page count via pdfinfo');
+    }
 
-  const info: PdfDocumentInfo = { pages: parseInt(pagesMatch[1], 10) };
-  const sizeMatch = stdout.match(/Page size:\s+([\d.]+)\s+x\s+([\d.]+)\s+pts/i);
-  if (sizeMatch) {
-    info.pageSize = {
-      widthPt: parseFloat(sizeMatch[1]),
-      heightPt: parseFloat(sizeMatch[2]),
-    };
+    const info: PdfDocumentInfo = { pages: parseInt(pagesMatch[1], 10) };
+    const sizeMatch = stdout.match(/Page size:\s+([\d.]+)\s+x\s+([\d.]+)\s+pts/i);
+    if (sizeMatch) {
+      info.pageSize = {
+        widthPt: parseFloat(sizeMatch[1]),
+        heightPt: parseFloat(sizeMatch[2]),
+      };
+    }
+    return info;
+  } catch (error: any) {
+    // If pdfinfo is not available, return a default with high page count
+    // The actual page limit will be determined during rendering
+    if (error.code === 'ENOENT') {
+      console.warn('pdfinfo command not found - will determine page count during rendering');
+      return { pages: 100 }; // Default high number, will render until empty pages
+    }
+    throw error;
   }
-  return info;
 }
 
 export async function extractPdfPageText(pdfPath: string, pageNumber: number): Promise<string> {
