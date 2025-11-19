@@ -17,8 +17,8 @@ interface JobConfigurationProps {
 
 export const JobConfiguration: React.FC<JobConfigurationProps> = ({ onConfigChange, disabled = false }) => {
   const [config, setConfig] = useState<JobConfig>({
-    disciplines: ['A'],
-    targets: ['rooms', 'walls'],
+    disciplines: ['A', 'P', 'M', 'E'], // All disciplines selected by default
+    targets: ['rooms', 'walls', 'doors', 'windows', 'pipes', 'ducts', 'fixtures'], // All targets selected
     options: {
       bimPreferred: true,
       inferScale: true,
