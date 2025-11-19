@@ -28,6 +28,10 @@ export interface PdfPageRenderOptions {
   dpi?: number;
 }
 
+export async function getPdfJsLib(): Promise<any> {
+  return loadPdfJs();
+}
+
 export async function renderPdfToImages(
   pdfBuffer: Buffer,
   options: PdfRenderOptions = {},

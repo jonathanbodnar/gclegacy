@@ -3,7 +3,7 @@ import {
   OpenAIVisionService,
   VisionAnalysisResult,
 } from "./openai-vision.service";
-import { renderPdfToImages } from "../../common/pdf/pdf-renderer";
+import { renderPdfToImages, getPdfJsLib } from "../../common/pdf/pdf-renderer";
 
 @Injectable()
 export class PlanAnalysisService {

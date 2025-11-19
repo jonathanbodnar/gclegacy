@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { IngestResult, SheetData, RawPage } from './ingest.service';
-import { renderPdfPage } from '../../common/pdf/pdf-renderer';
+import { renderPdfPage, getPdfJsLib } from '../../common/pdf/pdf-renderer';
 
 @Injectable()
 export class PdfIngestService {
