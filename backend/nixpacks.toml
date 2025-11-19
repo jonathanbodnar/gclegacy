@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["nodejs_18", "npm-9_x", "python3", "postgresql", "vips", "imagemagick", "graphicsmagick", "ghostscript"]
+nixPkgs = ["nodejs_20", "npm-10_x", "python3", "postgresql", "vips", "imagemagick", "graphicsmagick", "ghostscript"]
 
 [phases.install]
 cmds = ["npm install"]
