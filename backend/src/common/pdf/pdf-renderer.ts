@@ -14,6 +14,10 @@ let canvasModule: CanvasFactory | null = null;
 let standardFontDataUrl: string | null = null;
 let canvasPolyfillsInitialized = false;
 let pdfjsLibPromise: Promise<any> | null = null;
+const dynamicImport = new Function(
+  'specifier',
+  'return import(specifier);',
+) as (specifier: string) => Promise<any>;
 
 export interface PdfPageImage {
   buffer: Buffer;
@@ -71,7 +75,7 @@ async function loadPdfJs(): Promise<any> {
   }
 
   const loadModule = async (specifier: string) => {
-    const mod = await import(specifier);
+    const mod = await dynamicImport(specifier);
     return (mod as any).default ?? mod;
   };
 
