@@ -46,6 +46,7 @@ export async function renderPdfToImages(
   const loadingTask = pdfjsLib.getDocument({
     data: new Uint8Array(pdfBuffer),
     standardFontDataUrl: getStandardFontPath(),
+    disableWorker: true,
   });
   const pdfDoc = await loadingTask.promise;
   const dpi = normalizeDpi(options.dpi);
@@ -82,15 +83,9 @@ async function loadPdfJs(): Promise<any> {
   pdfjsLibPromise = (async () => {
     try {
       const lib = await loadModule('pdfjs-dist/legacy/build/pdf.js');
-      if (lib?.GlobalWorkerOptions) {
-        lib.GlobalWorkerOptions.workerSrc = null;
-      }
       return lib;
     } catch (legacyError) {
       const fallback = await loadModule('pdfjs-dist');
-      if (fallback?.GlobalWorkerOptions) {
-        fallback.GlobalWorkerOptions.workerSrc = null;
-      }
       return fallback;
     }
   })();

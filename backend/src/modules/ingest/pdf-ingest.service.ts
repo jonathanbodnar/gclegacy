@@ -28,6 +28,7 @@ export class PdfIngestService {
       const pdfjsLib = await getPdfJsLib();
       const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(fileBuffer),
+        disableWorker: true,
       });
       const pdfDoc = await loadingTask.promise;
 

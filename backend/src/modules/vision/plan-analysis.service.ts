@@ -274,6 +274,7 @@ export class PlanAnalysisService {
     try {
       const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(pdfBuffer),
+        disableWorker: true,
       });
 
       const pdfDoc = await loadingTask.promise;
