@@ -4,7 +4,8 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-import { IngestResult, SheetData } from './ingest.service';
+import { IngestResult, SheetData, RawPage } from './ingest.service';
+import { renderPdfPage, getPdfJsLib } from '../../common/pdf/pdf-renderer';
 
 @Injectable()
 export class PdfIngestService {
@@ -24,7 +25,7 @@ export class PdfIngestService {
       const pdfData = await pdfParse(fileBuffer);
 
       // Load pdfjs for per-page text and dimensions
-      const pdfjsLib = await this.loadPdfJs();
+      const pdfjsLib = await getPdfJsLib();
       const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(fileBuffer),
       });
@@ -110,14 +111,6 @@ export class PdfIngestService {
       if (tempPdfPath) {
         await fs.unlink(tempPdfPath).catch(() => undefined);
       }
-    }
-  }
-
-  private async loadPdfJs(): Promise<any> {
-    try {
-      return require('pdfjs-dist/legacy/build/pdf.js');
-    } catch (legacyError) {
-      return require('pdfjs-dist');
     }
   }
 

@@ -3,11 +3,7 @@ import {
   OpenAIVisionService,
   VisionAnalysisResult,
 } from "./openai-vision.service";
-import { promises as fs } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
-import { randomUUID } from "crypto";
-import { ConfigService } from "@nestjs/config";
+import { renderPdfToImages, getPdfJsLib } from "../../common/pdf/pdf-renderer";
 
 @Injectable()
 export class PlanAnalysisService {
@@ -273,19 +269,7 @@ export class PlanAnalysisService {
   }
 
   private async getPdfPageCount(pdfBuffer: Buffer): Promise<number> {
-    // Try different import methods based on pdfjs-dist version
-    let pdfjsLib: any;
-    try {
-      pdfjsLib = require("pdfjs-dist");
-    } catch (e) {
-      try {
-        pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
-      } catch (e2) {
-        throw new Error(
-          "Could not load pdfjs-dist. Please check installation."
-        );
-      }
-    }
+    const pdfjsLib = await getPdfJsLib();
 
     try {
       const loadingTask = pdfjsLib.getDocument({
