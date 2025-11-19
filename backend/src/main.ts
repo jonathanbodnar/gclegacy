@@ -7,6 +7,7 @@ import { MinimalAppModule } from './minimal-app.module';
 async function bootstrap() {
   try {
     console.log('🚀 Starting PlanTakeoff API...');
+    console.log('Node.js version:', process.version);
     
     // Always start with minimal app first for health checks, then upgrade
     const useMinimalApp = process.env.MINIMAL_START !== 'false';
