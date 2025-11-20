@@ -31,6 +31,8 @@
     "db:migrate:prod": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "seed": "ts-node scripts/seed.ts",
+    "seed:mock-job": "ts-node scripts/seed-mock-job.ts",
+    "seed:mock-reset": "ts-node scripts/seed-mock-job.ts --reset-only",
     "railway:deploy": "./railway-deploy.sh",
     "railway:setup": "npm run db:generate && npm run db:push && npm run seed",
     "postbuild": "cp -r prisma dist/ && cp -r scripts dist/ && cp package*.json dist/"
