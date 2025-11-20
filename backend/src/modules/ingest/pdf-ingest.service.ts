@@ -39,12 +39,41 @@ export class PdfIngestService {
         // Suppress specific canvas cleanup errors that don't affect functionality
         if (
           message.includes('Failed to unwrap exclusive reference') ||
-          (message.includes('CanvasElement') && message.includes('napi value'))
+          (message.includes('CanvasElement') && message.includes('napi value')) ||
+          message.includes('InvalidArg')
         ) {
           return; // Suppress this error
         }
         originalError.apply(console, args);
       };
+
+      // Set up unhandled rejection handler to catch async canvas cleanup errors
+      const originalUnhandledRejection = process.listeners('unhandledRejection');
+      const unhandledRejectionHandler = (reason: any, promise: Promise<any>) => {
+        // Suppress canvas cleanup errors that occur as unhandled rejections
+        if (
+          reason &&
+          typeof reason === 'object' &&
+          (reason.code === 'InvalidArg' ||
+            (reason.message &&
+              (reason.message.includes('Failed to unwrap exclusive reference') ||
+                reason.message.includes('CanvasElement') ||
+                reason.message.includes('napi value'))))
+        ) {
+          // Silently ignore these cleanup errors - they don't affect functionality
+          return;
+        }
+        // For other errors, call original handlers
+        originalUnhandledRejection.forEach((handler) => {
+          try {
+            handler(reason, promise);
+          } catch (e) {
+            // Ignore errors in error handlers
+          }
+        });
+      };
+      process.removeAllListeners('unhandledRejection');
+      process.on('unhandledRejection', unhandledRejectionHandler);
 
       try {
         // Parse PDF for quick metadata
@@ -140,6 +169,13 @@ export class PdfIngestService {
         // Restore original console methods
         console.warn = originalWarn;
         console.error = originalError;
+        // Restore original unhandled rejection handlers
+        if (typeof originalUnhandledRejection !== 'undefined') {
+          process.removeAllListeners('unhandledRejection');
+          originalUnhandledRejection.forEach((handler) => {
+            process.on('unhandledRejection', handler);
+          });
+        }
         // Log suppressed warnings count if any were suppressed
         if (suppressedWarnings.size > 0) {
           this.logger.debug(
@@ -199,16 +235,11 @@ export class PdfIngestService {
             },
             destroy(canvasAndContext: any) {
               // Suppress destruction errors - @napi-rs/canvas handles cleanup
-              if (canvasAndContext) {
-                try {
-                  if (canvasAndContext.canvas && typeof canvasAndContext.canvas.width !== 'undefined') {
-                    canvasAndContext.canvas.width = 0;
-                    canvasAndContext.canvas.height = 0;
-                  }
-                } catch (e) {
-                  // Silently ignore cleanup errors
-                }
-              }
+              // PDF.js tries to destroy canvases it didn't create, causing errors
+              // Don't try to modify the canvas - just return without doing anything
+              // Setting width/height to 0 causes the napi unwrap error
+              // The canvas will be garbage collected naturally
+              return;
             },
           });
         }
