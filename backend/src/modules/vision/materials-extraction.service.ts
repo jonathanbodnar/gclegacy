@@ -31,7 +31,7 @@ const FINISH_SCHEMA = {
   $defs: {
     finish: {
       type: 'object',
-      required: ['floor', 'wall', 'ceiling', 'base'],
+      required: ['floor', 'wall', 'ceiling', 'base', 'notes'],
       properties: {
         floor: { type: ['string', 'null'] },
         wall: {

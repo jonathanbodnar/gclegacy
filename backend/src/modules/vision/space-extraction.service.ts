@@ -27,7 +27,7 @@ const SPACE_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['space_id', 'category', 'bbox_px'],
+        required: ['space_id', 'name', 'category', 'bbox_px', 'sheet_ref', 'approx_area_sqft', 'confidence', 'notes'],
         properties: {
           space_id: { type: 'string' },
           name: { type: ['string', 'null'] },
