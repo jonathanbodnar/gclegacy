@@ -170,18 +170,6 @@ export class PdfIngestService {
       errors.push(`ES module import failed: ${errorMsg}`);
     }
 
-    // Try build/pdf.mjs (ES module build) with proper error handling
-    try {
-      const buildModule = await import('pdfjs-dist/build/pdf.mjs');
-      let lib = buildModule.default || buildModule;
-      if (lib && typeof lib.getDocument === 'function') {
-        this.logger.debug('Successfully loaded pdfjs-dist via build/pdf.mjs');
-        return lib;
-      }
-    } catch (buildError: any) {
-      errors.push(`build/pdf.mjs import failed: ${buildError.message}`);
-    }
-
     // Try build/pdf.js (CommonJS build)
     try {
       const lib = nodeRequire('pdfjs-dist/build/pdf.js');

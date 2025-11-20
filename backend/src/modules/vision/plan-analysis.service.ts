@@ -223,19 +223,7 @@ export class PlanAnalysisService {
     } catch (importError: any) {
       errors.push(`ES module import failed: ${importError.message}`);
       
-      // Try build/pdf.mjs (ES module build)
-      try {
-        const buildModule = await import("pdfjs-dist/build/pdf.mjs");
-        pdfjsLib = buildModule.default || buildModule;
-        if (pdfjsLib && typeof pdfjsLib.getDocument === "function") {
-          // Success, continue below
-        } else {
-          throw new Error("Module loaded but getDocument is not a function");
-        }
-      } catch (buildError: any) {
-        errors.push(`build/pdf.mjs import failed: ${buildError.message}`);
-        
-        // Try build/pdf.js (CommonJS build)
+      // Try build/pdf.js (CommonJS build)
         try {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           pdfjsLib = require("pdfjs-dist/build/pdf.js");

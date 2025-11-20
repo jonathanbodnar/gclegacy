@@ -117,17 +117,6 @@ async function loadPdfJs(): Promise<any> {
     errors.push(`ES module import failed: ${errorMsg}`);
   }
 
-  // Try build/pdf.mjs (ES module build)
-  try {
-    const buildModule = await import("pdfjs-dist/build/pdf.mjs");
-    let lib = buildModule.default || buildModule;
-    if (lib && typeof lib.getDocument === "function") {
-      return lib;
-    }
-  } catch (buildError: any) {
-    errors.push(`build/pdf.mjs import failed: ${buildError.message}`);
-  }
-
   // Try build/pdf.js (CommonJS build)
   try {
     const lib = nodeRequire("pdfjs-dist/build/pdf.js");
