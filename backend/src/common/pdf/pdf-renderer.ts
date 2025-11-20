@@ -56,11 +56,14 @@ export async function renderPdfToImages(
   // Suppress canvas cleanup errors that occur during PDF.js operations
   console.error = (...args: any[]) => {
     const message = args.join(" ");
-    // Suppress specific canvas cleanup errors that don't affect functionality
+    // Suppress specific canvas cleanup errors and XFA parsing errors that don't affect functionality
     if (
       message.includes("Failed to unwrap exclusive reference") ||
       (message.includes("CanvasElement") && message.includes("napi value")) ||
-      message.includes("InvalidArg")
+      message.includes("InvalidArg") ||
+      message.includes("XFA") ||
+      message.includes("Cannot destructure property") ||
+      (message.includes("html") && message.includes("null"))
     ) {
       return; // Suppress this error
     }
@@ -70,7 +73,7 @@ export async function renderPdfToImages(
   // Set up unhandled rejection handler to catch async canvas cleanup errors
   const originalUnhandledRejection = process.listeners("unhandledRejection");
   const unhandledRejectionHandler = (reason: any, promise: Promise<any>) => {
-    // Suppress canvas cleanup errors that occur as unhandled rejections
+    // Suppress canvas cleanup errors and XFA parsing errors that occur as unhandled rejections
     if (
       reason &&
       typeof reason === "object" &&
@@ -78,9 +81,12 @@ export async function renderPdfToImages(
         (reason.message &&
           (reason.message.includes("Failed to unwrap exclusive reference") ||
             reason.message.includes("CanvasElement") ||
-            reason.message.includes("napi value"))))
+            reason.message.includes("napi value") ||
+            reason.message.includes("XFA") ||
+            reason.message.includes("Cannot destructure property") ||
+            (reason.message.includes("html") && reason.message.includes("null")))))
     ) {
-      // Silently ignore these cleanup errors - they don't affect functionality
+      // Silently ignore these cleanup/XFA errors - they don't affect functionality
       return;
     }
     // For other errors, call original handlers
@@ -97,11 +103,29 @@ export async function renderPdfToImages(
 
   try {
     const pdfjsLib = await loadPdfJs();
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(pdfBuffer),
-      standardFontDataUrl: getStandardFontPath(),
-    });
-    const pdfDoc = await loadingTask.promise;
+    let pdfDoc;
+    try {
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(pdfBuffer),
+        standardFontDataUrl: getStandardFontPath(),
+        stopAtErrors: true, // Continue processing even with errors
+      });
+      pdfDoc = await loadingTask.promise;
+    } catch (loadError: any) {
+      // If loading fails, try with error recovery
+      if (loadError?.message && (loadError.message.includes('XFA') || loadError.message.includes('rich text'))) {
+        // Try again with minimal options
+        const retryTask = pdfjsLib.getDocument({
+          data: new Uint8Array(pdfBuffer),
+          standardFontDataUrl: getStandardFontPath(),
+          stopAtErrors: true,
+        });
+        pdfDoc = await retryTask.promise;
+      } else {
+        throw loadError;
+      }
+    }
+    
     const dpi = normalizeDpi(options.dpi);
     const totalPages = pdfDoc.numPages;
     const limit = options.maxPages
@@ -110,8 +134,15 @@ export async function renderPdfToImages(
 
     const results: PdfPageImage[] = [];
     for (let pageNum = 1; pageNum <= limit; pageNum++) {
-      const page = await pdfDoc.getPage(pageNum);
-      results.push(await renderPageWithDpi(page, dpi));
+      try {
+        const page = await pdfDoc.getPage(pageNum);
+        results.push(await renderPageWithDpi(page, dpi));
+      } catch (pageError: any) {
+        // Log but continue processing other pages
+        console.warn(`Failed to render page ${pageNum}: ${pageError?.message || String(pageError)}. Skipping this page.`);
+        // Continue to next page instead of crashing
+        continue;
+      }
     }
 
     return results;

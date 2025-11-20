@@ -194,8 +194,26 @@ export class PlanAnalysisService {
           `Successfully rendered ${rendered.length} pages from PDF via pdfjs/canvas`
         );
         return rendered.map((page) => page.buffer);
+      } else {
+        this.logger.warn(
+          `PDF rendering completed but no pages were generated. This may be due to XFA parsing errors or other PDF structure issues.`
+        );
+        // Return empty array instead of throwing - let the caller handle it
+        return [];
       }
     } catch (renderError: any) {
+      // Check if it's an XFA-related error
+      if (
+        renderError?.message &&
+        (renderError.message.includes("XFA") ||
+          renderError.message.includes("rich text"))
+      ) {
+        this.logger.warn(
+          `PDF rendering encountered XFA parsing errors: ${renderError.message}. Some pages may not be processable.`
+        );
+        // Return empty array to allow processing to continue with other methods
+        return [];
+      }
       this.logger.error(
         `Canvas-based PDF rendering failed: ${renderError.message}`
       );

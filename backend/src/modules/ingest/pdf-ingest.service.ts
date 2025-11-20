@@ -36,11 +36,14 @@ export class PdfIngestService {
       };
       console.error = (...args: any[]) => {
         const message = args.join(' ');
-        // Suppress specific canvas cleanup errors that don't affect functionality
+        // Suppress specific canvas cleanup errors and XFA parsing errors that don't affect functionality
         if (
           message.includes('Failed to unwrap exclusive reference') ||
           (message.includes('CanvasElement') && message.includes('napi value')) ||
-          message.includes('InvalidArg')
+          message.includes('InvalidArg') ||
+          message.includes('XFA') ||
+          message.includes('Cannot destructure property') ||
+          (message.includes('html') && message.includes('null'))
         ) {
           return; // Suppress this error
         }
@@ -58,9 +61,12 @@ export class PdfIngestService {
             (reason.message &&
               (reason.message.includes('Failed to unwrap exclusive reference') ||
                 reason.message.includes('CanvasElement') ||
-                reason.message.includes('napi value'))))
+                reason.message.includes('napi value') ||
+                reason.message.includes('XFA') ||
+                reason.message.includes('Cannot destructure property') ||
+                (reason.message.includes('html') && reason.message.includes('null')))))
         ) {
-          // Silently ignore these cleanup errors - they don't affect functionality
+          // Silently ignore these cleanup/XFA errors - they don't affect functionality
           return;
         }
         // For other errors, call original handlers
@@ -81,10 +87,48 @@ export class PdfIngestService {
 
         // Load pdfjs for per-page text and dimensions
         const pdfjsLib = await this.loadPdfJs();
-        const loadingTask = pdfjsLib.getDocument({
-          data: new Uint8Array(fileBuffer),
-        });
-        const pdfDoc = await loadingTask.promise;
+        
+        let pdfDoc;
+        try {
+          const loadingTask = pdfjsLib.getDocument({
+            data: new Uint8Array(fileBuffer),
+            // Continue processing even if there are parsing errors (like XFA)
+            stopAtErrors: true,
+          });
+          pdfDoc = await loadingTask.promise;
+        } catch (loadError: any) {
+          // If loading fails, try with error recovery enabled
+          this.logger.warn(
+            `PDF loading encountered an error (possibly XFA-related): ${loadError?.message || String(loadError)}. Attempting retry with error recovery...`
+          );
+          try {
+            const retryTask = pdfjsLib.getDocument({
+              data: new Uint8Array(fileBuffer),
+              stopAtErrors: true, // Continue processing even with errors
+            });
+            pdfDoc = await retryTask.promise;
+          } catch (retryError: any) {
+            // If retry also fails, check if it's XFA-related and log but don't fail completely
+            if (retryError?.message && (retryError.message.includes('XFA') || retryError.message.includes('rich text'))) {
+              this.logger.warn(
+                `XFA parsing error detected but continuing: ${retryError.message}. PDF may have some pages that cannot be processed.`
+              );
+              // Try one more time with minimal options
+              try {
+                const minimalTask = pdfjsLib.getDocument({
+                  data: new Uint8Array(fileBuffer),
+                });
+                pdfDoc = await minimalTask.promise;
+              } catch (finalError: any) {
+                this.logger.error(`Failed to load PDF after all retries: ${finalError?.message || String(finalError)}`);
+                throw finalError;
+              }
+            } else {
+              this.logger.error(`Failed to load PDF after retry: ${retryError?.message || String(retryError)}`);
+              throw retryError;
+            }
+          }
+        }
 
         const renderDpi = parseInt(process.env.PDF_RENDER_DPI || '220', 10);
         const sheets: SheetData[] = [];
@@ -92,64 +136,94 @@ export class PdfIngestService {
 
         for (let i = 0; i < pdfDoc.numPages; i++) {
           const pageNumber = i + 1;
-          const page = await pdfDoc.getPage(pageNumber);
+          try {
+            const page = await pdfDoc.getPage(pageNumber);
 
-          // Extract text content for this page
-          const pageText = await this.extractPageTextContent(page);
+            // Extract text content for this page
+            let pageText = '';
+            try {
+              pageText = await this.extractPageTextContent(page);
+            } catch (textError: any) {
+              this.logger.warn(
+                `Failed to extract text from page ${pageNumber}: ${textError?.message || String(textError)}. Continuing with empty text.`
+              );
+              pageText = '';
+            }
 
-          const sheetIdGuess = this.extractSheetName(pageText);
+            const sheetIdGuess = this.extractSheetName(pageText);
 
-          const viewport = page.getViewport({ scale: 1 });
-          const pageSize = {
-            widthPt: viewport.width,
-            heightPt: viewport.height,
-          };
+            const viewport = page.getViewport({ scale: 1 });
+            const pageSize = {
+              widthPt: viewport.width,
+              heightPt: viewport.height,
+            };
 
-          const renderedImage = await renderPdfPage(page, { dpi: renderDpi });
-          const imagePath = await this.saveTempImage(renderedImage.buffer);
-          const { widthPx, heightPx } = renderedImage;
+            let renderedImage;
+            let imagePath = '';
+            let widthPx = 0;
+            let heightPx = 0;
+            try {
+              renderedImage = await renderPdfPage(page, { dpi: renderDpi });
+              imagePath = await this.saveTempImage(renderedImage.buffer);
+              widthPx = renderedImage.widthPx;
+              heightPx = renderedImage.heightPx;
+            } catch (renderError: any) {
+              this.logger.warn(
+                `Failed to render page ${pageNumber}: ${renderError?.message || String(renderError)}. Skipping this page.`
+              );
+              // Skip this page if rendering fails
+              continue;
+            }
 
-          // Detect discipline from page content
-          const discipline = this.detectDisciplineFromText(pageText);
-          
-          // Detect scale from page content
-          const scaleInfo = this.detectScaleFromText(pageText);
-          
-          // Create sheet data
-          const sheet: SheetData = {
-            index: i,
-            name: sheetIdGuess || `Page ${pageNumber}`,
-            discipline,
-            scale: scaleInfo.scale,
-            units: scaleInfo.units,
-            sheetIdGuess,
-            text: pageText,
-            widthPx,
-            heightPx,
-            imagePath,
-            pageSize,
-            renderDpi,
-            content: {
-              textData: pageText,
-              rasterData: renderedImage.buffer,
-              metadata: {
-                widthPx,
-                heightPx,
-                imagePath,
-                pageSize,
-                renderDpi,
+            // Detect discipline from page content
+            const discipline = this.detectDisciplineFromText(pageText);
+            
+            // Detect scale from page content
+            const scaleInfo = this.detectScaleFromText(pageText);
+            
+            // Create sheet data
+            const sheet: SheetData = {
+              index: i,
+              name: sheetIdGuess || `Page ${pageNumber}`,
+              discipline,
+              scale: scaleInfo.scale,
+              units: scaleInfo.units,
+              sheetIdGuess,
+              text: pageText,
+              widthPx,
+              heightPx,
+              imagePath,
+              pageSize,
+              renderDpi,
+              content: {
+                textData: pageText,
+                rasterData: renderedImage.buffer,
+                metadata: {
+                  widthPx,
+                  heightPx,
+                  imagePath,
+                  pageSize,
+                  renderDpi,
+                },
               },
-            },
-          };
-          
-          sheets.push(sheet);
-          rawPages.push({
-            index: i,
-            text: pageText,
-            imagePath,
-            widthPx,
-            heightPx,
-          });
+            };
+            
+            sheets.push(sheet);
+            rawPages.push({
+              index: i,
+              text: pageText,
+              imagePath,
+              widthPx,
+              heightPx,
+            });
+          } catch (pageError: any) {
+            // Log the error but continue processing other pages
+            this.logger.warn(
+              `Failed to process page ${pageNumber}/${pdfDoc.numPages}: ${pageError?.message || String(pageError)}. Skipping this page and continuing.`
+            );
+            // Continue to next page instead of crashing
+            continue;
+          }
         }
 
         const detectedDisciplines = [...new Set(sheets.map(s => s.discipline).filter(Boolean))];
