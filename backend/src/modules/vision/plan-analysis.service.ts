@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { createRequire } from "module";
 import {
   OpenAIVisionService,
   VisionAnalysisResult,
@@ -207,60 +208,50 @@ export class PlanAnalysisService {
   }
 
   private async getPdfPageCount(pdfBuffer: Buffer): Promise<number> {
-    // Try different import methods based on pdfjs-dist version
-    let pdfjsLib: any;
+    const nodeRequire = createRequire(__filename);
     const errors: string[] = [];
+    let pdfjsLib: any;
 
-    // Try ES Module import first (works for pdfjs-dist 4.x)
+    // Try CommonJS require first (works for pdfjs-dist 3.x)
     try {
-      const pdfjsModule = await import("pdfjs-dist");
-      pdfjsLib = pdfjsModule.default || pdfjsModule;
+      pdfjsLib = nodeRequire("pdfjs-dist/legacy/build/pdf.js");
       if (pdfjsLib && typeof pdfjsLib.getDocument === "function") {
         // Success, continue below
       } else {
         throw new Error("Module loaded but getDocument is not a function");
       }
-    } catch (importError: any) {
-      errors.push(`ES module import failed: ${importError.message}`);
+    } catch (legacyError: any) {
+      errors.push(`legacy build require failed: ${legacyError.message}`);
       
       // Try build/pdf.js (CommonJS build)
+      try {
+        pdfjsLib = nodeRequire("pdfjs-dist/build/pdf.js");
+        if (!pdfjsLib || typeof pdfjsLib.getDocument !== "function") {
+          throw new Error("Module loaded but getDocument is not a function");
+        }
+      } catch (requireError: any) {
+        errors.push(`build/pdf.js require failed: ${requireError.message}`);
+        
+        // Try ES Module import (for pdfjs-dist 4.x if upgraded)
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          pdfjsLib = require("pdfjs-dist/build/pdf.js");
+          const pdfjsModule = await import("pdfjs-dist");
+          pdfjsLib = pdfjsModule.default || pdfjsModule;
           if (!pdfjsLib || typeof pdfjsLib.getDocument !== "function") {
             throw new Error("Module loaded but getDocument is not a function");
           }
-        } catch (requireError: any) {
-          errors.push(`build/pdf.js require failed: ${requireError.message}`);
-          
-          // Try legacy build (for older versions)
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
-            if (!pdfjsLib || typeof pdfjsLib.getDocument !== "function") {
-              throw new Error("Module loaded but getDocument is not a function");
-            }
-          } catch (legacyError: any) {
-            errors.push(`legacy build require failed: ${legacyError.message}`);
-            
-            // Try dynamic import of legacy build
-            try {
-              const legacyPath = "pdfjs-dist/legacy/build/pdf.js";
-              const legacyModule = await import(legacyPath);
-              pdfjsLib = legacyModule.default || legacyModule;
-              if (!pdfjsLib || typeof pdfjsLib.getDocument !== "function") {
-                throw new Error("Module loaded but getDocument is not a function");
-              }
-            } catch (legacyImportError: any) {
-              errors.push(`legacy build import failed: ${legacyImportError.message}`);
-              throw new Error(
-                `Could not load pdfjs-dist. Attempted paths:\n${errors.join("\n")}\n\n` +
-                `Please ensure pdfjs-dist is installed: npm install pdfjs-dist`
-              );
-            }
-          }
+        } catch (importError: any) {
+          errors.push(`ES module import failed: ${importError.message}`);
+          throw new Error(
+            `Could not load pdfjs-dist. Attempted paths:\n${errors.join("\n")}\n\n` +
+            `Please ensure pdfjs-dist is installed: npm install pdfjs-dist`
+          );
         }
       }
+    }
+
+    // Now use pdfjsLib to get page count
+    if (!pdfjsLib) {
+      throw new Error("pdfjs-dist library could not be loaded");
     }
 
     try {
@@ -271,7 +262,7 @@ export class PlanAnalysisService {
       const pdfDoc = await loadingTask.promise;
       return pdfDoc.numPages;
     } catch (error: any) {
-      this.logger.warn(`Failed to get PDF page count: ${error.message}`);
+      this.logger.warn(`Failed to get PDF page count: ${error?.message || String(error)}`);
       throw error;
     }
   }
