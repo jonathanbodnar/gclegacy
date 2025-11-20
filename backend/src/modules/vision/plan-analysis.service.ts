@@ -222,7 +222,7 @@ export class PlanAnalysisService {
       }
     } catch (legacyError: any) {
       errors.push(`legacy build require failed: ${legacyError.message}`);
-      
+
       // Try build/pdf.js (CommonJS build)
       try {
         pdfjsLib = nodeRequire("pdfjs-dist/build/pdf.js");
@@ -231,7 +231,7 @@ export class PlanAnalysisService {
         }
       } catch (requireError: any) {
         errors.push(`build/pdf.js require failed: ${requireError.message}`);
-        
+
         // Try ES Module import (for pdfjs-dist 4.x if upgraded)
         try {
           const pdfjsModule = await import("pdfjs-dist");
@@ -243,7 +243,7 @@ export class PlanAnalysisService {
           errors.push(`ES module import failed: ${importError.message}`);
           throw new Error(
             `Could not load pdfjs-dist. Attempted paths:\n${errors.join("\n")}\n\n` +
-            `Please ensure pdfjs-dist is installed: npm install pdfjs-dist`
+              `Please ensure pdfjs-dist is installed: npm install pdfjs-dist`
           );
         }
       }
@@ -262,7 +262,9 @@ export class PlanAnalysisService {
       const pdfDoc = await loadingTask.promise;
       return pdfDoc.numPages;
     } catch (error: any) {
-      this.logger.warn(`Failed to get PDF page count: ${error?.message || String(error)}`);
+      this.logger.warn(
+        `Failed to get PDF page count: ${error?.message || String(error)}`
+      );
       throw error;
     }
   }

@@ -21,8 +21,9 @@ export class PdfIngestService {
     this.logger.log(`Processing PDF file: ${fileId}`);
 
     try {
-      // Suppress XFA parsing warnings from pdfjs-dist
+      // Suppress XFA parsing warnings and canvas cleanup errors from pdfjs-dist
       const originalWarn = console.warn;
+      const originalError = console.error;
       const suppressedWarnings = new Set<string>();
       console.warn = (...args: any[]) => {
         const message = args.join(' ');
@@ -32,6 +33,17 @@ export class PdfIngestService {
           return; // Suppress this warning
         }
         originalWarn.apply(console, args);
+      };
+      console.error = (...args: any[]) => {
+        const message = args.join(' ');
+        // Suppress specific canvas cleanup errors that don't affect functionality
+        if (
+          message.includes('Failed to unwrap exclusive reference') ||
+          (message.includes('CanvasElement') && message.includes('napi value'))
+        ) {
+          return; // Suppress this error
+        }
+        originalError.apply(console, args);
       };
 
       try {
@@ -125,7 +137,9 @@ export class PdfIngestService {
         };
       } finally {
         // Restore original console.warn
+        // Restore original console methods
         console.warn = originalWarn;
+        console.error = originalError;
         // Log suppressed warnings count if any were suppressed
         if (suppressedWarnings.size > 0) {
           this.logger.debug(
@@ -143,12 +157,74 @@ export class PdfIngestService {
     const errors: string[] = [];
     const nodeRequire = createRequire(__filename);
 
+    // Try to load canvas for configuration (optional - PDF.js can work without it for text extraction)
+    let canvasLib: any = null;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      canvasLib = require('@napi-rs/canvas');
+    } catch (canvasError: any) {
+      // Canvas not available - PDF.js can still work for text extraction
+      this.logger.debug('Canvas module not available, PDF rendering may fail');
+    }
+    
+    // Helper function to configure PDF.js for Node.js environment
+    const configurePdfJs = (lib: any): any => {
+      if (!lib) return lib;
+
+      try {
+        // Disable worker to run in main thread (better for Node.js)
+        if (lib.GlobalWorkerOptions) {
+          lib.GlobalWorkerOptions.workerSrc = false;
+        }
+
+        // Try to set up canvas factory if canvas is available and API exists
+        if (canvasLib && typeof lib.setCanvasFactory === 'function') {
+          lib.setCanvasFactory({
+            create(width: number, height: number) {
+              const canvas = canvasLib.createCanvas(width, height);
+              return {
+                canvas: canvas,
+                context: canvas.getContext('2d'),
+              };
+            },
+            reset(canvasAndContext: any, width: number, height: number) {
+              if (canvasAndContext?.canvas) {
+                try {
+                  canvasAndContext.canvas.width = width;
+                  canvasAndContext.canvas.height = height;
+                } catch (e) {
+                  // Ignore reset errors
+                }
+              }
+            },
+            destroy(canvasAndContext: any) {
+              // Suppress destruction errors - @napi-rs/canvas handles cleanup
+              if (canvasAndContext) {
+                try {
+                  if (canvasAndContext.canvas && typeof canvasAndContext.canvas.width !== 'undefined') {
+                    canvasAndContext.canvas.width = 0;
+                    canvasAndContext.canvas.height = 0;
+                  }
+                } catch (e) {
+                  // Silently ignore cleanup errors
+                }
+              }
+            },
+          });
+        }
+      } catch (configError: any) {
+        // Configuration is optional
+      }
+
+      return lib;
+    };
+
     // Try CommonJS require first (works for pdfjs-dist 3.x)
     try {
       const lib = nodeRequire('pdfjs-dist/legacy/build/pdf.js');
       if (lib && typeof lib.getDocument === 'function') {
         this.logger.debug('Successfully loaded pdfjs-dist via legacy build');
-        return lib;
+        return configurePdfJs(lib);
       }
     } catch (legacyError: any) {
       errors.push(`legacy build require failed: ${legacyError.message}`);
@@ -161,7 +237,7 @@ export class PdfIngestService {
       
       if (lib && typeof lib.getDocument === 'function') {
         this.logger.debug('Successfully loaded pdfjs-dist via ES module import');
-        return lib;
+        return configurePdfJs(lib);
       } else {
         throw new Error('Module loaded but getDocument is not a function');
       }
@@ -175,7 +251,7 @@ export class PdfIngestService {
       const lib = nodeRequire('pdfjs-dist/build/pdf.js');
       if (lib && typeof lib.getDocument === 'function') {
         this.logger.debug('Successfully loaded pdfjs-dist via build/pdf.js');
-        return lib;
+        return configurePdfJs(lib);
       }
     } catch (requireError: any) {
       errors.push(`build/pdf.js require failed: ${requireError.message}`);

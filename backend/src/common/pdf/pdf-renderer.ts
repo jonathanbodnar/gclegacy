@@ -43,6 +43,7 @@ export async function renderPdfToImages(
 
   // Suppress XFA parsing warnings from pdfjs-dist
   const originalWarn = console.warn;
+  const originalError = console.error;
   console.warn = (...args: any[]) => {
     const message = args.join(" ");
     // Suppress known XFA parsing warnings that don't affect functionality
@@ -50,6 +51,19 @@ export async function renderPdfToImages(
       return; // Suppress this warning
     }
     originalWarn.apply(console, args);
+  };
+
+  // Suppress canvas cleanup errors that occur during PDF.js operations
+  console.error = (...args: any[]) => {
+    const message = args.join(" ");
+    // Suppress specific canvas cleanup errors that don't affect functionality
+    if (
+      message.includes("Failed to unwrap exclusive reference") ||
+      (message.includes("CanvasElement") && message.includes("napi value"))
+    ) {
+      return; // Suppress this error
+    }
+    originalError.apply(console, args);
   };
 
   try {
@@ -73,8 +87,9 @@ export async function renderPdfToImages(
 
     return results;
   } finally {
-    // Restore original console.warn
+    // Restore original console methods
     console.warn = originalWarn;
+    console.error = originalError;
   }
 }
 
@@ -92,11 +107,71 @@ async function loadPdfJs(): Promise<any> {
   const errors: string[] = [];
   const nodeRequire = createRequire(__filename);
 
+  // Ensure canvas is loaded before configuring PDF.js
+  ensureCanvasPolyfills();
+  const canvasLib = loadCanvasModule();
+
+  // Helper function to configure PDF.js for Node.js environment
+  const configurePdfJs = (lib: any): any => {
+    if (!lib) return lib;
+
+    try {
+      // Disable worker to run in main thread (better for Node.js)
+      if (lib.GlobalWorkerOptions) {
+        lib.GlobalWorkerOptions.workerSrc = false;
+      }
+
+      // Try to set up canvas factory if the API is available
+      // This helps PDF.js properly handle canvas objects in Node.js
+      if (typeof lib.setCanvasFactory === "function") {
+        lib.setCanvasFactory({
+          create(width: number, height: number) {
+            const canvas = canvasLib.createCanvas(width, height);
+            return {
+              canvas: canvas,
+              context: canvas.getContext("2d"),
+            };
+          },
+          reset(canvasAndContext: any, width: number, height: number) {
+            if (canvasAndContext?.canvas) {
+              try {
+                canvasAndContext.canvas.width = width;
+                canvasAndContext.canvas.height = height;
+              } catch (e) {
+                // Ignore reset errors
+              }
+            }
+          },
+          destroy(canvasAndContext: any) {
+            // Suppress destruction errors - @napi-rs/canvas handles cleanup
+            // PDF.js tries to destroy canvases it didn't create, causing errors
+            if (canvasAndContext) {
+              try {
+                // Try to clear, but don't fail if it doesn't work
+                if (canvasAndContext.canvas && typeof canvasAndContext.canvas.width !== "undefined") {
+                  canvasAndContext.canvas.width = 0;
+                  canvasAndContext.canvas.height = 0;
+                }
+              } catch (e) {
+                // Silently ignore cleanup errors - they don't affect functionality
+              }
+            }
+          },
+        });
+      }
+    } catch (configError: any) {
+      // Configuration is optional - continue even if it fails
+      // The error handling in renderPageWithDpi will catch actual rendering issues
+    }
+
+    return lib;
+  };
+
   // Try CommonJS require first (works for pdfjs-dist 3.x)
   try {
     const lib = nodeRequire("pdfjs-dist/legacy/build/pdf.js");
     if (lib && typeof lib.getDocument === "function") {
-      return lib;
+      return configurePdfJs(lib);
     }
   } catch (legacyError: any) {
     errors.push(`legacy build require failed: ${legacyError.message}`);
@@ -108,7 +183,7 @@ async function loadPdfJs(): Promise<any> {
     const lib = pdfjsModule.default || pdfjsModule;
 
     if (lib && typeof lib.getDocument === "function") {
-      return lib;
+      return configurePdfJs(lib);
     } else {
       throw new Error("Module loaded but getDocument is not a function");
     }
@@ -121,7 +196,7 @@ async function loadPdfJs(): Promise<any> {
   try {
     const lib = nodeRequire("pdfjs-dist/build/pdf.js");
     if (lib && typeof lib.getDocument === "function") {
-      return lib;
+      return configurePdfJs(lib);
     }
   } catch (requireError: any) {
     errors.push(`build/pdf.js require failed: ${requireError.message}`);
@@ -153,10 +228,33 @@ async function renderPageWithDpi(
   const canvas = createCanvas(width, height);
   const context = canvas.getContext("2d");
 
-  await page.render({ canvasContext: context, viewport }).promise;
+  let renderTask: any = null;
+  try {
+    renderTask = page.render({ canvasContext: context, viewport });
+    await renderTask.promise;
+  } catch (renderError: any) {
+    // If rendering fails, try to cancel the task gracefully
+    if (renderTask && typeof renderTask.cancel === "function") {
+      try {
+        // Wrap cancel in try-catch to suppress cleanup errors
+        const cancelPromise = renderTask.cancel();
+        if (cancelPromise && typeof cancelPromise.catch === "function") {
+          cancelPromise.catch(() => {
+            // Silently ignore cleanup errors during cancel
+          });
+        }
+      } catch (cancelError) {
+        // Ignore errors during cancellation - they're cleanup-related
+      }
+    }
+    throw renderError;
+  }
+
+  // Get the buffer before any potential cleanup issues
+  const buffer = canvas.toBuffer("image/png");
 
   return {
-    buffer: canvas.toBuffer("image/png"),
+    buffer: buffer,
     widthPx: width,
     heightPx: height,
   };
