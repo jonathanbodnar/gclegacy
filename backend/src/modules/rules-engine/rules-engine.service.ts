@@ -124,11 +124,21 @@ export class RulesEngineService {
     const materials = [];
     const vars = ruleSet.vars || {};
 
+    this.logger.log(`Processing ${features.length} features against ${ruleSet.rules.length} rules`);
+
+    let matchedFeatures = 0;
     for (const feature of features) {
       // Find matching rules for this feature
       const matchingRules = ruleSet.rules.filter(rule => 
         this.evaluateCondition(rule.when, feature, vars)
       );
+
+      if (matchingRules.length > 0) {
+        matchedFeatures++;
+        this.logger.debug(
+          `Feature ${feature.id} (type: ${feature.type}) matched ${matchingRules.length} rule(s)`
+        );
+      }
 
       for (const rule of matchingRules) {
         for (const materialItem of rule.materials) {
@@ -149,14 +159,20 @@ export class RulesEngineService {
               });
             }
           } catch (error) {
-            this.logger.warn(`Error evaluating material ${materialItem.sku}: ${error.message}`);
+            this.logger.warn(`Error evaluating material ${materialItem.sku} for feature ${feature.id}: ${error.message}`);
           }
         }
       }
     }
 
+    this.logger.log(
+      `Matched ${matchedFeatures} out of ${features.length} features, generated ${materials.length} material items before consolidation`
+    );
+
     // Consolidate materials by SKU
-    return this.consolidateMaterials(materials);
+    const consolidated = this.consolidateMaterials(materials);
+    this.logger.log(`Consolidated to ${consolidated.length} unique material SKUs`);
+    return consolidated;
   }
 
   private evaluateCondition(condition: Record<string, any>, feature: any, vars: Record<string, any>): boolean {

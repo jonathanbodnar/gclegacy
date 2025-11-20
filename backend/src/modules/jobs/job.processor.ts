@@ -308,8 +308,18 @@ export class JobProcessor {
 
       await this.reportProgress(job, 75);
 
-      // Step 3: Save features to database (80% progress)
-      await this.saveFeatures(jobId, features);
+      // Step 3: Features are already saved by extractFeatures, ensure we have features with IDs
+      // If features array is empty or doesn't have IDs, fetch from database
+      let featuresToUse = features;
+      if (features.length === 0 || features.some(f => !f.id)) {
+        this.logger.log(`Fetching features from database for job ${jobId}`);
+        featuresToUse = await this.prisma.feature.findMany({
+          where: { jobId },
+        });
+        this.logger.log(`Found ${featuresToUse.length} features in database for job ${jobId}`);
+      } else {
+        this.logger.log(`Using ${features.length} extracted features with IDs for job ${jobId}`);
+      }
       await this.reportProgress(job, 80);
 
       // Scope diagnosis upgrade - capture CSI divisions, vertical context, fittings
@@ -322,7 +332,7 @@ export class JobProcessor {
           targets,
           ingestResult,
           analysisSummary: analysisResult.summary,
-          features,
+          features: featuresToUse,
         });
         await this.jobsService.mergeJobOptions(jobId, {
           scopeDiagnosis,
@@ -337,7 +347,7 @@ export class JobProcessor {
         jobId,
         analysisResult.pages || [],
         analysisResult.summary,
-        features,
+        featuresToUse,
         fusionData
       );
 
@@ -347,10 +357,13 @@ export class JobProcessor {
         materialsRuleSetId || (await this.getDefaultRuleSetId());
       if (ruleSetIdToUse) {
         try {
+          this.logger.log(
+            `Applying rules ${ruleSetIdToUse} to ${featuresToUse.length} features for job ${jobId}`
+          );
           await this.rulesEngineService.applyRules(
             jobId,
             ruleSetIdToUse,
-            features
+            featuresToUse
           );
           this.logger.log(
             `Applied materials rules ${ruleSetIdToUse} to job ${jobId}`
@@ -394,7 +407,7 @@ export class JobProcessor {
       }
 
       // Step 5: Generate artifacts and complete (100% progress)
-      await this.generateArtifacts(jobId, ingestResult, features);
+      await this.generateArtifacts(jobId, ingestResult, featuresToUse);
       await this.reportProgress(job, 100);
 
       // Mark job as completed
@@ -588,11 +601,6 @@ export class JobProcessor {
     }
   }
 
-  private async saveFeatures(jobId: string, features: any[]): Promise<void> {
-    // Save features to database with PostGIS geometry
-    // This is a placeholder - actual implementation would handle geometry properly
-    this.logger.log(`Saving ${features.length} features for job ${jobId}`);
-  }
 
   private async generateArtifacts(
     jobId: string,

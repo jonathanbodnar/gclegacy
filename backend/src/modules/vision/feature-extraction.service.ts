@@ -1,6 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '@/common/prisma/prisma.service';
-import { OpenAIVisionService, VisionAnalysisResult } from './openai-vision.service';
+import { Injectable, Logger } from "@nestjs/common";
+import { PrismaService } from "@/common/prisma/prisma.service";
+import {
+  OpenAIVisionService,
+  VisionAnalysisResult,
+} from "./openai-vision.service";
 
 @Injectable()
 export class FeatureExtractionService {
@@ -9,7 +12,7 @@ export class FeatureExtractionService {
 
   constructor(
     private prisma: PrismaService,
-    private openaiVision: OpenAIVisionService,
+    private openaiVision: OpenAIVisionService
   ) {}
 
   async extractFeatures(
@@ -33,14 +36,18 @@ export class FeatureExtractionService {
         options
       );
 
-      // Save features to database
-      await this.saveFeatures(features);
+      // Save features to database and get them back with IDs
+      const savedFeatures = await this.saveFeatures(features);
 
-      this.logger.log(`Extracted ${features.length} features for job ${jobId}`);
-      return features;
-
+      this.logger.log(
+        `Extracted ${savedFeatures.length} features for job ${jobId}`
+      );
+      return savedFeatures;
     } catch (error) {
-      this.logger.error(`Feature extraction failed for job ${jobId}:`, error.message);
+      this.logger.error(
+        `Feature extraction failed for job ${jobId}:`,
+        error.message
+      );
       throw error;
     }
   }
@@ -53,20 +60,25 @@ export class FeatureExtractionService {
     options?: any
   ): Promise<any[]> {
     const features = [];
-    const verticalContext = this.buildVerticalContext(analysis, sheetId, options);
+    const verticalContext = this.buildVerticalContext(
+      analysis,
+      sheetId,
+      options
+    );
 
     // Convert rooms
-    if (targets.includes('rooms')) {
+    if (targets.includes("rooms")) {
       for (const room of analysis.rooms) {
         features.push({
           jobId,
           sheetId,
-          type: 'ROOM',
+          type: "ROOM",
           props: {
             name: room.name,
             program: room.program,
             level: room.level || verticalContext.defaultLevel,
-            heightFt: this.toNumber(room.heightFt) || verticalContext.defaultHeightFt,
+            heightFt:
+              this.toNumber(room.heightFt) || verticalContext.defaultHeightFt,
           },
           area: this.toNumber(room.area),
           count: 1,
@@ -76,16 +88,17 @@ export class FeatureExtractionService {
     }
 
     // Convert walls
-    if (targets.includes('walls')) {
+    if (targets.includes("walls")) {
       for (const wall of analysis.walls) {
         features.push({
           jobId,
           sheetId,
-          type: 'WALL',
+          type: "WALL",
           props: {
             partitionType: wall.partitionType,
             level: wall.level || verticalContext.defaultLevel,
-            heightFt: this.toNumber(wall.heightFt) || verticalContext.defaultHeightFt,
+            heightFt:
+              this.toNumber(wall.heightFt) || verticalContext.defaultHeightFt,
           },
           length: this.toNumber(wall.length),
           count: 1,
@@ -95,12 +108,12 @@ export class FeatureExtractionService {
     }
 
     // Convert openings (doors/windows)
-    if (targets.includes('doors') || targets.includes('windows')) {
+    if (targets.includes("doors") || targets.includes("windows")) {
       for (const opening of analysis.openings) {
         features.push({
           jobId,
           sheetId,
-          type: 'OPENING',
+          type: "OPENING",
           props: {
             openingType: opening.type,
             width: this.toNumber(opening.width),
@@ -114,17 +127,18 @@ export class FeatureExtractionService {
     }
 
     // Convert pipes
-    if (targets.includes('pipes')) {
+    if (targets.includes("pipes")) {
       for (const pipe of analysis.pipes) {
         features.push({
           jobId,
           sheetId,
-          type: 'PIPE',
+          type: "PIPE",
           props: {
             service: pipe.service,
             diameterIn: this.toNumber(pipe.diameter),
             level: pipe.level || verticalContext.defaultLevel,
-            heightFt: this.toNumber(pipe.heightFt) || verticalContext.defaultHeightFt,
+            heightFt:
+              this.toNumber(pipe.heightFt) || verticalContext.defaultHeightFt,
           },
           length: this.toNumber(pipe.length),
           count: 1,
@@ -134,16 +148,17 @@ export class FeatureExtractionService {
     }
 
     // Convert ducts
-    if (targets.includes('ducts')) {
+    if (targets.includes("ducts")) {
       for (const duct of analysis.ducts) {
         features.push({
           jobId,
           sheetId,
-          type: 'DUCT',
+          type: "DUCT",
           props: {
             size: duct.size,
             level: duct.level || verticalContext.defaultLevel,
-            heightFt: this.toNumber(duct.heightFt) || verticalContext.defaultHeightFt,
+            heightFt:
+              this.toNumber(duct.heightFt) || verticalContext.defaultHeightFt,
           },
           length: this.toNumber(duct.length),
           count: 1,
@@ -153,16 +168,18 @@ export class FeatureExtractionService {
     }
 
     // Convert fixtures
-    if (targets.includes('fixtures')) {
+    if (targets.includes("fixtures")) {
       for (const fixture of analysis.fixtures) {
         features.push({
           jobId,
           sheetId,
-          type: 'FIXTURE',
+          type: "FIXTURE",
           props: {
             fixtureType: fixture.type,
             level: fixture.level || verticalContext.defaultLevel,
-            heightFt: this.toNumber(fixture.heightFt) || verticalContext.defaultHeightFt,
+            heightFt:
+              this.toNumber(fixture.heightFt) ||
+              verticalContext.defaultHeightFt,
           },
           count: this.toNumber(fixture.count) || fixture.count,
           // geom would be PostGIS geometry
@@ -170,33 +187,39 @@ export class FeatureExtractionService {
       }
     }
 
-    if (targets.includes('levels') && verticalContext.levels.length > 0) {
+    if (targets.includes("levels") && verticalContext.levels.length > 0) {
       for (const level of verticalContext.levels) {
         features.push({
           jobId,
           sheetId,
-          type: 'LEVEL',
+          type: "LEVEL",
           props: {
             name: level.name,
             elevationFt: level.elevationFt,
-            heightFt: this.toNumber(level.heightFt) || verticalContext.defaultHeightFt,
+            heightFt:
+              this.toNumber(level.heightFt) || verticalContext.defaultHeightFt,
           },
           count: 1,
         });
       }
     }
 
-    if (targets.includes('elevations') && (analysis.elevations?.length || 0) > 0) {
+    if (
+      targets.includes("elevations") &&
+      (analysis.elevations?.length || 0) > 0
+    ) {
       for (const elevation of analysis.elevations || []) {
         features.push({
           jobId,
           sheetId,
-          type: 'ELEVATION',
+          type: "ELEVATION",
           props: {
             face: elevation.face,
             fromLevel: elevation.fromLevel || verticalContext.defaultLevel,
             toLevel: elevation.toLevel,
-            heightFt: this.toNumber(elevation.heightFt) || verticalContext.defaultHeightFt,
+            heightFt:
+              this.toNumber(elevation.heightFt) ||
+              verticalContext.defaultHeightFt,
             notes: elevation.notes,
           },
           length: this.toNumber(elevation.widthFt),
@@ -205,17 +228,19 @@ export class FeatureExtractionService {
       }
     }
 
-    if (targets.includes('sections') && (analysis.sections?.length || 0) > 0) {
+    if (targets.includes("sections") && (analysis.sections?.length || 0) > 0) {
       for (const section of analysis.sections || []) {
         features.push({
           jobId,
           sheetId,
-          type: 'SECTION',
+          type: "SECTION",
           props: {
             description: section.description,
             fromLevel: section.fromLevel || verticalContext.defaultLevel,
             toLevel: section.toLevel,
-            heightFt: this.toNumber(section.heightFt) || verticalContext.defaultHeightFt,
+            heightFt:
+              this.toNumber(section.heightFt) ||
+              verticalContext.defaultHeightFt,
           },
           length: this.toNumber(section.heightFt),
           count: 1,
@@ -223,17 +248,19 @@ export class FeatureExtractionService {
       }
     }
 
-    if (targets.includes('risers') && (analysis.risers?.length || 0) > 0) {
+    if (targets.includes("risers") && (analysis.risers?.length || 0) > 0) {
       for (const riser of analysis.risers || []) {
         features.push({
           jobId,
           sheetId,
-          type: 'RISER',
+          type: "RISER",
           props: {
             system: riser.system,
-            levels: riser.levels || [verticalContext.defaultLevel].filter(Boolean),
+            levels:
+              riser.levels || [verticalContext.defaultLevel].filter(Boolean),
           },
-          length: this.toNumber(riser.heightFt) || verticalContext.defaultHeightFt,
+          length:
+            this.toNumber(riser.heightFt) || verticalContext.defaultHeightFt,
           count: this.toNumber(riser.qty) || 1,
         });
       }
@@ -249,13 +276,32 @@ export class FeatureExtractionService {
   ): {
     defaultHeightFt: number;
     defaultLevel?: string;
-    levels: Array<{ id: string; name: string; elevationFt?: number; heightFt?: number }>;
-    levelMap: Map<string, { id: string; name: string; elevationFt?: number; heightFt?: number }>;
+    levels: Array<{
+      id: string;
+      name: string;
+      elevationFt?: number;
+      heightFt?: number;
+    }>;
+    levelMap: Map<
+      string,
+      { id: string; name: string; elevationFt?: number; heightFt?: number }
+    >;
   } {
     const sheetOverride = this.getSheetOverride(sheetId, options);
-    const levelMap = new Map<string, { id: string; name: string; elevationFt?: number; heightFt?: number }>();
+    const levelMap = new Map<
+      string,
+      { id: string; name: string; elevationFt?: number; heightFt?: number }
+    >();
 
-    const addLevel = (level: { id?: string; name?: string; elevationFt?: number; heightFt?: number }, idxPrefix = 'lvl') => {
+    const addLevel = (
+      level: {
+        id?: string;
+        name?: string;
+        elevationFt?: number;
+        heightFt?: number;
+      },
+      idxPrefix = "lvl"
+    ) => {
       const key = level.name || level.id || `${idxPrefix}-${levelMap.size}`;
       levelMap.set(key, {
         id: level.id || key,
@@ -265,24 +311,27 @@ export class FeatureExtractionService {
       });
     };
 
-    analysis.levels?.forEach(level => addLevel(level));
+    analysis.levels?.forEach((level) => addLevel(level));
 
     sheetOverride?.levels?.forEach((name: string, index: number) => {
       if (!levelMap.has(name)) {
-        addLevel({ id: `sheet-${index}`, name }, 'sheet');
+        addLevel({ id: `sheet-${index}`, name }, "sheet");
       }
     });
 
     if (options?.levelOverrides) {
-      Object.entries(options.levelOverrides).forEach(([name, elevationFt], index) => {
-        const existing = levelMap.get(name);
-        levelMap.set(name, {
-          id: existing?.id || `override-${index}`,
-          name,
-          elevationFt: typeof elevationFt === 'number' ? elevationFt : undefined,
-          heightFt: existing?.heightFt,
-        });
-      });
+      Object.entries(options.levelOverrides).forEach(
+        ([name, elevationFt], index) => {
+          const existing = levelMap.get(name);
+          levelMap.set(name, {
+            id: existing?.id || `override-${index}`,
+            name,
+            elevationFt:
+              typeof elevationFt === "number" ? elevationFt : undefined,
+            heightFt: existing?.heightFt,
+          });
+        }
+      );
     }
 
     const levels = Array.from(levelMap.values());
@@ -311,15 +360,15 @@ export class FeatureExtractionService {
       options.sheetOverrides[sheetId] ||
       options.sheetOverrides[`page_${sheetId}`] ||
       options.sheetOverrides.default ||
-      options.sheetOverrides['*']
+      options.sheetOverrides["*"]
     );
   }
 
   private toNumber(value: any): number | undefined {
     if (value === null || value === undefined) return undefined;
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value === 'string') {
-      const cleaned = value.replace(/[^\d.-]/g, '');
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const cleaned = value.replace(/[^\d.-]/g, "");
       if (!cleaned) return undefined;
       const parsed = parseFloat(cleaned);
       if (Number.isFinite(parsed)) return parsed;
@@ -327,11 +376,15 @@ export class FeatureExtractionService {
     return undefined;
   }
 
-  private async saveFeatures(features: any[]): Promise<void> {
+  private async saveFeatures(features: any[]): Promise<any[]> {
+    const savedFeatures = [];
     for (const feature of features) {
-      const resolvedSheetId = await this.resolveSheetId(feature.jobId, feature.sheetId);
+      const resolvedSheetId = await this.resolveSheetId(
+        feature.jobId,
+        feature.sheetId
+      );
 
-      await this.prisma.feature.create({
+      const saved = await this.prisma.feature.create({
         data: {
           jobId: feature.jobId,
           sheetId: resolvedSheetId,
@@ -343,10 +396,20 @@ export class FeatureExtractionService {
           // geom: feature.geom, // Would be PostGIS geometry
         },
       });
+
+      // Return saved feature with ID and all original properties
+      savedFeatures.push({
+        ...feature,
+        id: saved.id,
+      });
     }
+    return savedFeatures;
   }
 
-  private async resolveSheetId(jobId: string, sheetRef?: string): Promise<string | undefined> {
+  private async resolveSheetId(
+    jobId: string,
+    sheetRef?: string
+  ): Promise<string | undefined> {
     if (!sheetRef) {
       return undefined;
     }
@@ -407,13 +470,15 @@ Enhance with:
 
 Return enhanced features with additional properties.`;
 
-      const response = await this.openaiVision.analyzeText(enhancementPrompt, 'Feature Enhancement');
-      
+      const response = await this.openaiVision.analyzeText(
+        enhancementPrompt,
+        "Feature Enhancement"
+      );
+
       // Merge AI insights with existing features
       return this.mergeAIInsights(features, response);
-      
     } catch (error) {
-      this.logger.warn('AI enhancement failed:', error.message);
+      this.logger.warn("AI enhancement failed:", error.message);
       return features; // Return original features if enhancement fails
     }
   }
@@ -422,7 +487,7 @@ Return enhanced features with additional properties.`;
     // Merge AI-generated insights with extracted features
     return originalFeatures.map((feature, index) => {
       const insights = aiInsights.features?.[index] || {};
-      
+
       return {
         ...feature,
         props: {
