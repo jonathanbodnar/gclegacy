@@ -20,30 +20,37 @@ export interface SpaceDefinition {
 }
 
 const SPACE_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    required: ['space_id', 'category', 'bbox_px'],
-    properties: {
-      space_id: { type: 'string' },
-      name: { type: ['string', 'null'] },
-      category: {
-        type: 'string',
-        enum: ['cafe', 'sales', 'boh', 'restroom', 'patio', 'other'],
+  type: 'object',
+  required: ['spaces'],
+  properties: {
+    spaces: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['space_id', 'category', 'bbox_px'],
+        properties: {
+          space_id: { type: 'string' },
+          name: { type: ['string', 'null'] },
+          category: {
+            type: 'string',
+            enum: ['cafe', 'sales', 'boh', 'restroom', 'patio', 'other'],
+          },
+          bbox_px: {
+            type: 'array',
+            minItems: 4,
+            maxItems: 4,
+            items: { type: 'number' },
+          },
+          sheet_ref: { type: ['string', 'null'] },
+          approx_area_sqft: { type: ['number', 'null'] },
+          confidence: { type: ['number', 'null'] },
+          notes: { type: ['string', 'null'] },
+        },
+        additionalProperties: false,
       },
-      bbox_px: {
-        type: 'array',
-        minItems: 4,
-        maxItems: 4,
-        items: { type: 'number' },
-      },
-      sheet_ref: { type: ['string', 'null'] },
-      approx_area_sqft: { type: ['number', 'null'] },
-      confidence: { type: ['number', 'null'] },
-      notes: { type: ['string', 'null'] },
     },
-    additionalProperties: false,
   },
+  additionalProperties: false,
 };
 
 @Injectable()
@@ -170,6 +177,6 @@ export class SpaceExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed : (parsed.spaces || []);
   }
 }

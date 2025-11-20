@@ -61,18 +61,6 @@ const WALL_RUN_SCHEMA = {
         },
         additionalProperties: false,
       },
-      adjacent_rooms: {
-        type: 'array',
-        items: { type: ['string', 'null'] },
-        maxItems: 2,
-      },
-      space_ids: {
-        type: 'array',
-        items: { type: ['string', 'null'] },
-        maxItems: 2,
-      },
-      confidence: { type: ['number', 'null'] },
-      notes: { type: ['string', 'null'] },
     },
   },
 };
@@ -229,6 +217,7 @@ export class WallRunExtractionService {
     }
 
     const parsed = JSON.parse(content);
-    return parsed && typeof parsed === 'object' ? parsed : { segments: [] };
+    // Return the segments array directly, not the wrapper object
+    return parsed?.segments || [];
   }
 }

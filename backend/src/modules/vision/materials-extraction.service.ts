@@ -19,6 +19,7 @@ export interface SpaceFinishDefinition {
 
 const FINISH_SCHEMA = {
   type: 'object',
+  required: ['cafe', 'boh', 'restroom', 'patio', 'other'],
   properties: {
     cafe: { $ref: '#/$defs/finish' },
     boh: { $ref: '#/$defs/finish' },
@@ -30,6 +31,7 @@ const FINISH_SCHEMA = {
   $defs: {
     finish: {
       type: 'object',
+      required: ['floor', 'wall', 'ceiling', 'base'],
       properties: {
         floor: { type: ['string', 'null'] },
         wall: {
