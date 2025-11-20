@@ -209,25 +209,68 @@ export class PlanAnalysisService {
   private async getPdfPageCount(pdfBuffer: Buffer): Promise<number> {
     // Try different import methods based on pdfjs-dist version
     let pdfjsLib: any;
+    const errors: string[] = [];
+
+    // Try ES Module import first (works for pdfjs-dist 4.x)
     try {
-      // Try legacy build first (CommonJS)
-      pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
-    } catch (legacyError) {
+      const pdfjsModule = await import("pdfjs-dist");
+      pdfjsLib = pdfjsModule.default || pdfjsModule;
+      if (pdfjsLib && typeof pdfjsLib.getDocument === "function") {
+        // Success, continue below
+      } else {
+        throw new Error("Module loaded but getDocument is not a function");
+      }
+    } catch (importError: any) {
+      errors.push(`ES module import failed: ${importError.message}`);
+      
+      // Try build/pdf.mjs (ES module build)
       try {
-        // Try dynamic import for ES Module version
-        const pdfjsModule = await import("pdfjs-dist");
-        pdfjsLib = pdfjsModule.default || pdfjsModule;
-      } catch (importError) {
-        // Fallback: try to import the legacy build dynamically
-        // Using dynamic string construction to avoid TypeScript resolution errors
+        const buildModule = await import("pdfjs-dist/build/pdf.mjs");
+        pdfjsLib = buildModule.default || buildModule;
+        if (pdfjsLib && typeof pdfjsLib.getDocument === "function") {
+          // Success, continue below
+        } else {
+          throw new Error("Module loaded but getDocument is not a function");
+        }
+      } catch (buildError: any) {
+        errors.push(`build/pdf.mjs import failed: ${buildError.message}`);
+        
+        // Try build/pdf.js (CommonJS build)
         try {
-          const legacyPath = "pdfjs-dist" + "/legacy/build/pdf.js";
-          const legacyModule = await import(legacyPath);
-          pdfjsLib = legacyModule.default || legacyModule;
-        } catch (finalError) {
-          throw new Error(
-            `Could not load pdfjs-dist: ${legacyError.message}. Please check installation.`
-          );
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          pdfjsLib = require("pdfjs-dist/build/pdf.js");
+          if (!pdfjsLib || typeof pdfjsLib.getDocument !== "function") {
+            throw new Error("Module loaded but getDocument is not a function");
+          }
+        } catch (requireError: any) {
+          errors.push(`build/pdf.js require failed: ${requireError.message}`);
+          
+          // Try legacy build (for older versions)
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+            if (!pdfjsLib || typeof pdfjsLib.getDocument !== "function") {
+              throw new Error("Module loaded but getDocument is not a function");
+            }
+          } catch (legacyError: any) {
+            errors.push(`legacy build require failed: ${legacyError.message}`);
+            
+            // Try dynamic import of legacy build
+            try {
+              const legacyPath = "pdfjs-dist/legacy/build/pdf.js";
+              const legacyModule = await import(legacyPath);
+              pdfjsLib = legacyModule.default || legacyModule;
+              if (!pdfjsLib || typeof pdfjsLib.getDocument !== "function") {
+                throw new Error("Module loaded but getDocument is not a function");
+              }
+            } catch (legacyImportError: any) {
+              errors.push(`legacy build import failed: ${legacyImportError.message}`);
+              throw new Error(
+                `Could not load pdfjs-dist. Attempted paths:\n${errors.join("\n")}\n\n` +
+                `Please ensure pdfjs-dist is installed: npm install pdfjs-dist`
+              );
+            }
+          }
         }
       }
     }

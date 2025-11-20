@@ -20,95 +20,118 @@ export class PdfIngestService {
     this.logger.log(`Processing PDF file: ${fileId}`);
 
     try {
-      // Parse PDF for quick metadata
-      const pdfData = await pdfParse(fileBuffer);
-
-      // Load pdfjs for per-page text and dimensions
-      const pdfjsLib = await this.loadPdfJs();
-      const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(fileBuffer),
-      });
-      const pdfDoc = await loadingTask.promise;
-
-      const renderDpi = parseInt(process.env.PDF_RENDER_DPI || '220', 10);
-      const sheets: SheetData[] = [];
-      const rawPages: RawPage[] = [];
-
-      for (let i = 0; i < pdfDoc.numPages; i++) {
-        const pageNumber = i + 1;
-        const page = await pdfDoc.getPage(pageNumber);
-
-        // Extract text content for this page
-        const pageText = await this.extractPageTextContent(page);
-
-        const sheetIdGuess = this.extractSheetName(pageText);
-
-        const viewport = page.getViewport({ scale: 1 });
-        const pageSize = {
-          widthPt: viewport.width,
-          heightPt: viewport.height,
-        };
-
-        const renderedImage = await renderPdfPage(page, { dpi: renderDpi });
-        const imagePath = await this.saveTempImage(renderedImage.buffer);
-        const { widthPx, heightPx } = renderedImage;
-
-        // Detect discipline from page content
-        const discipline = this.detectDisciplineFromText(pageText);
-        
-        // Detect scale from page content
-        const scaleInfo = this.detectScaleFromText(pageText);
-        
-        // Create sheet data
-        const sheet: SheetData = {
-          index: i,
-          name: sheetIdGuess || `Page ${pageNumber}`,
-          discipline,
-          scale: scaleInfo.scale,
-          units: scaleInfo.units,
-          sheetIdGuess,
-          text: pageText,
-          widthPx,
-          heightPx,
-          imagePath,
-          pageSize,
-          renderDpi,
-          content: {
-            textData: pageText,
-            rasterData: renderedImage.buffer,
-            metadata: {
-              widthPx,
-              heightPx,
-              imagePath,
-              pageSize,
-              renderDpi,
-            },
-          },
-        };
-        
-        sheets.push(sheet);
-        rawPages.push({
-          index: i,
-          text: pageText,
-          imagePath,
-          widthPx,
-          heightPx,
-        });
-      }
-
-      const detectedDisciplines = [...new Set(sheets.map(s => s.discipline).filter(Boolean))];
-
-      return {
-        fileId,
-        sheets,
-        rawPages,
-        metadata: {
-          totalPages: pdfData.numpages,
-          detectedDisciplines,
-          fileType: 'PDF',
-        },
+      // Suppress XFA parsing warnings from pdfjs-dist
+      const originalWarn = console.warn;
+      const suppressedWarnings = new Set<string>();
+      console.warn = (...args: any[]) => {
+        const message = args.join(' ');
+        // Suppress known XFA parsing warnings that don't affect functionality
+        if (message.includes('XFA') && message.includes('rich text')) {
+          suppressedWarnings.add(message);
+          return; // Suppress this warning
+        }
+        originalWarn.apply(console, args);
       };
 
+      try {
+        // Parse PDF for quick metadata
+        const pdfData = await pdfParse(fileBuffer);
+
+        // Load pdfjs for per-page text and dimensions
+        const pdfjsLib = await this.loadPdfJs();
+        const loadingTask = pdfjsLib.getDocument({
+          data: new Uint8Array(fileBuffer),
+        });
+        const pdfDoc = await loadingTask.promise;
+
+        const renderDpi = parseInt(process.env.PDF_RENDER_DPI || '220', 10);
+        const sheets: SheetData[] = [];
+        const rawPages: RawPage[] = [];
+
+        for (let i = 0; i < pdfDoc.numPages; i++) {
+          const pageNumber = i + 1;
+          const page = await pdfDoc.getPage(pageNumber);
+
+          // Extract text content for this page
+          const pageText = await this.extractPageTextContent(page);
+
+          const sheetIdGuess = this.extractSheetName(pageText);
+
+          const viewport = page.getViewport({ scale: 1 });
+          const pageSize = {
+            widthPt: viewport.width,
+            heightPt: viewport.height,
+          };
+
+          const renderedImage = await renderPdfPage(page, { dpi: renderDpi });
+          const imagePath = await this.saveTempImage(renderedImage.buffer);
+          const { widthPx, heightPx } = renderedImage;
+
+          // Detect discipline from page content
+          const discipline = this.detectDisciplineFromText(pageText);
+          
+          // Detect scale from page content
+          const scaleInfo = this.detectScaleFromText(pageText);
+          
+          // Create sheet data
+          const sheet: SheetData = {
+            index: i,
+            name: sheetIdGuess || `Page ${pageNumber}`,
+            discipline,
+            scale: scaleInfo.scale,
+            units: scaleInfo.units,
+            sheetIdGuess,
+            text: pageText,
+            widthPx,
+            heightPx,
+            imagePath,
+            pageSize,
+            renderDpi,
+            content: {
+              textData: pageText,
+              rasterData: renderedImage.buffer,
+              metadata: {
+                widthPx,
+                heightPx,
+                imagePath,
+                pageSize,
+                renderDpi,
+              },
+            },
+          };
+          
+          sheets.push(sheet);
+          rawPages.push({
+            index: i,
+            text: pageText,
+            imagePath,
+            widthPx,
+            heightPx,
+          });
+        }
+
+        const detectedDisciplines = [...new Set(sheets.map(s => s.discipline).filter(Boolean))];
+
+        return {
+          fileId,
+          sheets,
+          rawPages,
+          metadata: {
+            totalPages: pdfData.numpages,
+            detectedDisciplines,
+            fileType: 'PDF',
+          },
+        };
+      } finally {
+        // Restore original console.warn
+        console.warn = originalWarn;
+        // Log suppressed warnings count if any were suppressed
+        if (suppressedWarnings.size > 0) {
+          this.logger.debug(
+            `Suppressed ${suppressedWarnings.size} XFA parsing warning(s) during PDF processing`
+          );
+        }
+      }
     } catch (error) {
       this.logger.error(`Error processing PDF ${fileId}:`, error);
       throw error;
@@ -116,28 +139,69 @@ export class PdfIngestService {
   }
 
   private async loadPdfJs(): Promise<any> {
+    const errors: string[] = [];
+
+    // Try ES Module import first (works for pdfjs-dist 4.x)
     try {
-      // Try legacy build first (CommonJS)
-      return require('pdfjs-dist/legacy/build/pdf.js');
-    } catch (legacyError) {
-      try {
-        // Try dynamic import for ES Module version
-        const pdfjsModule = await import('pdfjs-dist');
-        return pdfjsModule.default || pdfjsModule;
-      } catch (importError) {
-        // Fallback: try to import the legacy build dynamically
-        // Using dynamic string construction to avoid TypeScript resolution errors
-        try {
-          const legacyPath = 'pdfjs-dist' + '/legacy/build/pdf.js';
-          const legacyModule = await import(legacyPath);
-          return legacyModule.default || legacyModule;
-        } catch (finalError) {
-          throw new Error(
-            `Failed to load pdfjs-dist: ${legacyError.message}. Please ensure pdfjs-dist is installed.`
-          );
-        }
+      const pdfjsModule = await import('pdfjs-dist');
+      const lib = pdfjsModule.default || pdfjsModule;
+      if (lib && typeof lib.getDocument === 'function') {
+        return lib;
       }
+    } catch (importError: any) {
+      errors.push(`ES module import failed: ${importError.message}`);
     }
+
+    // Try build/pdf.mjs (ES module build)
+    try {
+      const buildModule = await import('pdfjs-dist/build/pdf.mjs');
+      const lib = buildModule.default || buildModule;
+      if (lib && typeof lib.getDocument === 'function') {
+        return lib;
+      }
+    } catch (buildError: any) {
+      errors.push(`build/pdf.mjs import failed: ${buildError.message}`);
+    }
+
+    // Try build/pdf.js (CommonJS build)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const lib = require('pdfjs-dist/build/pdf.js');
+      if (lib && typeof lib.getDocument === 'function') {
+        return lib;
+      }
+    } catch (requireError: any) {
+      errors.push(`build/pdf.js require failed: ${requireError.message}`);
+    }
+
+    // Try legacy build (for older versions)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const lib = require('pdfjs-dist/legacy/build/pdf.js');
+      if (lib && typeof lib.getDocument === 'function') {
+        return lib;
+      }
+    } catch (legacyError: any) {
+      errors.push(`legacy build require failed: ${legacyError.message}`);
+    }
+
+    // Try dynamic import of legacy build
+    try {
+      const legacyPath = 'pdfjs-dist/legacy/build/pdf.js';
+      const legacyModule = await import(legacyPath);
+      const lib = legacyModule.default || legacyModule;
+      if (lib && typeof lib.getDocument === 'function') {
+        return lib;
+      }
+    } catch (legacyImportError: any) {
+      errors.push(`legacy build import failed: ${legacyImportError.message}`);
+    }
+
+    // If all attempts failed, throw a comprehensive error
+    throw new Error(
+      `Failed to load pdfjs-dist. Attempted paths:\n${errors.join('\n')}\n\n` +
+      `Please ensure pdfjs-dist is installed: npm install pdfjs-dist`
+    );
   }
 
   private detectDisciplineFromText(text: string): string | undefined {

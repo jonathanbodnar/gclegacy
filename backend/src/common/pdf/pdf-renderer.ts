@@ -39,25 +39,42 @@ export async function renderPdfToImages(
 ): Promise<PdfPageImage[]> {
   // Ensure canvas polyfills are initialized before loading pdfjs
   ensureCanvasPolyfills();
-  const pdfjsLib = await loadPdfJs();
-  const loadingTask = pdfjsLib.getDocument({
-    data: new Uint8Array(pdfBuffer),
-    standardFontDataUrl: getStandardFontPath(),
-  });
-  const pdfDoc = await loadingTask.promise;
-  const dpi = normalizeDpi(options.dpi);
-  const totalPages = pdfDoc.numPages;
-  const limit = options.maxPages
-    ? Math.min(options.maxPages, totalPages)
-    : totalPages;
 
-  const results: PdfPageImage[] = [];
-  for (let pageNum = 1; pageNum <= limit; pageNum++) {
-    const page = await pdfDoc.getPage(pageNum);
-    results.push(await renderPageWithDpi(page, dpi));
+  // Suppress XFA parsing warnings from pdfjs-dist
+  const originalWarn = console.warn;
+  console.warn = (...args: any[]) => {
+    const message = args.join(" ");
+    // Suppress known XFA parsing warnings that don't affect functionality
+    if (message.includes("XFA") && message.includes("rich text")) {
+      return; // Suppress this warning
+    }
+    originalWarn.apply(console, args);
+  };
+
+  try {
+    const pdfjsLib = await loadPdfJs();
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(pdfBuffer),
+      standardFontDataUrl: getStandardFontPath(),
+    });
+    const pdfDoc = await loadingTask.promise;
+    const dpi = normalizeDpi(options.dpi);
+    const totalPages = pdfDoc.numPages;
+    const limit = options.maxPages
+      ? Math.min(options.maxPages, totalPages)
+      : totalPages;
+
+    const results: PdfPageImage[] = [];
+    for (let pageNum = 1; pageNum <= limit; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum);
+      results.push(await renderPageWithDpi(page, dpi));
+    }
+
+    return results;
+  } finally {
+    // Restore original console.warn
+    console.warn = originalWarn;
   }
-
-  return results;
 }
 
 export async function renderPdfPage(
@@ -71,30 +88,69 @@ export async function renderPdfPage(
 }
 
 async function loadPdfJs(): Promise<any> {
+  const errors: string[] = [];
+
+  // Try ES Module import first (works for pdfjs-dist 4.x)
   try {
-    // Try legacy build first (CommonJS)
-    const lib = require("pdfjs-dist/legacy/build/pdf.js");
-    return lib;
-  } catch (legacyError) {
-    try {
-      // Try dynamic import for ES Module version
-      const pdfjsModule = await import("pdfjs-dist");
-      return pdfjsModule.default || pdfjsModule;
-    } catch (importError) {
-      // Fallback: try to import the legacy build dynamically
-      // Using dynamic string construction to avoid TypeScript resolution errors
-      try {
-        const legacyPath = "pdfjs-dist" + "/legacy/build/pdf.js";
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const legacyModule = await import(legacyPath);
-        return legacyModule.default || legacyModule;
-      } catch (finalError) {
-        throw new Error(
-          `Failed to load pdfjs-dist: ${legacyError.message}. Please ensure pdfjs-dist is installed.`
-        );
-      }
+    const pdfjsModule = await import("pdfjs-dist");
+    const lib = pdfjsModule.default || pdfjsModule;
+    if (lib && typeof lib.getDocument === "function") {
+      return lib;
     }
+  } catch (importError: any) {
+    errors.push(`ES module import failed: ${importError.message}`);
   }
+
+  // Try build/pdf.mjs (ES module build)
+  try {
+    const buildModule = await import("pdfjs-dist/build/pdf.mjs");
+    const lib = buildModule.default || buildModule;
+    if (lib && typeof lib.getDocument === "function") {
+      return lib;
+    }
+  } catch (buildError: any) {
+    errors.push(`build/pdf.mjs import failed: ${buildError.message}`);
+  }
+
+  // Try build/pdf.js (CommonJS build)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const lib = require("pdfjs-dist/build/pdf.js");
+    if (lib && typeof lib.getDocument === "function") {
+      return lib;
+    }
+  } catch (requireError: any) {
+    errors.push(`build/pdf.js require failed: ${requireError.message}`);
+  }
+
+  // Try legacy build (for older versions)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const lib = require("pdfjs-dist/legacy/build/pdf.js");
+    if (lib && typeof lib.getDocument === "function") {
+      return lib;
+    }
+  } catch (legacyError: any) {
+    errors.push(`legacy build require failed: ${legacyError.message}`);
+  }
+
+  // Try dynamic import of legacy build
+  try {
+    const legacyPath = "pdfjs-dist/legacy/build/pdf.js";
+    const legacyModule = await import(legacyPath);
+    const lib = legacyModule.default || legacyModule;
+    if (lib && typeof lib.getDocument === "function") {
+      return lib;
+    }
+  } catch (legacyImportError: any) {
+    errors.push(`legacy build import failed: ${legacyImportError.message}`);
+  }
+
+  // If all attempts failed, throw a comprehensive error
+  throw new Error(
+    `Failed to load pdfjs-dist. Attempted paths:\n${errors.join("\n")}\n\n` +
+      `Please ensure pdfjs-dist is installed: npm install pdfjs-dist`
+  );
 }
 
 function normalizeDpi(dpi?: number): number {
