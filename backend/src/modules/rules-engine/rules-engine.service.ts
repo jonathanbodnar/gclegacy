@@ -163,6 +163,15 @@ export class RulesEngineService {
     for (const [key, value] of Object.entries(condition)) {
       const featureValue = this.getFeatureValue(feature, key);
       
+      // Handle special case: 'feature' key maps to 'type' property with case-insensitive matching
+      if (key === 'feature') {
+        const featureType = feature.type || feature.props?.type;
+        if (!featureType || featureType.toUpperCase() !== String(value).toUpperCase()) {
+          return false;
+        }
+        continue;
+      }
+      
       if (featureValue !== value) {
         return false;
       }
@@ -177,6 +186,7 @@ export class RulesEngineService {
     
     for (const part of parts) {
       if (value && typeof value === 'object') {
+        // Check top-level property first, then props
         value = value[part] || value.props?.[part];
       } else {
         return undefined;

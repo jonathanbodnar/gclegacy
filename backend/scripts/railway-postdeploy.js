@@ -20,7 +20,7 @@ try {
 
   // Seed the database
   console.log("🌱 Seeding database...");
-  execSync("node scripts/seed.js", { stdio: "inherit" });
+  execSync("npx ts-node scripts/seed.ts", { stdio: "inherit" });
 
   console.log("✅ Post-deploy setup completed successfully!");
 } catch (error) {

@@ -8,6 +8,7 @@ export interface MaterialsResponse {
   summary: {
     totalItems: number;
     totalValue?: number;
+    categories?: string[];
     generatedAt: string;
   };
 }
@@ -62,6 +63,9 @@ export class MaterialsService {
     }));
 
     const totalValue = items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+    
+    // Extract unique categories
+    const categories = Array.from(new Set(items.map(item => item.category).filter(Boolean)));
 
     return {
       jobId: job.id,
@@ -70,6 +74,7 @@ export class MaterialsService {
       summary: {
         totalItems: items.length,
         totalValue,
+        categories,
         generatedAt: new Date().toISOString(),
       },
     };
