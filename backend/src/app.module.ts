@@ -72,6 +72,6 @@ import { VisionModule } from './modules/vision/vision.module';
     RulesEngineModule,
     VisionModule,
   ],
-  controllers: [HealthController],
+  controllers: [HealthController, SeedController],
 })
 export class AppModule {}
