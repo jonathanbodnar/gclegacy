@@ -439,4 +439,104 @@ export class JobsService {
       throw error;
     }
   }
+
+  /**
+   * Clear all jobs from the Bull queue and update their status in the database
+   * This will:
+   * 1. Remove all waiting, active, and delayed jobs from the queue
+   * 2. Update database job statuses to CANCELLED for QUEUED and PROCESSING jobs
+   * @returns Object with counts of jobs cleared
+   */
+  async clearAllJobs(): Promise<{
+    queueJobsRemoved: number;
+    databaseJobsCancelled: number;
+  }> {
+    let queueJobsRemoved = 0;
+    let databaseJobsCancelled = 0;
+
+    try {
+      // Step 1: Clear all jobs from Bull queue if available
+      if (this.jobQueue) {
+        try {
+          // Get all jobs in various states
+          const waitingJobs = await this.jobQueue.getJobs(["waiting"]);
+          const activeJobs = await this.jobQueue.getJobs(["active"]);
+          const delayedJobs = await this.jobQueue.getJobs(["delayed"]);
+
+          // Remove all jobs from queue
+          for (const job of [...waitingJobs, ...activeJobs, ...delayedJobs]) {
+            try {
+              await job.remove();
+              queueJobsRemoved++;
+              this.logger.log(
+                `Removed job ${job.id} from queue (jobId: ${job.data.jobId})`
+              );
+            } catch (error) {
+              this.logger.warn(
+                `Failed to remove job ${job.id} from queue:`,
+                error.message
+              );
+            }
+          }
+
+          // Also clear the entire queue using empty() method
+          await this.jobQueue.empty();
+          this.logger.log(
+            `Emptied job queue: ${queueJobsRemoved} jobs removed`
+          );
+        } catch (error) {
+          this.logger.error("Error clearing queue:", error.message);
+          // Continue to database cleanup even if queue clearing fails
+        }
+      } else {
+        this.logger.warn("Job queue not available - skipping queue cleanup");
+      }
+
+      // Step 2: Update database job statuses
+      try {
+        const result = await this.prisma.job.updateMany({
+          where: {
+            status: {
+              in: [JobStatus.QUEUED, JobStatus.PROCESSING],
+            },
+          },
+          data: {
+            status: JobStatus.CANCELLED,
+            finishedAt: new Date(),
+            error: "Cancelled by admin - all jobs cleared",
+          },
+        });
+
+        databaseJobsCancelled = result.count;
+        this.logger.log(`Cancelled ${databaseJobsCancelled} jobs in database`);
+      } catch (error) {
+        if (
+          error instanceof PrismaClientKnownRequestError ||
+          error instanceof Error
+        ) {
+          if (
+            error.message?.includes("Can't reach database server") ||
+            error.message?.includes("database server")
+          ) {
+            this.logger.error("Database connection failed:", error.message);
+            throw new ServiceUnavailableException(
+              "Database service is currently unavailable. Please try again later."
+            );
+          }
+        }
+        throw error;
+      }
+
+      return {
+        queueJobsRemoved,
+        databaseJobsCancelled,
+      };
+    } catch (error) {
+      if (error instanceof ServiceUnavailableException) {
+        throw error;
+      }
+      this.logger.error("Error clearing all jobs:", error.message);
+      throw error;
+    }
+  }
 }

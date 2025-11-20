@@ -117,9 +117,26 @@ export class PdfIngestService {
 
   private async loadPdfJs(): Promise<any> {
     try {
+      // Try legacy build first (CommonJS)
       return require('pdfjs-dist/legacy/build/pdf.js');
     } catch (legacyError) {
-      return require('pdfjs-dist');
+      try {
+        // Try dynamic import for ES Module version
+        const pdfjsModule = await import('pdfjs-dist');
+        return pdfjsModule.default || pdfjsModule;
+      } catch (importError) {
+        // Fallback: try to import the legacy build dynamically
+        // Using dynamic string construction to avoid TypeScript resolution errors
+        try {
+          const legacyPath = 'pdfjs-dist' + '/legacy/build/pdf.js';
+          const legacyModule = await import(legacyPath);
+          return legacyModule.default || legacyModule;
+        } catch (finalError) {
+          throw new Error(
+            `Failed to load pdfjs-dist: ${legacyError.message}. Please ensure pdfjs-dist is installed.`
+          );
+        }
+      }
     }
   }
 

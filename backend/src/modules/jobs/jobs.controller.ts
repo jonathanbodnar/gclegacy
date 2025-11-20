@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Body,
   Param,
   UseGuards,
@@ -131,5 +132,51 @@ export class JobsController {
   })
   async getJobStatus(@Param('jobId') jobId: string): Promise<JobStatusResponse> {
     return this.jobsService.getJobStatus(jobId);
+  }
+
+  @Delete(':jobId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ 
+    summary: 'Cancel a job',
+    description: 'Cancel a specific analysis job. Only QUEUED and PROCESSING jobs can be cancelled.'
+  })
+  @ApiResponse({ 
+    status: 204, 
+    description: 'Job cancelled successfully' 
+  })
+  @ApiResponse({ 
+    status: 404, 
+    description: 'Job not found' 
+  })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'Cannot cancel completed or failed job' 
+  })
+  async cancelJob(@Param('jobId') jobId: string): Promise<void> {
+    return this.jobsService.cancelJob(jobId);
+  }
+
+  @Delete()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ 
+    summary: 'Clear all running jobs',
+    description: 'Stop and delete all running, queued, and active jobs from both the queue and database. This will cancel all QUEUED and PROCESSING jobs.'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'All jobs cleared successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        queueJobsRemoved: { type: 'number', description: 'Number of jobs removed from queue' },
+        databaseJobsCancelled: { type: 'number', description: 'Number of jobs cancelled in database' }
+      }
+    }
+  })
+  async clearAllJobs(): Promise<{
+    queueJobsRemoved: number;
+    databaseJobsCancelled: number;
+  }> {
+    return this.jobsService.clearAllJobs();
   }
 }

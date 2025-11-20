@@ -1,10 +1,13 @@
-import { join } from 'path';
+import { join } from "path";
 
 type CanvasFactory = {
-  createCanvas: (width: number, height: number) => {
+  createCanvas: (
+    width: number,
+    height: number
+  ) => {
     width: number;
     height: number;
-    getContext: (type: '2d') => any;
+    getContext: (type: "2d") => any;
     toBuffer: (type?: string) => Buffer;
   };
   Path2D?: any;
@@ -32,7 +35,7 @@ export interface PdfPageRenderOptions {
 
 export async function renderPdfToImages(
   pdfBuffer: Buffer,
-  options: PdfRenderOptions = {},
+  options: PdfRenderOptions = {}
 ): Promise<PdfPageImage[]> {
   // Ensure canvas polyfills are initialized before loading pdfjs
   ensureCanvasPolyfills();
@@ -44,7 +47,9 @@ export async function renderPdfToImages(
   const pdfDoc = await loadingTask.promise;
   const dpi = normalizeDpi(options.dpi);
   const totalPages = pdfDoc.numPages;
-  const limit = options.maxPages ? Math.min(options.maxPages, totalPages) : totalPages;
+  const limit = options.maxPages
+    ? Math.min(options.maxPages, totalPages)
+    : totalPages;
 
   const results: PdfPageImage[] = [];
   for (let pageNum = 1; pageNum <= limit; pageNum++) {
@@ -57,7 +62,7 @@ export async function renderPdfToImages(
 
 export async function renderPdfPage(
   page: any,
-  options: PdfPageRenderOptions = {},
+  options: PdfPageRenderOptions = {}
 ): Promise<PdfPageImage> {
   // Ensure canvas polyfills are initialized
   ensureCanvasPolyfills();
@@ -67,20 +72,40 @@ export async function renderPdfPage(
 
 async function loadPdfJs(): Promise<any> {
   try {
-    const lib = require('pdfjs-dist/legacy/build/pdf.js');
+    // Try legacy build first (CommonJS)
+    const lib = require("pdfjs-dist/legacy/build/pdf.js");
     return lib;
   } catch (legacyError) {
-    const lib = require('pdfjs-dist');
-    return lib;
+    try {
+      // Try dynamic import for ES Module version
+      const pdfjsModule = await import("pdfjs-dist");
+      return pdfjsModule.default || pdfjsModule;
+    } catch (importError) {
+      // Fallback: try to import the legacy build dynamically
+      // Using dynamic string construction to avoid TypeScript resolution errors
+      try {
+        const legacyPath = "pdfjs-dist" + "/legacy/build/pdf.js";
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const legacyModule = await import(legacyPath);
+        return legacyModule.default || legacyModule;
+      } catch (finalError) {
+        throw new Error(
+          `Failed to load pdfjs-dist: ${legacyError.message}. Please ensure pdfjs-dist is installed.`
+        );
+      }
+    }
   }
 }
 
 function normalizeDpi(dpi?: number): number {
-  const value = typeof dpi === 'number' && dpi > 0 ? dpi : 220;
+  const value = typeof dpi === "number" && dpi > 0 ? dpi : 220;
   return Math.max(value, 1);
 }
 
-async function renderPageWithDpi(page: any, dpi: number): Promise<PdfPageImage> {
+async function renderPageWithDpi(
+  page: any,
+  dpi: number
+): Promise<PdfPageImage> {
   const canvasLib = loadCanvasModule();
   const { createCanvas } = canvasLib;
   const scale = dpi / 72;
@@ -88,12 +113,12 @@ async function renderPageWithDpi(page: any, dpi: number): Promise<PdfPageImage> 
   const width = Math.max(Math.ceil(viewport.width), 1);
   const height = Math.max(Math.ceil(viewport.height), 1);
   const canvas = createCanvas(width, height);
-  const context = canvas.getContext('2d');
+  const context = canvas.getContext("2d");
 
   await page.render({ canvasContext: context, viewport }).promise;
 
   return {
-    buffer: canvas.toBuffer('image/png'),
+    buffer: canvas.toBuffer("image/png"),
     widthPx: width,
     heightPx: height,
   };
@@ -108,16 +133,20 @@ function ensureCanvasPolyfills(): void {
     // Load canvas module first
     if (!canvasModule) {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      canvasModule = require('@napi-rs/canvas');
+      canvasModule = require("@napi-rs/canvas");
     }
-    
+
     // Polyfill Path2D if available
-    if (canvasModule && canvasModule.Path2D && typeof (globalThis as any).Path2D === 'undefined') {
+    if (
+      canvasModule &&
+      canvasModule.Path2D &&
+      typeof (globalThis as any).Path2D === "undefined"
+    ) {
       (globalThis as any).Path2D = canvasModule.Path2D;
     }
-    
+
     // Polyfill ImageData - @napi-rs/canvas should export it, but ensure it's global
-    if (typeof (globalThis as any).ImageData === 'undefined') {
+    if (typeof (globalThis as any).ImageData === "undefined") {
       if (canvasModule && canvasModule.ImageData) {
         // Use the ImageData from @napi-rs/canvas if available
         (globalThis as any).ImageData = canvasModule.ImageData;
@@ -125,16 +154,20 @@ function ensureCanvasPolyfills(): void {
         // Fallback: create ImageData polyfill using canvas context
         // We'll create a small temporary canvas to get access to createImageData
         const tempCanvas = canvasModule.createCanvas(1, 1);
-        const tempCtx = tempCanvas.getContext('2d');
-        
+        const tempCtx = tempCanvas.getContext("2d");
+
         // Create ImageData constructor that matches the browser API
         (globalThis as any).ImageData = class ImageData {
           data: Uint8ClampedArray;
           width: number;
           height: number;
-          
-          constructor(dataOrWidth: Uint8ClampedArray | number, heightOrWidth?: number, height?: number) {
-            if (typeof dataOrWidth === 'number') {
+
+          constructor(
+            dataOrWidth: Uint8ClampedArray | number,
+            heightOrWidth?: number,
+            height?: number
+          ) {
+            if (typeof dataOrWidth === "number") {
               // Constructor(width, height)
               const width = dataOrWidth;
               const h = heightOrWidth || 1;
@@ -157,11 +190,11 @@ function ensureCanvasPolyfills(): void {
         };
       }
     }
-    
+
     canvasPolyfillsInitialized = true;
   } catch (error: any) {
     // Don't throw here, let loadCanvasModule handle it
-    console.warn('Failed to initialize canvas polyfills:', error.message);
+    console.warn("Failed to initialize canvas polyfills:", error.message);
   }
 }
 
@@ -178,7 +211,7 @@ function loadCanvasModule(): CanvasFactory {
       "The '@napi-rs/canvas' package is required for PDF rendering. Install it with `npm install @napi-rs/canvas`.";
     throw new Error(hint);
   }
-  
+
   return canvasModule;
 }
 
@@ -186,8 +219,8 @@ function getStandardFontPath(): string {
   if (standardFontDataUrl) {
     return standardFontDataUrl;
   }
-  const pkgPath = require.resolve('pdfjs-dist/package.json');
-  const baseDir = join(pkgPath, '..', 'build', 'standard_fonts');
-  standardFontDataUrl = baseDir.endsWith('/') ? baseDir : `${baseDir}/`;
+  const pkgPath = require.resolve("pdfjs-dist/package.json");
+  const baseDir = join(pkgPath, "..", "build", "standard_fonts");
+  standardFontDataUrl = baseDir.endsWith("/") ? baseDir : `${baseDir}/`;
   return standardFontDataUrl;
 }

@@ -210,14 +210,25 @@ export class PlanAnalysisService {
     // Try different import methods based on pdfjs-dist version
     let pdfjsLib: any;
     try {
-      pdfjsLib = require("pdfjs-dist");
-    } catch (e) {
+      // Try legacy build first (CommonJS)
+      pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+    } catch (legacyError) {
       try {
-        pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
-      } catch (e2) {
-        throw new Error(
-          "Could not load pdfjs-dist. Please check installation."
-        );
+        // Try dynamic import for ES Module version
+        const pdfjsModule = await import("pdfjs-dist");
+        pdfjsLib = pdfjsModule.default || pdfjsModule;
+      } catch (importError) {
+        // Fallback: try to import the legacy build dynamically
+        // Using dynamic string construction to avoid TypeScript resolution errors
+        try {
+          const legacyPath = "pdfjs-dist" + "/legacy/build/pdf.js";
+          const legacyModule = await import(legacyPath);
+          pdfjsLib = legacyModule.default || legacyModule;
+        } catch (finalError) {
+          throw new Error(
+            `Could not load pdfjs-dist: ${legacyError.message}. Please check installation.`
+          );
+        }
       }
     }
 
