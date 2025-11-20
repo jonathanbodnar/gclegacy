@@ -38,20 +38,62 @@ export async function renderPdfToImages(
   pdfBuffer: Buffer,
   options: PdfRenderOptions = {}
 ): Promise<PdfPageImage[]> {
-  // Ensure canvas polyfills are initialized before loading pdfjs
-  ensureCanvasPolyfills();
-
-  // Suppress XFA parsing warnings from pdfjs-dist
+  // Suppress XFA parsing warnings BEFORE initializing canvas to catch warnings during library loading
   const originalWarn = console.warn;
   const originalError = console.error;
+  const originalStdErrWrite = process.stderr.write;
+  
   console.warn = (...args: any[]) => {
-    const message = args.join(" ");
+    // Join all arguments to create the full message
+    const message = args.map(arg => {
+      if (typeof arg === 'string') return arg;
+      if (arg instanceof Error) return arg.message;
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    }).join(' ');
+    
     // Suppress known XFA parsing warnings that don't affect functionality
-    if (message.includes("XFA") && message.includes("rich text")) {
+    // Check for various XFA-related warning patterns (case-insensitive)
+    const lowerMessage = message.toLowerCase();
+    if (
+      lowerMessage.includes('xfa') ||
+      (lowerMessage.includes('rich text') && (lowerMessage.includes('error') || lowerMessage.includes('occurred'))) ||
+      (lowerMessage.includes('cannot destructure') && lowerMessage.includes('html')) ||
+      (lowerMessage.includes('destructure property') && lowerMessage.includes('html')) ||
+      (lowerMessage.includes('attributes') && lowerMessage.includes('null') && lowerMessage.includes('html')) ||
+      (message.includes('XFA') && message.includes('parsing'))
+    ) {
       return; // Suppress this warning
     }
     originalWarn.apply(console, args);
   };
+  
+  // Also intercept stderr.write as a fallback (some libraries write directly to stderr)
+  process.stderr.write = function(chunk: any, encoding?: any, callback?: any): boolean {
+    const message = chunk?.toString() || String(chunk);
+    const lowerMessage = message.toLowerCase();
+    if (
+      lowerMessage.includes('xfa') ||
+      (lowerMessage.includes('rich text') && (lowerMessage.includes('error') || lowerMessage.includes('occurred'))) ||
+      (lowerMessage.includes('cannot destructure') && lowerMessage.includes('html')) ||
+      (lowerMessage.includes('destructure property') && lowerMessage.includes('html')) ||
+      (lowerMessage.includes('attributes') && lowerMessage.includes('null') && lowerMessage.includes('html')) ||
+      (message.includes('Warning:') && message.includes('XFA'))
+    ) {
+      // Suppress XFA warnings written directly to stderr
+      if (typeof callback === 'function') {
+        callback();
+      }
+      return true;
+    }
+    return originalStdErrWrite.call(process.stderr, chunk, encoding, callback);
+  };
+
+  // Ensure canvas polyfills are initialized before loading pdfjs
+  ensureCanvasPolyfills();
 
   // Suppress canvas cleanup errors that occur during PDF.js operations
   console.error = (...args: any[]) => {
@@ -147,9 +189,10 @@ export async function renderPdfToImages(
 
     return results;
   } finally {
-    // Restore original console methods
+    // Restore original console methods and stderr
     console.warn = originalWarn;
     console.error = originalError;
+    process.stderr.write = originalStdErrWrite;
     // Restore original unhandled rejection handlers
     if (typeof originalUnhandledRejection !== "undefined") {
       process.removeAllListeners("unhandledRejection");
