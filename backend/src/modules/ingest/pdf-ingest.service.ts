@@ -256,22 +256,18 @@ export class PdfIngestService {
             const sheetIdGuess = this.extractSheetName(pageText);
 
             // Get page dimensions
-            const viewport = page.getViewport({ scale: 1 });
+            const viewportPt = page.getViewport({ scale: 1 });
             const pageSize = {
-              widthPt: viewport.width,
-              heightPt: viewport.height,
+              widthPt: viewportPt.width,
+              heightPt: viewportPt.height,
             };
 
             // Skip pdfjs rendering during ingestion - it's slow and we re-render with Poppler later
             // Just get dimensions from viewport
             let imagePath = "";
-            let widthPx = 0;
-            let heightPx = 0;
-            
-            // Use viewport dimensions as estimate (will be more accurate during plan analysis)
-            const viewport = page.getViewport({ scale: renderDpi / 72 });
-            widthPx = Math.round(viewport.width);
-            heightPx = Math.round(viewport.height);
+            const viewportPx = page.getViewport({ scale: renderDpi / 72 });
+            const widthPx = Math.round(viewportPx.width);
+            const heightPx = Math.round(viewportPx.height);
             
             this.logger.log(
               `Page ${pageNumber}: ${Math.round(pageSize.widthPt)}x${Math.round(pageSize.heightPt)}pt, estimated ${widthPx}x${heightPx}px at ${renderDpi} DPI`
@@ -299,7 +295,8 @@ export class PdfIngestService {
               renderDpi,
               content: {
                 textData: pageText,
-                rasterData: renderedImage.buffer,
+                // rasterData will be populated during plan analysis with Poppler rendering
+                rasterData: undefined,
                 metadata: {
                   widthPx,
                   heightPx,
