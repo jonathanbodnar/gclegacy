@@ -255,32 +255,27 @@ export class PdfIngestService {
 
             const sheetIdGuess = this.extractSheetName(pageText);
 
+            // Get page dimensions
             const viewport = page.getViewport({ scale: 1 });
             const pageSize = {
               widthPt: viewport.width,
               heightPt: viewport.height,
             };
 
-            let renderedImage;
+            // Skip pdfjs rendering during ingestion - it's slow and we re-render with Poppler later
+            // Just get dimensions from viewport
             let imagePath = "";
             let widthPx = 0;
             let heightPx = 0;
-            try {
-              renderedImage = await this.withTimeout(
-                renderPdfPage(page, { dpi: renderDpi }),
-                60000,
-                `Page render timeout after 60s on page ${pageNumber}`
-              );
-              imagePath = await this.saveTempImage(renderedImage.buffer);
-              widthPx = renderedImage.widthPx;
-              heightPx = renderedImage.heightPx;
-            } catch (renderError: any) {
-              this.logger.warn(
-                `Failed to render page ${pageNumber}: ${renderError?.message || String(renderError)}. Skipping this page.`
-              );
-              // Skip this page if rendering fails
-              continue;
-            }
+            
+            // Use viewport dimensions as estimate (will be more accurate during plan analysis)
+            const viewport = page.getViewport({ scale: renderDpi / 72 });
+            widthPx = Math.round(viewport.width);
+            heightPx = Math.round(viewport.height);
+            
+            this.logger.log(
+              `Page ${pageNumber}: ${Math.round(pageSize.widthPt)}x${Math.round(pageSize.heightPt)}pt, estimated ${widthPx}x${heightPx}px at ${renderDpi} DPI`
+            );
 
             // Detect discipline from page content
             const discipline = this.detectDisciplineFromText(pageText);
