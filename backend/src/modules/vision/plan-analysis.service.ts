@@ -48,17 +48,12 @@ export class PlanAnalysisService {
     try {
       // Convert PDF pages or plan sheets to images for vision analysis
       this.logger.log(`Converting PDF to images for analysis: ${fileName}`);
-      this.logger.log(`⚠️  WARNING: Rendering disabled due to Railway compatibility issues. Skipping plan analysis.`);
-      // Skip plan analysis entirely - rendering doesn't work on Railway
-      return {
-        pages: [],
-        summary: {
-          totalPages: 0,
-          analyzedPages: 0,
-          skippedPages: 0,
-          message: 'Plan analysis skipped - rendering not available on Railway'
-        }
-      };
+      const images = await this.withTimeout(
+        this.convertToImages(fileBuffer, fileName),
+        900000, // 15 minute timeout (generous for Poppler rendering all pages)
+        `PDF to images conversion timeout after 15 minutes for ${fileName}`
+      );
+      this.logger.log(`Successfully converted ${images.length} pages to images`);
 
       this.logger.log(`Starting parallel analysis of ${images.length} pages`);
 

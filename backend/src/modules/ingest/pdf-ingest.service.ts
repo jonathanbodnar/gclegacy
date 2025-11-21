@@ -262,12 +262,29 @@ export class PdfIngestService {
               heightPt: viewport.height,
             };
 
-            // Skip rendering - pdfjs has compatibility issues on Railway
-            // Just use text and estimated dimensions
+            // Render page with timeout protection (slow but reliable)
+            let renderedImage;
             let imagePath = "";
-            const viewportPx = page.getViewport({ scale: renderDpi / 72 });
-            const widthPx = Math.round(viewportPx.width);
-            const heightPx = Math.round(viewportPx.height);
+            let widthPx = 0;
+            let heightPx = 0;
+            try {
+              renderedImage = await this.withTimeout(
+                renderPdfPage(page, { dpi: renderDpi }),
+                20000, // 20 second timeout per page
+                `Page render timeout after 20 sec on page ${pageNumber}`
+              );
+              imagePath = await this.saveTempImage(renderedImage.buffer);
+              widthPx = renderedImage.widthPx;
+              heightPx = renderedImage.heightPx;
+            } catch (renderError: any) {
+              this.logger.warn(
+                `Failed to render page ${pageNumber}: ${renderError?.message || String(renderError)}. Using estimated dimensions.`
+              );
+              // Fall back to estimated dimensions if rendering fails
+              const viewportPx = page.getViewport({ scale: renderDpi / 72 });
+              widthPx = Math.round(viewportPx.width);
+              heightPx = Math.round(viewportPx.height);
+            }
 
             // Detect discipline from page content
             const discipline = this.detectDisciplineFromText(pageText);
@@ -291,7 +308,7 @@ export class PdfIngestService {
               renderDpi,
               content: {
                 textData: pageText,
-                rasterData: undefined, // Skipping rendering - will render during plan analysis with Poppler
+                rasterData: renderedImage?.buffer,
                 metadata: {
                   widthPx,
                   heightPx,
