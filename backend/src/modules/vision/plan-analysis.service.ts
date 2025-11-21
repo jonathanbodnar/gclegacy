@@ -12,6 +12,22 @@ export class PlanAnalysisService {
 
   constructor(private openaiVision: OpenAIVisionService) {}
 
+  /**
+   * Wraps a promise with a timeout to prevent indefinite hanging
+   */
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    errorMessage: string
+  ): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+      ),
+    ]);
+  }
+
   async analyzePlanFile(
     fileBuffer: Buffer,
     fileName: string,
@@ -32,7 +48,11 @@ export class PlanAnalysisService {
     try {
       // Convert PDF pages or plan sheets to images for vision analysis
       this.logger.log(`Converting PDF to images for analysis: ${fileName}`);
-      const images = await this.convertToImages(fileBuffer, fileName);
+      const images = await this.withTimeout(
+        this.convertToImages(fileBuffer, fileName),
+        300000, // 5 minute timeout for 35 pages
+        `PDF to images conversion timeout after 5 minutes for ${fileName}`
+      );
       this.logger.log(`Successfully converted ${images.length} pages to images`);
 
       this.logger.log(`Starting parallel analysis of ${images.length} pages`);
