@@ -12,6 +12,22 @@ import { renderPdfPage } from "../../common/pdf/pdf-renderer";
 export class PdfIngestService {
   private readonly logger = new Logger(PdfIngestService.name);
 
+  /**
+   * Wraps a promise with a timeout to prevent indefinite hanging
+   */
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    errorMessage: string
+  ): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+      ),
+    ]);
+  }
+
   async ingest(
     fileId: string,
     fileBuffer: Buffer,
@@ -222,10 +238,14 @@ export class PdfIngestService {
           try {
             const page = await pdfDoc.getPage(pageNumber);
 
-            // Extract text content for this page
+            // Extract text content for this page with timeout
             let pageText = "";
             try {
-              pageText = await this.extractPageTextContent(page);
+              pageText = await this.withTimeout(
+                this.extractPageTextContent(page),
+                30000,
+                `Text extraction timeout after 30s on page ${pageNumber}`
+              );
             } catch (textError: any) {
               this.logger.warn(
                 `Failed to extract text from page ${pageNumber}: ${textError?.message || String(textError)}. Continuing with empty text.`
@@ -246,7 +266,11 @@ export class PdfIngestService {
             let widthPx = 0;
             let heightPx = 0;
             try {
-              renderedImage = await renderPdfPage(page, { dpi: renderDpi });
+              renderedImage = await this.withTimeout(
+                renderPdfPage(page, { dpi: renderDpi }),
+                60000,
+                `Page render timeout after 60s on page ${pageNumber}`
+              );
               imagePath = await this.saveTempImage(renderedImage.buffer);
               widthPx = renderedImage.widthPx;
               heightPx = renderedImage.heightPx;
