@@ -50,8 +50,8 @@ export class PlanAnalysisService {
       this.logger.log(`Converting PDF to images for analysis: ${fileName}`);
       const images = await this.withTimeout(
         this.convertToImages(fileBuffer, fileName),
-        300000, // 5 minute timeout for 35 pages
-        `PDF to images conversion timeout after 5 minutes for ${fileName}`
+        900000, // 15 minute timeout (generous for Poppler rendering all pages)
+        `PDF to images conversion timeout after 15 minutes for ${fileName}`
       );
       this.logger.log(`Successfully converted ${images.length} pages to images`);
 
