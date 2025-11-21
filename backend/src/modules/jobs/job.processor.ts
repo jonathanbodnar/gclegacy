@@ -203,6 +203,7 @@ export class JobProcessor {
       }
 
       // Stage 2B: map rooms on floor plans using schedule context
+      this.logger.log(`Starting room spatial mapping for job ${jobId}`);
       let roomSpatialMappings: any[] = [];
       try {
         roomSpatialMappings = await this.roomSpatialMappingService.mapRooms(
@@ -214,6 +215,7 @@ export class JobProcessor {
             roomSpatialMappings,
           });
         }
+        this.logger.log(`Room spatial mapping completed for job ${jobId}: ${roomSpatialMappings.length} mappings created`);
       } catch (spatialError) {
         this.logger.warn(
           `Room spatial mapping failed for job ${jobId}: ${spatialError.message}`
@@ -221,6 +223,7 @@ export class JobProcessor {
       }
 
       // Stage 3A: extract partition type definitions
+      this.logger.log(`Starting partition type extraction for job ${jobId}`);
       let partitionTypes: any[] = [];
       try {
         partitionTypes =
@@ -230,6 +233,7 @@ export class JobProcessor {
         if (partitionTypes.length) {
           await this.jobsService.mergeJobOptions(jobId, { partitionTypes });
         }
+        this.logger.log(`Partition type extraction completed for job ${jobId}: ${partitionTypes.length} types extracted`);
       } catch (partitionError) {
         this.logger.warn(
           `Partition type extraction failed for job ${jobId}: ${partitionError.message}`
@@ -237,6 +241,7 @@ export class JobProcessor {
       }
 
       // Stage 3B: wall run extraction using floor plan imagery
+      this.logger.log(`Starting wall run extraction for job ${jobId}`);
       let wallRuns: any[] = [];
       try {
         wallRuns = await this.wallRunExtractionService.extractWallRuns(
@@ -247,6 +252,7 @@ export class JobProcessor {
         if (wallRuns.length) {
           await this.jobsService.mergeJobOptions(jobId, { wallRuns });
         }
+        this.logger.log(`Wall run extraction completed for job ${jobId}: ${wallRuns.length} wall runs extracted`);
       } catch (wallError) {
         this.logger.warn(
           `Wall run extraction failed for job ${jobId}: ${wallError.message}`
