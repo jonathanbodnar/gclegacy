@@ -134,6 +134,7 @@ export class JobProcessor {
       await progressReporter(20);
 
       // Stage 1: classify sheets using GPT (know which pages drive which prompts)
+      this.logger.log(`Starting sheet classification for job ${jobId}`);
       try {
         const sheetClassifications =
           await this.sheetClassificationService.classifySheets(
@@ -142,6 +143,7 @@ export class JobProcessor {
         await this.jobsService.mergeJobOptions(jobId, {
           sheetClassifications,
         });
+        this.logger.log(`Sheet classification completed for job ${jobId}: ${sheetClassifications.length} sheets classified`);
       } catch (classificationError) {
         this.logger.warn(
           `Sheet classification failed for job ${jobId}: ${classificationError.message}`
@@ -149,6 +151,7 @@ export class JobProcessor {
       }
 
       // Stage 2: extract generic spaces from plan sheets
+      this.logger.log(`Starting space extraction for job ${jobId}`);
       let spaces: SpaceDefinition[] = [];
       try {
         spaces = await this.spaceExtractionService.extractSpaces(
@@ -157,6 +160,7 @@ export class JobProcessor {
         if (spaces.length) {
           await this.jobsService.mergeJobOptions(jobId, { spaces });
         }
+        this.logger.log(`Space extraction completed for job ${jobId}: ${spaces.length} spaces extracted`);
       } catch (spaceError) {
         this.logger.warn(
           `Space extraction failed for job ${jobId}: ${spaceError.message}`
