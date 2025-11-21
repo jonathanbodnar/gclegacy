@@ -168,6 +168,7 @@ export class JobProcessor {
       }
 
       // Stage 2B: finishes/materials extraction for materials sheets
+      this.logger.log(`Starting materials extraction for job ${jobId}`);
       let spaceFinishes: SpaceFinishDefinition[] = [];
       try {
         spaceFinishes = await this.materialsExtractionService.extractFinishes(
@@ -176,6 +177,7 @@ export class JobProcessor {
         if (spaceFinishes.length) {
           await this.jobsService.mergeJobOptions(jobId, { spaceFinishes });
         }
+        this.logger.log(`Materials extraction completed for job ${jobId}: ${spaceFinishes.length} finishes extracted`);
       } catch (materialsError) {
         this.logger.warn(
           `Materials extraction failed for job ${jobId}: ${materialsError.message}`
@@ -183,6 +185,7 @@ export class JobProcessor {
       }
 
       // Stage 2A: extract room schedules from text
+      this.logger.log(`Starting room schedule extraction for job ${jobId}`);
       let roomSchedules: any[] = [];
       try {
         roomSchedules =
@@ -192,6 +195,7 @@ export class JobProcessor {
         if (roomSchedules.length) {
           await this.jobsService.mergeJobOptions(jobId, { roomSchedules });
         }
+        this.logger.log(`Room schedule extraction completed for job ${jobId}: ${roomSchedules.length} schedules extracted`);
       } catch (scheduleError) {
         this.logger.warn(
           `Room schedule extraction failed for job ${jobId}: ${scheduleError.message}`
