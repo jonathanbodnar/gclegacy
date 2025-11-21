@@ -5,6 +5,8 @@ import {
   Optional,
   Logger,
   ServiceUnavailableException,
+  Inject,
+  forwardRef,
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bull";
 import { Queue } from "bull";
@@ -48,6 +50,8 @@ export interface JobStatusResponse {
 export class JobsService {
   private readonly logger = new Logger(JobsService.name);
 
+  private jobProcessor: any; // Use any to avoid circular dependency
+
   constructor(
     private prisma: PrismaService,
     @Optional() @InjectQueue("job-processing") private jobQueue?: Queue
@@ -57,6 +61,11 @@ export class JobsService {
         "⚠️  Job queue not available - jobs will be processed synchronously"
       );
     }
+  }
+
+  // Set job processor after construction to avoid circular dependency
+  setJobProcessor(processor: any) {
+    this.jobProcessor = processor;
   }
 
   async createJob(
@@ -177,24 +186,46 @@ export class JobsService {
         }
       );
     } else {
-      // No queue available - keep as QUEUED with note in error field
+      // No queue available - process synchronously in background
       this.logger.warn(
-        `Job ${job.id} created but queue not available - will need manual processing`
+        `Job ${job.id} created but queue not available - processing synchronously`
       );
-      try {
-        await this.prisma.job.update({
-          where: { id: job.id },
-          data: {
-            error:
-              "Queue not available - awaiting manual processing or Redis configuration",
-          },
+
+      // Process job directly in background (non-blocking)
+      if (this.jobProcessor) {
+        // Process asynchronously without blocking the response
+        this.processJobDirectly({
+          jobId: job.id,
+          fileId: createJobDto.fileId,
+          disciplines: createJobDto.disciplines,
+          targets: normalizedTargets,
+          materialsRuleSetId: createJobDto.materialsRuleSetId,
+          options: createJobDto.options,
+        }).catch((error) => {
+          this.logger.error(
+            `Failed to process job ${job.id} directly:`,
+            error.message
+          );
         });
-      } catch (error) {
-        // If database update fails, log but don't fail the job creation
+      } else {
+        // Job processor not available yet - log warning
         this.logger.warn(
-          `Failed to update job ${job.id} with queue error:`,
-          error.message
+          `Job processor not available for job ${job.id} - will process when processor is ready`
         );
+        try {
+          await this.prisma.job.update({
+            where: { id: job.id },
+            data: {
+              error:
+                "Queue not available - processing will start when processor is ready",
+            },
+          });
+        } catch (error) {
+          this.logger.warn(
+            `Failed to update job ${job.id} with queue error:`,
+            error.message
+          );
+        }
       }
     }
 
@@ -441,18 +472,18 @@ export class JobsService {
   }
 
   /**
-   * Clear all jobs from the Bull queue and update their status in the database
+   * Clear all jobs from the Bull queue and delete them from the database
    * This will:
    * 1. Remove all waiting, active, and delayed jobs from the queue
-   * 2. Update database job statuses to CANCELLED for QUEUED and PROCESSING jobs
+   * 2. Delete QUEUED and PROCESSING jobs from the database (cascade deletes related data)
    * @returns Object with counts of jobs cleared
    */
   async clearAllJobs(): Promise<{
     queueJobsRemoved: number;
-    databaseJobsCancelled: number;
+    databaseJobsDeleted: number;
   }> {
     let queueJobsRemoved = 0;
-    let databaseJobsCancelled = 0;
+    let databaseJobsDeleted = 0;
 
     try {
       // Step 1: Clear all jobs from Bull queue if available
@@ -469,12 +500,12 @@ export class JobsService {
               await job.remove();
               queueJobsRemoved++;
               this.logger.log(
-                `Removed job ${job.id} from queue (jobId: ${job.data.jobId})`
+                `Removed job ${job.id} from queue (jobId: ${job.data?.jobId || "unknown"})`
               );
-            } catch (error) {
+            } catch (error: any) {
               this.logger.warn(
                 `Failed to remove job ${job.id} from queue:`,
-                error.message
+                error?.message || String(error)
               );
             }
           }
@@ -484,32 +515,53 @@ export class JobsService {
           this.logger.log(
             `Emptied job queue: ${queueJobsRemoved} jobs removed`
           );
-        } catch (error) {
-          this.logger.error("Error clearing queue:", error.message);
+        } catch (error: any) {
+          this.logger.error(
+            "Error clearing queue:",
+            error?.message || String(error)
+          );
           // Continue to database cleanup even if queue clearing fails
         }
       } else {
         this.logger.warn("Job queue not available - skipping queue cleanup");
       }
 
-      // Step 2: Update database job statuses
+      // Step 2: Delete QUEUED and PROCESSING jobs from database
+      // This will cascade delete related sheets, features, and materials
       try {
-        const result = await this.prisma.job.updateMany({
+        // First, get count of jobs to be deleted for logging
+        const jobsToDelete = await this.prisma.job.findMany({
           where: {
             status: {
               in: [JobStatus.QUEUED, JobStatus.PROCESSING],
             },
           },
-          data: {
-            status: JobStatus.CANCELLED,
-            finishedAt: new Date(),
-            error: "Cancelled by admin - all jobs cleared",
+          select: { id: true },
+        });
+
+        const jobIds = jobsToDelete.map((j) => j.id);
+        this.logger.log(
+          `Found ${jobIds.length} jobs to delete: ${jobIds.join(", ")}`
+        );
+
+        // Delete jobs (cascade will handle related data)
+        const result = await this.prisma.job.deleteMany({
+          where: {
+            status: {
+              in: [JobStatus.QUEUED, JobStatus.PROCESSING],
+            },
           },
         });
 
-        databaseJobsCancelled = result.count;
-        this.logger.log(`Cancelled ${databaseJobsCancelled} jobs in database`);
-      } catch (error) {
+        databaseJobsDeleted = result.count;
+        this.logger.log(`Deleted ${databaseJobsDeleted} jobs from database`);
+
+        if (databaseJobsDeleted === 0) {
+          this.logger.warn(
+            "No QUEUED or PROCESSING jobs found to delete. Jobs may already be completed, failed, or cancelled."
+          );
+        }
+      } catch (error: any) {
         if (
           error instanceof PrismaClientKnownRequestError ||
           error instanceof Error
@@ -524,19 +576,116 @@ export class JobsService {
             );
           }
         }
+        this.logger.error(
+          "Error deleting jobs from database:",
+          error?.message || String(error)
+        );
         throw error;
       }
 
       return {
         queueJobsRemoved,
-        databaseJobsCancelled,
+        databaseJobsDeleted,
       };
-    } catch (error) {
+    } catch (error: any) {
       if (error instanceof ServiceUnavailableException) {
         throw error;
       }
-      this.logger.error("Error clearing all jobs:", error.message);
+      this.logger.error(
+        "Error clearing all jobs:",
+        error?.message || String(error)
+      );
       throw error;
+    }
+  }
+
+  /**
+   * Process job directly without Bull queue (fallback when Redis is not available)
+   */
+  private async processJobDirectly(jobData: {
+    jobId: string;
+    fileId: string;
+    disciplines: string[];
+    targets: string[];
+    materialsRuleSetId?: string;
+    options?: any;
+  }): Promise<void> {
+    if (!this.jobProcessor) {
+      throw new Error("Job processor not available");
+    }
+
+    // Create a simple progress reporter that updates job status
+    const progressReporter = async (percent: number) => {
+      await this.updateJobStatus(jobData.jobId, JobStatus.PROCESSING, percent);
+    };
+
+    // Call the processor's processJobData method
+    await this.jobProcessor.processJobData(jobData, progressReporter);
+  }
+
+  /**
+   * Process existing queued jobs (useful when Redis becomes unavailable or on startup)
+   */
+  async processQueuedJobs(): Promise<number> {
+    if (this.jobQueue) {
+      // If queue is available, jobs will be processed automatically
+      return 0;
+    }
+
+    if (!this.jobProcessor) {
+      this.logger.warn(
+        "Job processor not available - cannot process queued jobs"
+      );
+      return 0;
+    }
+
+    try {
+      // Find all queued jobs
+      const queuedJobs = await this.prisma.job.findMany({
+        where: {
+          status: JobStatus.QUEUED,
+        },
+        orderBy: {
+          createdAt: "asc", // Process oldest first
+        },
+      });
+
+      if (queuedJobs.length === 0) {
+        return 0;
+      }
+
+      this.logger.log(
+        `Found ${queuedJobs.length} queued jobs to process (Redis not available)`
+      );
+
+      // Process each job in the background
+      for (const job of queuedJobs) {
+        // Clear any error message from previous attempts
+        await this.prisma.job.update({
+          where: { id: job.id },
+          data: { error: null },
+        });
+
+        // Process asynchronously
+        this.processJobDirectly({
+          jobId: job.id,
+          fileId: job.fileId,
+          disciplines: job.disciplines as string[],
+          targets: job.targets as string[],
+          materialsRuleSetId: job.materialsRuleSetId || undefined,
+          options: (job.options as any) || {},
+        }).catch((error) => {
+          this.logger.error(
+            `Failed to process queued job ${job.id}:`,
+            error.message
+          );
+        });
+      }
+
+      return queuedJobs.length;
+    } catch (error) {
+      this.logger.error("Error processing queued jobs:", error.message);
+      return 0;
     }
   }
 }

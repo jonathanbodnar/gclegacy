@@ -77,6 +77,32 @@ export class JobProcessor {
     const { jobId, fileId, disciplines, targets, materialsRuleSetId, options } =
       job.data;
 
+    // Create a progress reporter that uses Bull job
+    const progressReporter = async (percent: number) => {
+      await job.progress(percent);
+      await this.jobsService.updateJobStatus(
+        job.data.jobId,
+        JobStatus.PROCESSING,
+        percent
+      );
+    };
+
+    return this.processJobData(
+      { jobId, fileId, disciplines, targets, materialsRuleSetId, options },
+      progressReporter
+    );
+  }
+
+  /**
+   * Core job processing logic that can be called with or without Bull queue
+   */
+  async processJobData(
+    data: ProcessJobData,
+    progressReporter: (percent: number) => Promise<void>
+  ) {
+    const { jobId, fileId, disciplines, targets, materialsRuleSetId, options } =
+      data;
+
     this.logger.log(`Starting job processing: ${jobId}`);
 
     try {
@@ -84,13 +110,13 @@ export class JobProcessor {
       await this.jobsService.updateJobStatus(jobId, JobStatus.PROCESSING, 0);
 
       // Step 1: Ingest and parse file (20% progress)
-      await this.reportProgress(job, 10);
+      await progressReporter(10);
       const ingestResult = await this.ingestService.ingestFile(
         fileId,
         disciplines,
         options
       );
-      await this.reportProgress(job, 20);
+      await progressReporter(20);
 
       // Stage 1: classify sheets using GPT (know which pages drive which prompts)
       try {
@@ -261,7 +287,7 @@ export class JobProcessor {
       }
 
       // Step 2: Real plan analysis with OpenAI Vision (25% -> 60% progress)
-      await this.reportProgress(job, 25);
+      await progressReporter(25);
 
       // Get the actual uploaded file
       const fileBuffer = await this.filesService.getFileBuffer(fileId);
@@ -282,14 +308,14 @@ export class JobProcessor {
         async (currentPage: number, totalPages: number, message: string) => {
           const analysisProgress = currentPage / totalPages;
           const overallProgress = 25 + analysisProgress * 35; // 25% + up to 35% = 60% max
-          await this.reportProgress(job, Math.round(overallProgress));
+          await progressReporter(Math.round(overallProgress));
           this.logger.log(
             `Progress: ${Math.round(overallProgress)}% - ${message}`
           );
         }
       );
 
-      await this.reportProgress(job, 60);
+      await progressReporter(60);
 
       // Extract features from analysis results
       const features = [];
@@ -306,7 +332,7 @@ export class JobProcessor {
         features.push(...pageFeatures);
       }
 
-      await this.reportProgress(job, 75);
+      await progressReporter(75);
 
       // Step 3: Features are already saved by extractFeatures, ensure we have features with IDs
       // If features array is empty or doesn't have IDs, fetch from database
@@ -320,7 +346,7 @@ export class JobProcessor {
       } else {
         this.logger.log(`Using ${features.length} extracted features with IDs for job ${jobId}`);
       }
-      await this.reportProgress(job, 80);
+      await progressReporter(80);
 
       // Scope diagnosis upgrade - capture CSI divisions, vertical context, fittings
       let scopeDiagnosis: any = undefined;
@@ -378,7 +404,7 @@ export class JobProcessor {
           `No materials rule set available for job ${jobId}. Materials will not be generated.`
         );
       }
-      await this.reportProgress(job, 95);
+      await progressReporter(95);
 
       // Cost intelligence & labor modeling snapshot
       try {
@@ -408,7 +434,7 @@ export class JobProcessor {
 
       // Step 5: Generate artifacts and complete (100% progress)
       await this.generateArtifacts(jobId, ingestResult, featuresToUse);
-      await this.reportProgress(job, 100);
+      await progressReporter(100);
 
       // Mark job as completed
       await this.jobsService.updateJobStatus(jobId, JobStatus.COMPLETED, 100);
@@ -488,17 +514,6 @@ export class JobProcessor {
     ];
   }
 
-  private async reportProgress(
-    job: Job<ProcessJobData>,
-    percent: number
-  ): Promise<void> {
-    await job.progress(percent);
-    await this.jobsService.updateJobStatus(
-      job.data.jobId,
-      JobStatus.PROCESSING,
-      percent
-    );
-  }
 
   private async extractWalls(
     ingestResult: any,

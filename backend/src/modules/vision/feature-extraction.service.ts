@@ -4,6 +4,8 @@ import {
   OpenAIVisionService,
   VisionAnalysisResult,
 } from "./openai-vision.service";
+import { ValidationService } from "./validation.service";
+import { ConsistencyCheckerService } from "./consistency-checker.service";
 
 @Injectable()
 export class FeatureExtractionService {
@@ -12,7 +14,9 @@ export class FeatureExtractionService {
 
   constructor(
     private prisma: PrismaService,
-    private openaiVision: OpenAIVisionService
+    private openaiVision: OpenAIVisionService,
+    private validationService: ValidationService,
+    private consistencyChecker: ConsistencyCheckerService
   ) {}
 
   async extractFeatures(
@@ -26,6 +30,14 @@ export class FeatureExtractionService {
     this.logger.log(`Extracting features for job ${jobId}, sheet ${sheetId}`);
 
     try {
+      const strictMode =
+        options?.zeroHallucinationMode === true || options?.strictMode === true;
+
+      // Update sheet with scale information if available
+      if (analysisFeatures.scale) {
+        await this.updateSheetScale(sheetId, analysisFeatures.scale);
+      }
+
       // analysisFeatures already contains the OpenAI Vision results
       // Convert OpenAI results to database features
       const features = await this.convertToFeatures(
@@ -36,11 +48,28 @@ export class FeatureExtractionService {
         options
       );
 
+      // Validate and filter features
+      const validatedFeatures = await this.validateFeatures(
+        features,
+        strictMode
+      );
+
       // Save features to database and get them back with IDs
-      const savedFeatures = await this.saveFeatures(features);
+      const savedFeatures = await this.saveFeatures(validatedFeatures);
+
+      // Check consistency with existing features
+      if (options?.checkConsistency !== false) {
+        const consistencyIssues =
+          await this.consistencyChecker.checkConsistency(jobId);
+        if (consistencyIssues.summary.errors > 0) {
+          this.logger.warn(
+            `Found ${consistencyIssues.summary.errors} consistency errors for job ${jobId}`
+          );
+        }
+      }
 
       this.logger.log(
-        `Extracted ${savedFeatures.length} features for job ${jobId}`
+        `Extracted ${savedFeatures.length} validated features for job ${jobId} (${validatedFeatures.length - savedFeatures.length} filtered)`
       );
       return savedFeatures;
     } catch (error) {
@@ -266,7 +295,86 @@ export class FeatureExtractionService {
       }
     }
 
+    // Extract materials if available - store in props for now (can be processed by materials service later)
+    // Materials are extracted but not stored as separate features - they'll be processed by materials extraction service
+
     return features;
+  }
+
+  private async updateSheetScale(
+    sheetId: string,
+    scale: VisionAnalysisResult["scale"]
+  ): Promise<void> {
+    if (!scale || !sheetId) return;
+
+    try {
+      await this.prisma.sheet.update({
+        where: { id: sheetId },
+        data: {
+          scale: scale.detected,
+          units: scale.units,
+          scaleRatio: scale.ratio,
+        } as any,
+      });
+      this.logger.log(
+        `Updated sheet ${sheetId} with scale: ${scale.detected} (ratio: ${scale.ratio})`
+      );
+    } catch (error) {
+      this.logger.warn(`Failed to update sheet scale: ${error.message}`);
+    }
+  }
+
+  private async validateFeatures(
+    features: any[],
+    strictMode: boolean
+  ): Promise<any[]> {
+    const validatedFeatures = [];
+    let filteredCount = 0;
+
+    for (const feature of features) {
+      const validation = this.validationService.validateFeature(
+        feature,
+        strictMode
+      );
+
+      // Add validation metadata to feature
+      feature.validation = {
+        isValid: validation.isValid,
+        confidence: validation.confidence,
+        issues: validation.issues,
+        warnings: validation.warnings,
+      };
+
+      // In strict mode, reject features with errors or low confidence
+      if (strictMode) {
+        if (!validation.isValid || validation.confidence < 0.7) {
+          this.logger.debug(
+            `Rejecting feature ${feature.id || "unknown"} in strict mode: ${validation.issues.map((i) => i.message).join(", ")}`
+          );
+          filteredCount++;
+          continue;
+        }
+      }
+
+      // Add provenance if not present
+      if (!feature.provenance) {
+        feature.provenance = {
+          extractionMethod: "openai_vision",
+          confidence: validation.confidence,
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      validatedFeatures.push(feature);
+    }
+
+    if (filteredCount > 0) {
+      this.logger.log(
+        `Filtered ${filteredCount} features due to validation failures`
+      );
+    }
+
+    return validatedFeatures;
   }
 
   private buildVerticalContext(
@@ -393,8 +501,10 @@ export class FeatureExtractionService {
           area: feature.area,
           length: feature.length,
           count: feature.count,
+          provenance: feature.provenance,
+          validation: feature.validation,
           // geom: feature.geom, // Would be PostGIS geometry
-        },
+        } as any,
       });
 
       // Return saved feature with ID and all original properties

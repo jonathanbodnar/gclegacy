@@ -13,6 +13,8 @@ import { FinalDataFusionService } from './final-data-fusion.service';
 import { ScaleExtractionService } from './scale-extraction.service';
 import { SpaceExtractionService } from './space-extraction.service';
 import { MaterialsExtractionService } from './materials-extraction.service';
+import { ValidationService } from './validation.service';
+import { ConsistencyCheckerService } from './consistency-checker.service';
 
 @Module({
   providers: [
@@ -30,6 +32,8 @@ import { MaterialsExtractionService } from './materials-extraction.service';
     ScaleExtractionService,
     SpaceExtractionService,
     MaterialsExtractionService,
+    ValidationService,
+    ConsistencyCheckerService,
   ],
   exports: [
     OpenAIVisionService,
@@ -46,6 +50,8 @@ import { MaterialsExtractionService } from './materials-extraction.service';
     ScaleExtractionService,
     SpaceExtractionService,
     MaterialsExtractionService,
+    ValidationService,
+    ConsistencyCheckerService,
   ],
 })
 export class VisionModule {}

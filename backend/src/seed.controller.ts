@@ -15,11 +15,11 @@ export class SeedController {
   async resetMockJob() {
     console.log('🧹 Cleaning up existing mock job data...');
     
-    await prisma.material.deleteMany({ where: { jobId: MOCK_JOB_ID } });
-    await prisma.feature.deleteMany({ where: { jobId: MOCK_JOB_ID } });
-    await prisma.sheet.deleteMany({ where: { jobId: MOCK_JOB_ID } });
-    await prisma.job.deleteMany({ where: { id: MOCK_JOB_ID } });
-    await prisma.file.deleteMany({ where: { checksum: MOCK_FILE_CHECKSUM } });
+    await this.prisma.material.deleteMany({ where: { jobId: MOCK_JOB_ID } });
+    await this.prisma.feature.deleteMany({ where: { jobId: MOCK_JOB_ID } });
+    await this.prisma.sheet.deleteMany({ where: { jobId: MOCK_JOB_ID } });
+    await this.prisma.job.deleteMany({ where: { id: MOCK_JOB_ID } });
+    await this.prisma.file.deleteMany({ where: { checksum: MOCK_FILE_CHECKSUM } });
     
     return { success: true, message: 'Mock job data cleared' };
   }
@@ -33,7 +33,7 @@ export class SeedController {
     await this.resetMockJob();
 
     // Create file
-    const file = await prisma.file.create({
+    const file = await this.prisma.file.create({
       data: {
         filename: 'Mock Commercial Building - MEP Plans.pdf',
         mime: 'application/pdf',
@@ -47,7 +47,7 @@ export class SeedController {
     });
 
     // Create job
-    const job = await prisma.job.create({
+    const job = await this.prisma.job.create({
       data: {
         id: MOCK_JOB_ID,
         fileId: file.id,
@@ -73,7 +73,7 @@ export class SeedController {
     ];
 
     for (const room of rooms) {
-      features.push(await prisma.feature.create({
+      features.push(await this.prisma.feature.create({
         data: {
           jobId: job.id,
           type: 'ROOM',
@@ -85,7 +85,7 @@ export class SeedController {
 
     // Walls
     for (let i = 0; i < 4; i++) {
-      features.push(await prisma.feature.create({
+      features.push(await this.prisma.feature.create({
         data: {
           jobId: job.id,
           type: 'WALL',
@@ -98,7 +98,7 @@ export class SeedController {
 
     // Doors & Windows as OPENING type
     for (let i = 0; i < 5; i++) {
-      features.push(await prisma.feature.create({
+      features.push(await this.prisma.feature.create({
         data: {
           jobId: job.id,
           type: 'OPENING',
@@ -110,7 +110,7 @@ export class SeedController {
     }
 
     for (let i = 0; i < 10; i++) {
-      features.push(await prisma.feature.create({
+      features.push(await this.prisma.feature.create({
         data: {
           jobId: job.id,
           type: 'OPENING',
@@ -131,7 +131,7 @@ export class SeedController {
     ];
 
     for (const pipe of pipes) {
-      features.push(await prisma.feature.create({
+      features.push(await this.prisma.feature.create({
         data: {
           jobId: job.id,
           type: 'PIPE',
@@ -147,7 +147,7 @@ export class SeedController {
 
     // Ducts
     for (let i = 0; i < 3; i++) {
-      features.push(await prisma.feature.create({
+      features.push(await this.prisma.feature.create({
         data: {
           jobId: job.id,
           type: 'DUCT',
@@ -166,7 +166,7 @@ export class SeedController {
     ];
 
     for (const fixture of fixtures) {
-      features.push(await prisma.feature.create({
+      features.push(await this.prisma.feature.create({
         data: {
           jobId: job.id,
           type: 'FIXTURE',
@@ -193,7 +193,7 @@ export class SeedController {
     ];
 
     for (const material of materials) {
-      await prisma.material.create({
+      await this.prisma.material.create({
         data: {
           jobId: job.id,
           sku: material.sku,

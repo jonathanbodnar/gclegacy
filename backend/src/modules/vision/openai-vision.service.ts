@@ -94,7 +94,18 @@ export interface VisionAnalysisResult {
     detected: string;
     units: "ft" | "m";
     ratio: number;
+    confidence?: "high" | "medium" | "low";
+    method?: "titleblock" | "dimensions" | "reference" | "assumed";
   };
+  materials?: Array<{
+    id: string;
+    type: string; // "wall", "floor", "ceiling", "pipe", "duct", "fixture"
+    specification: string; // Material spec from drawing (e.g., "PT-1", "1/2\" Type L Copper")
+    location?: string; // Room name or area where material is used
+    quantity?: number;
+    unit?: string;
+    source?: string; // Where on drawing this was found (e.g., "legend", "schedule", "callout")
+  }>;
 }
 
 @Injectable()
@@ -290,9 +301,11 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
     const jsonSections: string[] = [
       `  "sheetTitle": "exact sheet number/name from title block (e.g. A-101, S-201, I401) - read from title block, not generic names",
   "scale": {
-    "detected": "scale found in titleblock (e.g. 1/4\\"=1'-0\\")",
-    "units": "ft or m",
-    "ratio": "numeric ratio for calculations"
+    "detected": "exact scale text from titleblock (e.g. 1/4\\"=1'-0\\", 1:100, SCALE: 1/8\\"=1'-0\\") - MUST read from drawing, not guess",
+    "units": "ft or m (based on detected scale)",
+    "ratio": "numeric ratio for pixel-to-real conversion (e.g., 1/4\\"=1'-0\\" = 48, 1:100 = 100)",
+    "confidence": "high/medium/low based on clarity of scale notation",
+    "method": "titleblock/dimensions/reference/assumed"
   }`,
       `  "rooms": [
     {
@@ -339,6 +352,17 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       "id": "unique_id",
       "type": "fixture type (toilet, sink, light, etc.)",
       "count": "number of fixtures"
+    }
+  ]`,
+      `  "materials": [
+    {
+      "id": "unique_id",
+      "type": "wall/floor/ceiling/pipe/duct/fixture",
+      "specification": "exact material spec from drawing (e.g., PT-1, 1/2\\" Type L Copper, 12x10 Duct)",
+      "location": "room name or area (if specified)",
+      "quantity": "quantity if shown",
+      "unit": "unit of measure if shown",
+      "source": "where found: legend/schedule/callout/annotation"
     }
   ]`,
     ];
@@ -440,11 +464,34 @@ Please provide a detailed analysis in the following JSON format:
 ${jsonSections.join(",\n\n")}
 }
 
+SCALE EXTRACTION (CRITICAL):
+- Read scale EXACTLY as shown in title block (e.g., "1/4\\"=1'-0\\"", "SCALE: 1/8\\"=1'-0\\"", "1:100")
+- Calculate ratio accurately: 1/4"=1'-0" = 48 (1/4 inch represents 1 foot = 12 inches, so 12 / 0.25 = 48)
+- If scale is not visible, use dimension strings to calibrate (measure a known dimension like a door ~3ft)
+- If no scale found, set confidence="low" and method="assumed", but still provide best estimate
+- NEVER guess or make up scale values - if truly unknown, use ratio=1 and confidence="low"
+
+MATERIAL EXTRACTION:
+- Extract materials from: wall type legends, finish schedules, pipe/duct specifications, fixture schedules
+- Read EXACT specifications as shown (e.g., "PT-1", "1/2\\" Type L Copper", "12x10 Galvanized Duct")
+- Include source location (legend, schedule, callout, annotation) for traceability
+- Only extract materials that are EXPLICITLY shown on the drawing - do not infer or guess
+- For walls: extract partition type from legend (PT-1, EXT-1, etc.)
+- For pipes: extract material and diameter from line types or callouts
+- For ducts: extract size and material from specifications
+- For fixtures: extract material specs if shown in schedules
+
+ZERO-HALLUCINATION MODE:
+- If a value is not clearly visible, use null or omit it - DO NOT guess
+- Dimensions must be read from dimension strings or calculated from scale - never estimated
+- Material specifications must be read from legends/schedules - never inferred
+- Room programs must be explicitly labeled - never guessed from context
+
 IMPORTANT: 
-- Look for scale information in title blocks
-- Count and measure visible elements accurately
+- Look for scale information in title blocks FIRST, then dimension strings, then reference elements
+- Count and measure visible elements accurately using detected scale
 - Use standard architectural/MEP terminology
-- Provide realistic dimensions based on typical construction
+- Provide realistic dimensions based on measured values, not typical construction
 - Include only elements that are clearly visible in the drawing${verticalInstruction}${wallRules}${roomRules}
 - Return valid JSON only`;
   }
@@ -499,7 +546,8 @@ IMPORTANT:
         verticalMetadata: this.normalizeVerticalMetadata(
           parsed.verticalMetadata
         ),
-        scale: parsed.scale || { detected: "Unknown", units: "ft", ratio: 1 },
+        scale: this.normalizeScale(parsed.scale),
+        materials: this.validateArray(parsed.materials, true), // Always extract materials if available
       };
     } catch (error) {
       this.logger.warn("Failed to parse OpenAI response, using fallback data");
@@ -738,6 +786,31 @@ IMPORTANT:
     };
   }
 
+  private normalizeScale(scale: any): VisionAnalysisResult["scale"] {
+    if (!scale || typeof scale !== "object") {
+      return { detected: "Unknown", units: "ft", ratio: 1, confidence: "low", method: "assumed" };
+    }
+
+    const ratio = this.toNumber(scale.ratio) || 1;
+    const units = scale.units === "m" ? "m" : "ft";
+    const detected = typeof scale.detected === "string" ? scale.detected : "Unknown";
+    const confidence = scale.confidence || (detected === "Unknown" ? "low" : "medium");
+    const method = scale.method || (detected === "Unknown" ? "assumed" : "titleblock");
+
+    // Validate ratio is reasonable
+    if (ratio < 1 || ratio > 10000) {
+      this.logger.warn(`Unusual scale ratio detected: ${ratio}`);
+    }
+
+    return {
+      detected,
+      units,
+      ratio,
+      confidence: confidence as "high" | "medium" | "low",
+      method: method as "titleblock" | "dimensions" | "reference" | "assumed",
+    };
+  }
+
   private isRefusalResponse(text: string): boolean {
     if (!text) return false;
     const lower = text.toLowerCase();
@@ -844,7 +917,13 @@ IMPORTANT:
             referenceDatum: "Level 1 = 0'-0\"",
           }
         : undefined,
-      scale: { detected: '1/4"=1\'-0"', units: "ft", ratio: 48 },
+      scale: { detected: '1/4"=1\'-0"', units: "ft", ratio: 48, confidence: "high", method: "titleblock" },
+      materials: targets.includes("materials") || true
+        ? [
+            { id: "M1", type: "wall", specification: "PT-1", source: "legend" },
+            { id: "M2", type: "pipe", specification: "1\" PVC", source: "callout" },
+          ]
+        : [],
     };
   }
 
@@ -863,7 +942,8 @@ IMPORTANT:
       sections: includes('sections') ? [] : [],
       risers: includes('risers') ? [] : [],
       verticalMetadata: undefined,
-      scale: undefined,
+      scale: { detected: "Unknown", units: "ft", ratio: 1, confidence: "low", method: "assumed" },
+      materials: [],
     };
   }
 
@@ -907,7 +987,7 @@ Return as structured JSON.`,
 
   async detectScale(
     imageBuffer: Buffer
-  ): Promise<{ scale?: string; units?: string; ratio?: number }> {
+  ): Promise<{ detected: string; units: "ft" | "m"; ratio: number; confidence?: "high" | "medium" | "low"; method?: "titleblock" | "dimensions" | "reference" | "assumed" }> {
     try {
       const base64Image = imageBuffer.toString("base64");
       const imageUrl = `data:image/png;base64,${base64Image}`;
@@ -949,10 +1029,10 @@ Return ONLY a JSON object with:
       });
 
       const result = JSON.parse(response.choices[0]?.message?.content || "{}");
-      return result;
+      return this.normalizeScale(result);
     } catch (error) {
       this.logger.warn("OpenAI scale detection failed:", error.message);
-      return { scale: "Unknown", units: "ft", ratio: 1 };
+      return this.normalizeScale({ detected: "Unknown", units: "ft", ratio: 1, confidence: "low", method: "assumed" });
     }
   }
 

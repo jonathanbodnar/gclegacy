@@ -70,6 +70,7 @@ model Sheet {
   discipline String? // A, P, M, E
   scale      String? // "1/4\"=1'-0\""
   units      String? // "ft", "m"
+  scaleRatio Float?  // Numeric ratio for calculations
 
   // Spatial reference
   srid Int? @default(4326)
@@ -101,6 +102,12 @@ model Feature {
   area   Float?
   length Float?
   count  Int?   @default(1)
+
+  // Provenance (bounding boxes, source text, confidence)
+  provenance Json? // { boundingBox: [[x1,y1], [x2,y2]], sourceText: string, confidence: number, extractionMethod: string }
+
+  // Validation metadata
+  validation Json? // { isValid: boolean, confidence: number, issues: [] }
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module, OnModuleInit } from "@nestjs/common";
 import { BullModule } from "@nestjs/bull";
 
 import { JobsController } from "./jobs.controller";
@@ -31,4 +31,31 @@ import { CostIntelligenceModule } from "../cost-intelligence/cost-intelligence.m
   providers: [JobsService, JobProcessor],
   exports: [JobsService],
 })
-export class JobsModule {}
+export class JobsModule implements OnModuleInit {
+  constructor(
+    private jobsService: JobsService,
+    private jobProcessor: JobProcessor
+  ) {}
+
+  async onModuleInit() {
+    // Wire up the processor to the service for direct processing when queue is not available
+    this.jobsService.setJobProcessor(this.jobProcessor);
+
+    // If Redis is not available, process any existing queued jobs
+    if (
+      !process.env.REDIS_HOST &&
+      !process.env.REDISHOST &&
+      !process.env.REDIS_URL
+    ) {
+      // Wait a bit for services to initialize, then process queued jobs
+      setTimeout(async () => {
+        const count = await this.jobsService.processQueuedJobs();
+        if (count > 0) {
+          console.log(
+            `✅ Started processing ${count} queued job(s) (Redis not available)`
+          );
+        }
+      }, 2000); // Wait 2 seconds for all services to initialize
+    }
+  }
+}
