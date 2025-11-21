@@ -260,6 +260,7 @@ export class JobProcessor {
       }
 
       // Stage 4: ceiling heights from reflected ceiling plans
+      this.logger.log(`Starting ceiling height extraction for job ${jobId}`);
       let ceilingHeights: any[] = [];
       try {
         ceilingHeights =
@@ -271,6 +272,7 @@ export class JobProcessor {
         if (ceilingHeights.length) {
           await this.jobsService.mergeJobOptions(jobId, { ceilingHeights });
         }
+        this.logger.log(`Ceiling height extraction completed for job ${jobId}: ${ceilingHeights.length} heights extracted`);
       } catch (ceilingError) {
         this.logger.warn(
           `Ceiling height extraction failed for job ${jobId}: ${ceilingError.message}`
@@ -278,6 +280,7 @@ export class JobProcessor {
       }
 
       // Stage 5: extract sheet/viewport scale annotations
+      this.logger.log(`Starting scale extraction for job ${jobId}`);
       let scaleAnnotations: ScaleAnnotation[] = [];
       try {
         scaleAnnotations = await this.scaleExtractionService.extractScales(
@@ -286,6 +289,7 @@ export class JobProcessor {
         if (scaleAnnotations.length) {
           await this.jobsService.mergeJobOptions(jobId, { scaleAnnotations });
         }
+        this.logger.log(`Scale extraction completed for job ${jobId}: ${scaleAnnotations.length} scales extracted`);
       } catch (scaleError) {
         this.logger.warn(
           `Scale extraction failed for job ${jobId}: ${scaleError.message}`
@@ -293,6 +297,7 @@ export class JobProcessor {
       }
 
       // Stage 6: fuse room/wall data for final aggregation
+      this.logger.log(`Starting final data fusion for job ${jobId}`);
       let fusionData: any;
       try {
         fusionData = this.finalDataFusionService.fuse({
@@ -309,6 +314,7 @@ export class JobProcessor {
         if (fusionData) {
           await this.jobsService.mergeJobOptions(jobId, { fusionData });
         }
+        this.logger.log(`Final data fusion completed for job ${jobId}`);
       } catch (fusionError) {
         this.logger.warn(
           `Final data fusion failed for job ${jobId}: ${fusionError.message}`
