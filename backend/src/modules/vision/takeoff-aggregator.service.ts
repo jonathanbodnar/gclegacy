@@ -60,7 +60,7 @@ export class TakeoffAggregatorService {
   constructor(configService: ConfigService) {
     const apiKey = configService.get<string>('OPENAI_API_KEY');
     this.openai = new OpenAI({ apiKey });
-    this.model = configService.get<string>('OPENAI_TAKEOFF_MODEL') || 'gpt-4o-mini';
+    this.model = configService.get<string>('OPENAI_TAKEOFF_MODEL') || 'gpt-5-mini-2025-08-07';
 
     this.ajv = new Ajv({ allErrors: true, strict: false });
     addFormats(this.ajv);

@@ -77,7 +77,7 @@ export class WallRunExtractionService {
     this.model =
       this.configService.get<string>('OPENAI_WALL_MODEL') ||
       this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-4o-mini';
+      'gpt-5-mini-2025-08-07';
     this.partitionContextBudget = parseInt(
       this.configService.get<string>('WALL_PARTITION_CONTEXT_LIMIT') || '6000',
       10,

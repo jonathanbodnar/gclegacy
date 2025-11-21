@@ -49,7 +49,7 @@ export class PartitionTypeExtractionService {
     this.model =
       this.configService.get<string>('OPENAI_PARTITION_MODEL') ||
       this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-4o-mini';
+      'gpt-5-mini-2025-08-07';
     this.textBudget = parseInt(
       this.configService.get<string>('PARTITION_TEXT_LIMIT') || '6000',
       10,
