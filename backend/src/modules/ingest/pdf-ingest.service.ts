@@ -270,8 +270,8 @@ export class PdfIngestService {
             try {
               renderedImage = await this.withTimeout(
                 renderPdfPage(page, { dpi: renderDpi }),
-                120000, // 2 minute timeout per page (generous)
-                `Page render timeout after 2 min on page ${pageNumber}`
+                20000, // 20 second timeout per page
+                `Page render timeout after 20 sec on page ${pageNumber}`
               );
               imagePath = await this.saveTempImage(renderedImage.buffer);
               widthPx = renderedImage.widthPx;
