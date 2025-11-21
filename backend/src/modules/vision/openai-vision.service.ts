@@ -162,80 +162,92 @@ export class OpenAIVisionService {
       // Create comprehensive prompt based on disciplines and targets
       const prompt = this.createAnalysisPrompt(disciplines, targets);
 
-      const response = await this.openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert architectural/MEP plan analyst with full visual access to the provided drawing.
+      // Retry logic with exponential backoff for rate limiting
+      const maxRetries = parseInt(process.env.OPENAI_MAX_RETRIES || "3", 10);
+      const baseDelay = parseInt(process.env.OPENAI_RETRY_DELAY_MS || "1000", 10);
+      let lastError: any = null;
+
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const response = await this.openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+              {
+                role: "system",
+                content: `You are an expert architectural/MEP plan analyst with full visual access to the provided drawing.
 Return VALID JSON only that matches the requested schema.
 If data is missing, use nulls or empty arrays—never apologize or say you cannot analyze.
 Do not add prose, markdown, or explanations beyond the JSON object.`,
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: prompt,
               },
               {
-                type: "image_url",
-                image_url: {
-                  url: imageUrl,
-                  detail: "high",
-                },
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: prompt,
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: imageUrl,
+                      detail: "high",
+                    },
+                  },
+                ],
               },
             ],
-          },
-        ],
-        max_completion_tokens: 4000,
-      });
+            max_completion_tokens: 4000,
+          });
 
-      const analysisText = response.choices[0]?.message?.content;
-      if (!analysisText) {
-        throw new Error("No analysis response from OpenAI");
-      }
+          // Success - break out of retry loop
+          const analysisText = response.choices[0]?.message?.content;
+          if (!analysisText) {
+            throw new Error("No analysis response from OpenAI");
+          }
 
-      if (this.isRefusalResponse(analysisText)) {
-        await appendVisionLog("OpenAI vision refusal", {
-          disciplines,
-          targets,
-          message: analysisText.slice(0, 500),
-        });
+          // Process the response (moved outside retry loop)
+          return await this.processAnalysisResponse(analysisText, disciplines, targets);
+        } catch (error: any) {
+          lastError = error;
+          
+          // Check if it's a rate limit error
+          const isRateLimit = 
+            error.status === 429 || 
+            error.message?.includes('rate limit') ||
+            error.message?.includes('Rate limit') ||
+            error.code === 'rate_limit_exceeded';
+          
+          // Check if it's a retryable error
+          const isRetryable = 
+            isRateLimit ||
+            (error.status >= 500 && error.status < 600) || // Server errors
+            error.code === 'internal_error' ||
+            error.code === 'server_error';
 
-        if (this.allowMockFallback) {
-          this.logger.warn(
-            '⚠️  OpenAI vision refusal – falling back to mock data (VISION_ALLOW_MOCK=true)'
-          );
-          return this.generateMockAnalysis(disciplines, targets);
+          // If not retryable or out of retries, throw immediately
+          if (!isRetryable || attempt >= maxRetries) {
+            throw error;
+          }
+
+          // Calculate exponential backoff delay
+          const delay = baseDelay * Math.pow(2, attempt);
+          const jitter = Math.random() * 0.3 * delay; // Add up to 30% jitter
+          const totalDelay = delay + jitter;
+
+          // Only log retries in development to reduce log volume
+          if (process.env.NODE_ENV !== 'production') {
+            this.logger.warn(
+              `OpenAI API ${isRateLimit ? 'rate limit' : 'error'} (attempt ${attempt + 1}/${maxRetries + 1}): ${error.message}. Retrying in ${Math.round(totalDelay)}ms...`
+            );
+          }
+
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, totalDelay));
         }
-
-        this.logger.warn(
-          '⚠️  OpenAI vision refusal detected – returning empty analysis so pipeline can continue.'
-        );
-        return this.generateEmptyAnalysis(targets);
       }
 
-      await appendVisionLog("OpenAI vision raw response", {
-        disciplines,
-        targets,
-        length: analysisText.length,
-        preview: analysisText.slice(0, 500),
-        timestamp: new Date().toISOString(),
-      });
-
-      // Parse the structured response
-      const result = await this.parseAnalysisResponse(analysisText, targets);
-
-      // Only log in development
-      if (process.env.NODE_ENV !== 'production') {
-        this.logger.log(
-          `OpenAI analysis completed: ${result.rooms.length} rooms, ${result.walls.length} walls, ${result.fixtures.length} fixtures`
-        );
-      }
-
-      return result;
+      // Should never reach here, but just in case
+      throw lastError || new Error("Failed to analyze plan image after retries");
     } catch (error: any) {
       const errorDetails = {
         message: error.message,
@@ -267,6 +279,52 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       this.logger.warn('⚠️  Returning empty analysis due to failure.');
       return this.generateEmptyAnalysis(targets);
     }
+  }
+
+  private async processAnalysisResponse(
+    analysisText: string,
+    disciplines: string[],
+    targets: string[]
+  ): Promise<VisionAnalysisResult> {
+    if (this.isRefusalResponse(analysisText)) {
+      await appendVisionLog("OpenAI vision refusal", {
+        disciplines,
+        targets,
+        message: analysisText.slice(0, 500),
+      });
+
+      if (this.allowMockFallback) {
+        this.logger.warn(
+          '⚠️  OpenAI vision refusal – falling back to mock data (VISION_ALLOW_MOCK=true)'
+        );
+        return this.generateMockAnalysis(disciplines, targets);
+      }
+
+      this.logger.warn(
+        '⚠️  OpenAI vision refusal detected – returning empty analysis so pipeline can continue.'
+      );
+      return this.generateEmptyAnalysis(targets);
+    }
+
+    await appendVisionLog("OpenAI vision raw response", {
+      disciplines,
+      targets,
+      length: analysisText.length,
+      preview: analysisText.slice(0, 500),
+      timestamp: new Date().toISOString(),
+    });
+
+    // Parse the structured response
+    const result = await this.parseAnalysisResponse(analysisText, targets);
+
+    // Only log in development
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log(
+        `OpenAI analysis completed: ${result.rooms.length} rooms, ${result.walls.length} walls, ${result.fixtures.length} fixtures`
+      );
+    }
+
+    return result;
   }
 
   private createAnalysisPrompt(
