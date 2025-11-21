@@ -24,8 +24,8 @@ function App() {
   const [fileId, setFileId] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobConfig, setJobConfig] = useState<JobConfig>({
-    disciplines: ["A"],
-    targets: ["rooms", "walls"],
+    disciplines: ["A", "P", "M", "E"],
+    targets: ["rooms", "walls", "doors", "windows", "pipes", "ducts", "fixtures"],
     options: { bimPreferred: true, inferScale: true },
   });
   const [jobStatus, setJobStatus] = useState<any>(null);

@@ -55,7 +55,7 @@ export class SheetClassificationService {
     this.model =
       this.configService.get<string>('OPENAI_SHEET_CLASSIFIER_MODEL') ||
       this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-5-mini-2025-08-07';
+      'gpt-4o-mini';
     this.textBudget = parseInt(this.configService.get<string>('SHEET_CLASSIFIER_TEXT_LIMIT') || '4000', 10);
 
     if (apiKey) {

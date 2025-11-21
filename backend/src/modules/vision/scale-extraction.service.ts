@@ -67,7 +67,7 @@ export class ScaleExtractionService {
     this.model =
       this.configService.get<string>('OPENAI_SCALE_MODEL') ||
       this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-5-mini-2025-08-07';
+      'gpt-4o-mini';
     this.textBudget = parseInt(
       this.configService.get<string>('SCALE_EXTRACTION_TEXT_LIMIT') || '6000',
       10,

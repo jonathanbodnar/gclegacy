@@ -135,7 +135,7 @@ export class ScopeDiagnosisService {
     this.scopeModel =
       this.configService.get<string>('OPENAI_SCOPE_MODEL') ||
       this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-5-mini-2025-08-07';
+      'gpt-4o-mini';
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
