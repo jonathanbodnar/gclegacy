@@ -328,12 +328,10 @@ export class JobProcessor {
       const fileBuffer = await this.filesService.getFileBuffer(fileId);
       const file = await this.filesService.getFile(fileId);
 
-      // Only log in development - progress is reported via callback
-      if (process.env.NODE_ENV !== "production") {
-        this.logger.log(
-          `Starting real plan analysis for ${file.filename} (${file.pages || "unknown"} pages)`
-        );
-      }
+      // Force logging for debugging (temporarily enabled)
+      this.logger.log(
+        `Starting real plan analysis for ${file.filename} (${file.pages || "unknown"} pages)`
+      );
 
       // Use OpenAI Vision to analyze the actual plan with progress reporting
       const analysisResult = await this.planAnalysisService.analyzePlanFile(
@@ -347,12 +345,10 @@ export class JobProcessor {
           const analysisProgress = currentPage / totalPages;
           const overallProgress = 25 + analysisProgress * 35; // 25% + up to 35% = 60% max
           await progressReporter(Math.round(overallProgress));
-          // Only log progress in development - progress is already reported via callback
-          if (process.env.NODE_ENV !== "production") {
-            this.logger.log(
-              `Progress: ${Math.round(overallProgress)}% - ${message}`
-            );
-          }
+          // Force logging for debugging (temporarily enabled)
+          this.logger.log(
+            `Progress: ${Math.round(overallProgress)}% - ${message}`
+          );
         }
       );
 
