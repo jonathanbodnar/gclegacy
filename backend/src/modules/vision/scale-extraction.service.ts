@@ -38,6 +38,7 @@ const SCALE_EXTRACTION_SCHEMA = {
           scale_note: { type: ['string', 'null'] },
           scale_ratio: {
             type: ['object', 'null'],
+            required: ['plan_units', 'plan_value', 'real_units', 'real_value'],
             properties: {
               plan_units: { type: ['string', 'null'] },
               plan_value: { type: ['number', 'null'] },
