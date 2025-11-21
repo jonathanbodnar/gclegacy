@@ -66,6 +66,35 @@ export class JobsModule implements OnModuleInit {
         ? `REDIS_URL=${process.env.REDIS_URL.substring(0, 20)}...`
         : `REDIS_HOST=${process.env.REDIS_HOST || process.env.REDISHOST}`;
       console.log(`📡 Redis connection: ${redisInfo}`);
+      
+      // Verify processor is registered and listening
+      setTimeout(() => {
+        if (this.jobProcessor) {
+          console.log("✅ JobProcessor is registered and should be listening for 'process-job' jobs");
+          console.log("💡 If jobs remain queued, check Railway logs for processor initialization");
+        } else {
+          console.warn("⚠️  JobProcessor not found - jobs may not process");
+        }
+      }, 1000);
+
+      // Fallback: Check for stuck queued jobs and process them after a delay
+      // This handles cases where the processor might not be picking up jobs
+      setTimeout(async () => {
+        try {
+          const stuckJobs = await this.jobsService.getStuckQueuedJobs();
+          if (stuckJobs.length > 0) {
+            console.log(`⚠️  Found ${stuckJobs.length} stuck queued job(s) - processing directly as fallback`);
+            for (const job of stuckJobs) {
+              // Process directly as fallback
+              this.jobsService.processQueuedJobDirectly(job.id).catch((error) => {
+                console.error(`Failed to process stuck job ${job.id}:`, error.message);
+              });
+            }
+          }
+        } catch (error) {
+          console.error("Error checking for stuck jobs:", error.message);
+        }
+      }, 10000); // Check after 10 seconds
     }
   }
 }

@@ -70,12 +70,17 @@ export class JobProcessor {
     private materialsExtractionService: MaterialsExtractionService,
     private finalDataFusionService: FinalDataFusionService,
     private prisma: PrismaService
-  ) {}
+  ) {
+    this.logger.log("✅ JobProcessor initialized - ready to process jobs from 'job-processing' queue");
+  }
 
   @Process("process-job")
   async processJob(job: Job<ProcessJobData>) {
     const { jobId, fileId, disciplines, targets, materialsRuleSetId, options } =
       job.data;
+
+    this.logger.log(`🔄 Processing job ${jobId} from queue (Bull job ID: ${job.id})`);
+    this.logger.log(`📋 Job data: fileId=${fileId}, disciplines=${disciplines.join(",")}, targets=${targets.join(",")}`);
 
     // Create a progress reporter that uses Bull job
     const progressReporter = async (percent: number) => {
@@ -87,10 +92,17 @@ export class JobProcessor {
       );
     };
 
-    return this.processJobData(
-      { jobId, fileId, disciplines, targets, materialsRuleSetId, options },
-      progressReporter
-    );
+    try {
+      const result = await this.processJobData(
+        { jobId, fileId, disciplines, targets, materialsRuleSetId, options },
+        progressReporter
+      );
+      this.logger.log(`✅ Successfully processed job ${jobId}`);
+      return result;
+    } catch (error) {
+      this.logger.error(`❌ Failed to process job ${jobId}:`, error.message);
+      throw error;
+    }
   }
 
   /**

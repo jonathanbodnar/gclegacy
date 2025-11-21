@@ -3,11 +3,13 @@
 ## Why Redis is Needed
 
 The PlanTakeoff backend uses **Bull** (job queue library) to process takeoff jobs asynchronously. Without Redis:
+
 - Jobs are created but not processed
 - The "Start Analysis" button creates jobs in `QUEUED` status
 - Jobs sit idle with error message: "Queue not available"
 
 With Redis:
+
 - Jobs are automatically processed in the background
 - Real-time progress updates
 - Retry logic for failed jobs
@@ -26,6 +28,7 @@ With Redis:
 ### 2. Link Redis to Backend
 
 Railway automatically creates these variables when you add Redis:
+
 - `REDIS_URL` - Full connection string (e.g., `redis://default:password@redis.railway.internal:6379`)
 
 Your backend code now supports **both** connection methods:
@@ -54,6 +57,7 @@ After adding Redis and redeploying, check the logs for:
 ```
 
 Should change to:
+
 ```
 [InstanceLoader] BullModule dependencies initialized +70ms
 [JobsService] Job queue connected and ready
@@ -72,16 +76,19 @@ Should change to:
 ### Redis Connection Errors
 
 If you see:
+
 ```
 MaxRetriesPerRequestError: Reached the max retries per request limit
 ```
 
 **Check:**
+
 1. Redis service is running (green checkmark in Railway)
 2. `REDIS_URL` variable is set in backend service
 3. Backend and Redis are in the same Railway project
 
 **Fix:** Railway should automatically link services. If not:
+
 - Go to backend service → Variables
 - Add variable reference: `REDIS_URL=${{Redis.REDIS_URL}}`
 
@@ -106,6 +113,7 @@ If jobs stay in `QUEUED` status:
 ## Cost Considerations
 
 Railway Redis pricing:
+
 - **Free tier**: Development use (may have limits)
 - **Pro plan**: ~$5-10/month for small Redis instance
 
@@ -127,7 +135,6 @@ The app will still function - you just won't have background job processing.
 ✅ Code supports both `REDIS_URL` and `REDIS_HOST`
 ✅ Queue is optional - app works without Redis
 ✅ Jobs can be created without queue
-⚠️  Jobs won't be processed without Redis
+⚠️ Jobs won't be processed without Redis
 
 **Recommendation:** Add Redis to Railway for full functionality! It takes 2 minutes and makes the job processing work properly.
-

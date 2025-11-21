@@ -217,7 +217,7 @@ export class JobsService {
         this.logger.warn(
           `Job processor not available for job ${job.id} - will retry in 3 seconds`
         );
-        
+
         // Retry processing after a short delay to allow processor to initialize
         setTimeout(async () => {
           if (this.jobProcessor) {
@@ -733,6 +733,103 @@ export class JobsService {
     } catch (error) {
       this.logger.error("Error processing queued jobs:", error.message);
       return 0;
+    }
+  }
+
+  /**
+   * Get stuck queued jobs (jobs that have been queued for more than 30 seconds)
+   * This helps identify jobs that might not be getting picked up by the processor
+   */
+  async getStuckQueuedJobs(): Promise<Array<{ id: string; createdAt: Date }>> {
+    try {
+      const thirtySecondsAgo = new Date(Date.now() - 30 * 1000);
+
+      const stuckJobs = await this.prisma.job.findMany({
+        where: {
+          status: JobStatus.QUEUED,
+          createdAt: {
+            lt: thirtySecondsAgo, // Created more than 30 seconds ago
+          },
+        },
+        select: {
+          id: true,
+          createdAt: true,
+        },
+        orderBy: {
+          createdAt: "asc",
+        },
+      });
+
+      return stuckJobs;
+    } catch (error) {
+      this.logger.error("Error getting stuck queued jobs:", error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Process a single queued job directly (fallback when queue processor isn't working)
+   */
+  async processQueuedJobDirectly(jobId: string): Promise<void> {
+    if (!this.jobProcessor) {
+      throw new Error("Job processor not available");
+    }
+
+    try {
+      const job = await this.prisma.job.findUnique({
+        where: { id: jobId },
+      });
+
+      if (!job) {
+        throw new Error(`Job ${jobId} not found`);
+      }
+
+      if (job.status !== JobStatus.QUEUED) {
+        this.logger.log(
+          `Job ${jobId} is not in QUEUED status (current: ${job.status}) - skipping`
+        );
+        return;
+      }
+
+      this.logger.log(
+        `🔄 Processing stuck queued job ${jobId} directly (fallback mode)`
+      );
+
+      // Clear any error message
+      await this.prisma.job.update({
+        where: { id: jobId },
+        data: { error: null },
+      });
+
+      // Process the job
+      await this.processJobDirectly({
+        jobId: job.id,
+        fileId: job.fileId,
+        disciplines: job.disciplines as string[],
+        targets: job.targets as string[],
+        materialsRuleSetId: job.materialsRuleSetId || undefined,
+        options: (job.options as any) || {},
+      });
+
+      this.logger.log(`✅ Successfully processed stuck job ${jobId}`);
+    } catch (error) {
+      this.logger.error(`Failed to process stuck job ${jobId}:`, error.message);
+      // Update job with error
+      try {
+        await this.prisma.job.update({
+          where: { id: jobId },
+          data: {
+            status: JobStatus.FAILED,
+            error: `Fallback processing failed: ${error.message}`,
+          },
+        });
+      } catch (updateError) {
+        this.logger.error(
+          `Failed to update job ${jobId} status:`,
+          updateError.message
+        );
+      }
+      throw error;
     }
   }
 }
