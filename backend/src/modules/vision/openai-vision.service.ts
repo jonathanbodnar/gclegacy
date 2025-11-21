@@ -136,9 +136,12 @@ export class OpenAIVisionService {
     targets: string[],
     options?: any
   ): Promise<VisionAnalysisResult> {
-    this.logger.log(
-      `Analyzing plan image with OpenAI Vision (disciplines: ${disciplines.join(",")}, targets: ${targets.join(",")})`
-    );
+    // Only log in development to reduce log volume
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log(
+        `Analyzing plan image with OpenAI Vision (disciplines: ${disciplines.join(",")}, targets: ${targets.join(",")})`
+      );
+    }
 
     try {
       // Validate image buffer before processing
@@ -225,9 +228,12 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       // Parse the structured response
       const result = await this.parseAnalysisResponse(analysisText, targets);
 
-      this.logger.log(
-        `OpenAI analysis completed: ${result.rooms.length} rooms, ${result.walls.length} walls, ${result.fixtures.length} fixtures`
-      );
+      // Only log in development
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.log(
+          `OpenAI analysis completed: ${result.rooms.length} rooms, ${result.walls.length} walls, ${result.fixtures.length} fixtures`
+        );
+      }
 
       return result;
     } catch (error: any) {
@@ -639,9 +645,12 @@ IMPORTANT:
       });
     }
 
-    this.logger.log(
-      `Validated ${validRooms.length} rooms (filtered ${rooms.length - validRooms.length} invalid)`
-    );
+    // Only log in development
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log(
+        `Validated ${validRooms.length} rooms (filtered ${rooms.length - validRooms.length} invalid)`
+      );
+    }
     return validRooms;
   }
 
@@ -745,9 +754,12 @@ IMPORTANT:
       });
     }
 
-    this.logger.log(
-      `Validated ${validWalls.length} walls (filtered ${walls.length - validWalls.length} invalid/columns)`
-    );
+    // Only log in development
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log(
+        `Validated ${validWalls.length} walls (filtered ${walls.length - validWalls.length} invalid/columns)`
+      );
+    }
     return validWalls;
   }
 

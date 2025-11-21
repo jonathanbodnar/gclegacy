@@ -27,7 +27,10 @@ export class FeatureExtractionService {
     targets: string[],
     options?: any
   ): Promise<any[]> {
-    this.logger.log(`Extracting features for job ${jobId}, sheet ${sheetId}`);
+    // Only log in development to reduce log volume
+    if (process.env.NODE_ENV !== "production") {
+      this.logger.log(`Extracting features for job ${jobId}, sheet ${sheetId}`);
+    }
 
     try {
       const strictMode =
@@ -68,9 +71,12 @@ export class FeatureExtractionService {
         }
       }
 
-      this.logger.log(
-        `Extracted ${savedFeatures.length} validated features for job ${jobId} (${validatedFeatures.length - savedFeatures.length} filtered)`
-      );
+      // Only log in development
+      if (process.env.NODE_ENV !== "production") {
+        this.logger.log(
+          `Extracted ${savedFeatures.length} validated features for job ${jobId} (${validatedFeatures.length - savedFeatures.length} filtered)`
+        );
+      }
       return savedFeatures;
     } catch (error) {
       this.logger.error(
@@ -316,9 +322,12 @@ export class FeatureExtractionService {
           scaleRatio: scale.ratio,
         } as any,
       });
-      this.logger.log(
-        `Updated sheet ${sheetId} with scale: ${scale.detected} (ratio: ${scale.ratio})`
-      );
+      // Only log in development
+      if (process.env.NODE_ENV !== "production") {
+        this.logger.log(
+          `Updated sheet ${sheetId} with scale: ${scale.detected} (ratio: ${scale.ratio})`
+        );
+      }
     } catch (error) {
       this.logger.warn(`Failed to update sheet scale: ${error.message}`);
     }
@@ -369,9 +378,12 @@ export class FeatureExtractionService {
     }
 
     if (filteredCount > 0) {
-      this.logger.log(
-        `Filtered ${filteredCount} features due to validation failures`
-      );
+      // Only log in development
+      if (process.env.NODE_ENV !== "production") {
+        this.logger.log(
+          `Filtered ${filteredCount} features due to validation failures`
+        );
+      }
     }
 
     return validatedFeatures;

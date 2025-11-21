@@ -24,13 +24,19 @@ export class PlanAnalysisService {
       message: string
     ) => Promise<void>
   ): Promise<any> {
-    this.logger.log(`Starting plan analysis for ${fileName}`);
+    // Only log start in development - progress is reported via callback
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log(`Starting plan analysis for ${fileName}`);
+    }
 
     try {
       // Convert PDF pages or plan sheets to images for vision analysis
       const images = await this.convertToImages(fileBuffer, fileName);
 
-      this.logger.log(`Starting parallel analysis of ${images.length} pages`);
+      // Only log page count in development
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.log(`Starting parallel analysis of ${images.length} pages`);
+      }
 
       // Process pages in parallel batches to speed up analysis
       const batchSize = parseInt(process.env.VISION_BATCH_SIZE || "5", 10);
@@ -41,14 +47,17 @@ export class PlanAnalysisService {
         const batchNumber = Math.floor(i / batchSize) + 1;
         const totalBatches = Math.ceil(images.length / batchSize);
 
-        this.logger.log(
-          `Processing batch ${batchNumber}/${totalBatches} (pages ${i + 1}-${Math.min(i + batchSize, images.length)})`
-        );
+        // Only log batch progress in development to reduce log volume
+        if (process.env.NODE_ENV !== 'production') {
+          this.logger.log(
+            `Processing batch ${batchNumber}/${totalBatches} (pages ${i + 1}-${Math.min(i + batchSize, images.length)})`
+          );
+        }
 
         // Process this batch in parallel
         const batchPromises = batch.map(async (imageBuffer, batchIndex) => {
           const pageIndex = i + batchIndex;
-          this.logger.log(`Analyzing page ${pageIndex + 1}/${images.length}`);
+          // Remove per-page logging to reduce log volume - progress is reported via callback
 
           try {
             // Use OpenAI Vision to analyze each page
@@ -113,9 +122,12 @@ export class PlanAnalysisService {
         const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
 
-        this.logger.log(
-          `Completed batch ${batchNumber}/${totalBatches} - Total analyzed: ${results.length}/${images.length}`
-        );
+        // Only log batch completion in development
+        if (process.env.NODE_ENV !== 'production') {
+          this.logger.log(
+            `Completed batch ${batchNumber}/${totalBatches} - Total analyzed: ${results.length}/${images.length}`
+          );
+        }
 
         // Report progress via callback if provided
         if (progressCallback) {
@@ -168,9 +180,12 @@ export class PlanAnalysisService {
     let totalPages = 0;
     try {
       totalPages = await this.getPdfPageCount(pdfBuffer);
-      this.logger.log(
-        `PDF has ${totalPages} total pages - will process all pages`
-      );
+      // Only log page count in development
+      if (process.env.NODE_ENV !== 'production') {
+        this.logger.log(
+          `PDF has ${totalPages} total pages - will process all pages`
+        );
+      }
     } catch (error: any) {
       this.logger.warn(
         `Failed to get PDF page count: ${error.message}. Will attempt to process pages.`
@@ -190,9 +205,12 @@ export class PlanAnalysisService {
       });
 
       if (rendered.length > 0) {
-        this.logger.log(
-          `Successfully rendered ${rendered.length} pages from PDF via pdfjs/canvas`
-        );
+        // Only log render success in development
+        if (process.env.NODE_ENV !== 'production') {
+          this.logger.log(
+            `Successfully rendered ${rendered.length} pages from PDF via pdfjs/canvas`
+          );
+        }
         return rendered.map((page) => page.buffer);
       } else {
         this.logger.warn(

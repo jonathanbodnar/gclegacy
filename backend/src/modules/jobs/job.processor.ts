@@ -103,7 +103,10 @@ export class JobProcessor {
     const { jobId, fileId, disciplines, targets, materialsRuleSetId, options } =
       data;
 
-    this.logger.log(`Starting job processing: ${jobId}`);
+    // Only log job start in development - important events are logged as warnings/errors
+    if (process.env.NODE_ENV !== "production") {
+      this.logger.log(`Starting job processing: ${jobId}`);
+    }
 
     try {
       // Update job status to processing
@@ -293,9 +296,12 @@ export class JobProcessor {
       const fileBuffer = await this.filesService.getFileBuffer(fileId);
       const file = await this.filesService.getFile(fileId);
 
-      this.logger.log(
-        `Starting real plan analysis for ${file.filename} (${file.pages || "unknown"} pages)`
-      );
+      // Only log in development - progress is reported via callback
+      if (process.env.NODE_ENV !== "production") {
+        this.logger.log(
+          `Starting real plan analysis for ${file.filename} (${file.pages || "unknown"} pages)`
+        );
+      }
 
       // Use OpenAI Vision to analyze the actual plan with progress reporting
       const analysisResult = await this.planAnalysisService.analyzePlanFile(
@@ -309,9 +315,12 @@ export class JobProcessor {
           const analysisProgress = currentPage / totalPages;
           const overallProgress = 25 + analysisProgress * 35; // 25% + up to 35% = 60% max
           await progressReporter(Math.round(overallProgress));
-          this.logger.log(
-            `Progress: ${Math.round(overallProgress)}% - ${message}`
-          );
+          // Only log progress in development - progress is already reported via callback
+          if (process.env.NODE_ENV !== "production") {
+            this.logger.log(
+              `Progress: ${Math.round(overallProgress)}% - ${message}`
+            );
+          }
         }
       );
 
@@ -337,14 +346,24 @@ export class JobProcessor {
       // Step 3: Features are already saved by extractFeatures, ensure we have features with IDs
       // If features array is empty or doesn't have IDs, fetch from database
       let featuresToUse = features;
-      if (features.length === 0 || features.some(f => !f.id)) {
-        this.logger.log(`Fetching features from database for job ${jobId}`);
+      if (features.length === 0 || features.some((f) => !f.id)) {
+        if (process.env.NODE_ENV !== "production") {
+          this.logger.log(`Fetching features from database for job ${jobId}`);
+        }
         featuresToUse = await this.prisma.feature.findMany({
           where: { jobId },
         });
-        this.logger.log(`Found ${featuresToUse.length} features in database for job ${jobId}`);
+        if (process.env.NODE_ENV !== "production") {
+          this.logger.log(
+            `Found ${featuresToUse.length} features in database for job ${jobId}`
+          );
+        }
       } else {
-        this.logger.log(`Using ${features.length} extracted features with IDs for job ${jobId}`);
+        if (process.env.NODE_ENV !== "production") {
+          this.logger.log(
+            `Using ${features.length} extracted features with IDs for job ${jobId}`
+          );
+        }
       }
       await progressReporter(80);
 
@@ -383,17 +402,21 @@ export class JobProcessor {
         materialsRuleSetId || (await this.getDefaultRuleSetId());
       if (ruleSetIdToUse) {
         try {
-          this.logger.log(
-            `Applying rules ${ruleSetIdToUse} to ${featuresToUse.length} features for job ${jobId}`
-          );
+          if (process.env.NODE_ENV !== "production") {
+            this.logger.log(
+              `Applying rules ${ruleSetIdToUse} to ${featuresToUse.length} features for job ${jobId}`
+            );
+          }
           await this.rulesEngineService.applyRules(
             jobId,
             ruleSetIdToUse,
             featuresToUse
           );
-          this.logger.log(
-            `Applied materials rules ${ruleSetIdToUse} to job ${jobId}`
-          );
+          if (process.env.NODE_ENV !== "production") {
+            this.logger.log(
+              `Applied materials rules ${ruleSetIdToUse} to job ${jobId}`
+            );
+          }
         } catch (rulesError) {
           this.logger.warn(
             `Materials rules application failed for job ${jobId}: ${rulesError.message}`
@@ -439,7 +462,12 @@ export class JobProcessor {
       // Mark job as completed
       await this.jobsService.updateJobStatus(jobId, JobStatus.COMPLETED, 100);
 
-      this.logger.log(`Job completed successfully: ${jobId}`);
+      // Log completion as info in production (important event)
+      if (process.env.NODE_ENV === "production") {
+        this.logger.warn(`Job completed successfully: ${jobId}`); // Use warn level so it shows in production
+      } else {
+        this.logger.log(`Job completed successfully: ${jobId}`);
+      }
     } catch (error) {
       this.logger.error(`Job failed: ${jobId}`, error.stack);
       await this.jobsService.updateJobStatus(
@@ -513,7 +541,6 @@ export class JobProcessor {
       },
     ];
   }
-
 
   private async extractWalls(
     ingestResult: any,
@@ -616,7 +643,6 @@ export class JobProcessor {
     }
   }
 
-
   private async generateArtifacts(
     jobId: string,
     ingestResult: any,
@@ -624,7 +650,9 @@ export class JobProcessor {
   ): Promise<void> {
     // Generate overlay images and vector files for visual QA
     // This is a placeholder for artifact generation
-    this.logger.log(`Generating artifacts for job ${jobId}`);
+    if (process.env.NODE_ENV !== "production") {
+      this.logger.log(`Generating artifacts for job ${jobId}`);
+    }
   }
 
   /**

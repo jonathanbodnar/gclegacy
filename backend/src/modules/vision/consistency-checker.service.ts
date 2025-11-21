@@ -33,7 +33,10 @@ export class ConsistencyCheckerService {
    * Check consistency across all sheets for a job
    */
   async checkConsistency(jobId: string): Promise<ConsistencyReport> {
-    this.logger.log(`Checking consistency for job ${jobId}`);
+    // Only log in development to reduce log volume
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.log(`Checking consistency for job ${jobId}`);
+    }
 
     const issues: ConsistencyIssue[] = [];
 
