@@ -18,6 +18,11 @@ import { CostIntelligenceModule } from "../cost-intelligence/cost-intelligence.m
     ...((process.env.REDIS_HOST || process.env.REDISHOST || process.env.REDIS_URL) ? [
       BullModule.registerQueue({
         name: "job-processing",
+        defaultJobOptions: {
+          timeout: 3600000, // 60 minute timeout per job
+          removeOnComplete: false,
+          removeOnFail: false,
+        },
       })
     ] : []),
     IngestModule,
