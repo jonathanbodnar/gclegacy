@@ -18,11 +18,6 @@ PORT = "${{ PORT }}"
 # IMPORTANT: Ensure you remove any managed PostgreSQL service from Railway dashboard
 # The DATABASE_URL should point to the "postgres" container service below
 # Format: postgresql://plantakeoff:${POSTGRES_PASSWORD}@postgres:5432/plantakeoff
-# Redis connection - Railway will auto-link when Redis service is added
-# After adding Redis service in Railway dashboard, it will automatically set:
-# - REDIS_URL (preferred) or
-# - REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
-# No manual configuration needed if Redis service is linked
 
 [[services]]
 name = "plantakeoff-frontend"
