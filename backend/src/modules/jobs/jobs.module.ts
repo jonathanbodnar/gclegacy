@@ -40,6 +40,7 @@ export class JobsModule implements OnModuleInit {
   async onModuleInit() {
     // Wire up the processor to the service for direct processing when queue is not available
     this.jobsService.setJobProcessor(this.jobProcessor);
+    console.log("✅ Job processor initialized and connected to JobsService");
 
     // If Redis is not available, process any existing queued jobs
     if (
@@ -47,6 +48,7 @@ export class JobsModule implements OnModuleInit {
       !process.env.REDISHOST &&
       !process.env.REDIS_URL
     ) {
+      console.log("⚠️  Redis not detected - will process jobs synchronously");
       // Wait a bit for services to initialize, then process queued jobs
       setTimeout(async () => {
         const count = await this.jobsService.processQueuedJobs();
@@ -54,8 +56,16 @@ export class JobsModule implements OnModuleInit {
           console.log(
             `✅ Started processing ${count} queued job(s) (Redis not available)`
           );
+        } else {
+          console.log("ℹ️  No queued jobs found to process");
         }
       }, 2000); // Wait 2 seconds for all services to initialize
+    } else {
+      console.log("✅ Redis detected - jobs will be processed via queue");
+      const redisInfo = process.env.REDIS_URL 
+        ? `REDIS_URL=${process.env.REDIS_URL.substring(0, 20)}...`
+        : `REDIS_HOST=${process.env.REDIS_HOST || process.env.REDISHOST}`;
+      console.log(`📡 Redis connection: ${redisInfo}`);
     }
   }
 }

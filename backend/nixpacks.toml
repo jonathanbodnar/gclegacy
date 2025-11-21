@@ -11,7 +11,7 @@ cmds = [
 ]
 
 [start]
-cmd = "npm start"
+cmd = "npm run start:resilient"
 
 [variables]
 NODE_ENV = "production"

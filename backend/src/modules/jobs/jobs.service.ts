@@ -56,9 +56,14 @@ export class JobsService {
     private prisma: PrismaService,
     @Optional() @InjectQueue("job-processing") private jobQueue?: Queue
   ) {
-    if (!this.jobQueue) {
+    if (this.jobQueue) {
+      this.logger.log("✅ Job queue connected and ready (Redis available)");
+    } else {
       this.logger.warn(
         "⚠️  Job queue not available - jobs will be processed synchronously"
+      );
+      this.logger.warn(
+        "💡 To enable queue processing, ensure REDIS_URL, REDIS_HOST, or REDISHOST is set"
       );
     }
   }
@@ -208,24 +213,66 @@ export class JobsService {
           );
         });
       } else {
-        // Job processor not available yet - log warning
+        // Job processor not available yet - schedule retry
         this.logger.warn(
-          `Job processor not available for job ${job.id} - will process when processor is ready`
+          `Job processor not available for job ${job.id} - will retry in 3 seconds`
         );
-        try {
-          await this.prisma.job.update({
-            where: { id: job.id },
-            data: {
-              error:
-                "Queue not available - processing will start when processor is ready",
-            },
-          });
-        } catch (error) {
-          this.logger.warn(
-            `Failed to update job ${job.id} with queue error:`,
-            error.message
-          );
-        }
+        
+        // Retry processing after a short delay to allow processor to initialize
+        setTimeout(async () => {
+          if (this.jobProcessor) {
+            this.logger.log(`Retrying job ${job.id} processing...`);
+            try {
+              await this.processJobDirectly({
+                jobId: job.id,
+                fileId: createJobDto.fileId,
+                disciplines: createJobDto.disciplines,
+                targets: normalizedTargets,
+                materialsRuleSetId: createJobDto.materialsRuleSetId,
+                options: createJobDto.options,
+              });
+            } catch (error) {
+              this.logger.error(
+                `Failed to process job ${job.id} on retry:`,
+                error.message
+              );
+              // Update job with error
+              try {
+                await this.prisma.job.update({
+                  where: { id: job.id },
+                  data: {
+                    status: JobStatus.FAILED,
+                    error: `Processing failed: ${error.message}`,
+                  },
+                });
+              } catch (updateError) {
+                this.logger.error(
+                  `Failed to update job ${job.id} status:`,
+                  updateError.message
+                );
+              }
+            }
+          } else {
+            // Still not available - mark for later processing
+            this.logger.warn(
+              `Job processor still not available for job ${job.id} - will be processed on next startup`
+            );
+            try {
+              await this.prisma.job.update({
+                where: { id: job.id },
+                data: {
+                  error:
+                    "Job processor not available - will be processed when available",
+                },
+              });
+            } catch (error) {
+              this.logger.warn(
+                `Failed to update job ${job.id} with processor error:`,
+                error.message
+              );
+            }
+          }
+        }, 3000); // Retry after 3 seconds
       }
     }
 
