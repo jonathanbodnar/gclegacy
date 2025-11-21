@@ -47,19 +47,15 @@ export class PlanAnalysisService {
 
     try {
       // Convert PDF pages or plan sheets to images for vision analysis
-      // Skip visual analysis entirely - rendering doesn't work on Railway
-      // Return empty results for now - user needs to migrate to Render.com or similar
-      this.logger.warn(`⚠️  Plan analysis skipped - PDF rendering not supported on Railway`);
-      this.logger.warn(`⚠️  To enable visual analysis, migrate backend to Render.com or similar platform`);
-      
-      return {
-        pages: [],
-        summary: {
-          totalPages: 0,
-          analyzedPages: 0,
-          message: 'Visual analysis unavailable - text extraction completed during ingestion'
-        }
-      };
+      this.logger.log(`Converting PDF to images for analysis: ${fileName}`);
+      const images = await this.withTimeout(
+        this.convertToImages(fileBuffer, fileName),
+        900000, // 15 minute timeout (generous for Poppler rendering all pages)
+        `PDF to images conversion timeout after 15 minutes for ${fileName}`
+      );
+      this.logger.log(`Successfully converted ${images.length} pages to images`);
+
+      this.logger.log(`Starting parallel analysis of ${images.length} pages`);
 
       // Process pages in parallel batches with increased concurrency
       // Increased default batch size from 5 to 10 for better throughput
