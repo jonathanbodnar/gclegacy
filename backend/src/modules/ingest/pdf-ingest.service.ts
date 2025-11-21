@@ -256,22 +256,35 @@ export class PdfIngestService {
             const sheetIdGuess = this.extractSheetName(pageText);
 
             // Get page dimensions
-            const viewportPt = page.getViewport({ scale: 1 });
+            const viewport = page.getViewport({ scale: 1 });
             const pageSize = {
-              widthPt: viewportPt.width,
-              heightPt: viewportPt.height,
+              widthPt: viewport.width,
+              heightPt: viewport.height,
             };
 
-            // Skip pdfjs rendering during ingestion - it's slow and we re-render with Poppler later
-            // Just get dimensions from viewport
+            // Render page with timeout protection (slow but reliable)
+            let renderedImage;
             let imagePath = "";
-            const viewportPx = page.getViewport({ scale: renderDpi / 72 });
-            const widthPx = Math.round(viewportPx.width);
-            const heightPx = Math.round(viewportPx.height);
-            
-            this.logger.log(
-              `Page ${pageNumber}: ${Math.round(pageSize.widthPt)}x${Math.round(pageSize.heightPt)}pt, estimated ${widthPx}x${heightPx}px at ${renderDpi} DPI`
-            );
+            let widthPx = 0;
+            let heightPx = 0;
+            try {
+              renderedImage = await this.withTimeout(
+                renderPdfPage(page, { dpi: renderDpi }),
+                120000, // 2 minute timeout per page (generous)
+                `Page render timeout after 2 min on page ${pageNumber}`
+              );
+              imagePath = await this.saveTempImage(renderedImage.buffer);
+              widthPx = renderedImage.widthPx;
+              heightPx = renderedImage.heightPx;
+            } catch (renderError: any) {
+              this.logger.warn(
+                `Failed to render page ${pageNumber}: ${renderError?.message || String(renderError)}. Using estimated dimensions.`
+              );
+              // Fall back to estimated dimensions if rendering fails
+              const viewportPx = page.getViewport({ scale: renderDpi / 72 });
+              widthPx = Math.round(viewportPx.width);
+              heightPx = Math.round(viewportPx.height);
+            }
 
             // Detect discipline from page content
             const discipline = this.detectDisciplineFromText(pageText);
@@ -295,8 +308,7 @@ export class PdfIngestService {
               renderDpi,
               content: {
                 textData: pageText,
-                // rasterData will be populated during plan analysis with Poppler rendering
-                rasterData: undefined,
+                rasterData: renderedImage?.buffer,
                 metadata: {
                   widthPx,
                   heightPx,
