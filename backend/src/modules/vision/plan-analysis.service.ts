@@ -31,12 +31,11 @@ export class PlanAnalysisService {
 
     try {
       // Convert PDF pages or plan sheets to images for vision analysis
+      this.logger.log(`Converting PDF to images for analysis: ${fileName}`);
       const images = await this.convertToImages(fileBuffer, fileName);
+      this.logger.log(`Successfully converted ${images.length} pages to images`);
 
-      // Only log page count in development
-      if (process.env.NODE_ENV !== "production") {
-        this.logger.log(`Starting parallel analysis of ${images.length} pages`);
-      }
+      this.logger.log(`Starting parallel analysis of ${images.length} pages`);
 
       // Process pages in parallel batches with increased concurrency
       // Increased default batch size from 5 to 10 for better throughput
@@ -50,12 +49,10 @@ export class PlanAnalysisService {
         const batchNumber = Math.floor(i / batchSize) + 1;
         const totalBatches = Math.ceil(images.length / batchSize);
 
-        // Only log batch progress in development to reduce log volume
-        if (process.env.NODE_ENV !== "production") {
-          this.logger.log(
-            `Processing batch ${batchNumber}/${totalBatches} (pages ${i + 1}-${Math.min(i + batchSize, images.length)})`
-          );
-        }
+        // Force logging for debugging
+        this.logger.log(
+          `Processing batch ${batchNumber}/${totalBatches} (pages ${i + 1}-${Math.min(i + batchSize, images.length)})`
+        );
 
         // Process this batch in parallel
         const batchPromises = batch.map(async (imageBuffer, batchIndex) => {
