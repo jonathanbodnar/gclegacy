@@ -66,6 +66,7 @@ This guide will help you deploy the PlanTakeoff backend API to Render.
    In your web service, go to "Environment" and add:
 
    **Required:**
+
    ```bash
    NODE_ENV=production
    PORT=10000
@@ -75,6 +76,7 @@ This guide will help you deploy the PlanTakeoff backend API to Render.
    ```
 
    **Optional but Recommended:**
+
    ```bash
    REDIS_URL=<from Redis service>
    MINIMAL_START=false
@@ -87,6 +89,7 @@ This guide will help you deploy the PlanTakeoff backend API to Render.
    ```
 
    **Optional (for cloud storage):**
+
    ```bash
    WASABI_ENDPOINT=https://s3.wasabisys.com
    WASABI_REGION=us-east-1
@@ -108,38 +111,38 @@ This guide will help you deploy the PlanTakeoff backend API to Render.
 
 ### Required Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | Auto-set by Render |
-| `JWT_SECRET` | Secret key for JWT tokens | Generate a random string |
-| `OPENAI_API_KEY` | OpenAI API key for plan analysis | `sk-proj-...` |
+| Variable         | Description                      | Example                  |
+| ---------------- | -------------------------------- | ------------------------ |
+| `DATABASE_URL`   | PostgreSQL connection string     | Auto-set by Render       |
+| `JWT_SECRET`     | Secret key for JWT tokens        | Generate a random string |
+| `OPENAI_API_KEY` | OpenAI API key for plan analysis | `sk-proj-...`            |
 
 ### Optional Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `REDIS_URL` | Redis connection string | Not set (jobs process synchronously) |
-| `PORT` | Server port | `10000` (Render default) |
-| `NODE_ENV` | Environment | `production` |
-| `API_PREFIX` | API route prefix | `v1` |
-| `MINIMAL_START` | Use minimal app module | `false` |
-| `JWT_EXPIRES_IN` | JWT token expiration | `24h` |
-| `CORS_ORIGIN` | Allowed CORS origins | `*` |
-| `RATE_LIMIT_TTL` | Rate limit window (seconds) | `60` |
-| `RATE_LIMIT_MAX` | Max requests per window | `100` |
-| `LOG_LEVEL` | Logging level | `info` |
+| Variable         | Description                 | Default                              |
+| ---------------- | --------------------------- | ------------------------------------ |
+| `REDIS_URL`      | Redis connection string     | Not set (jobs process synchronously) |
+| `PORT`           | Server port                 | `10000` (Render default)             |
+| `NODE_ENV`       | Environment                 | `production`                         |
+| `API_PREFIX`     | API route prefix            | `v1`                                 |
+| `MINIMAL_START`  | Use minimal app module      | `false`                              |
+| `JWT_EXPIRES_IN` | JWT token expiration        | `24h`                                |
+| `CORS_ORIGIN`    | Allowed CORS origins        | `*`                                  |
+| `RATE_LIMIT_TTL` | Rate limit window (seconds) | `60`                                 |
+| `RATE_LIMIT_MAX` | Max requests per window     | `100`                                |
+| `LOG_LEVEL`      | Logging level               | `info`                               |
 
 ### Storage Variables (Optional)
 
 If you want persistent file storage instead of ephemeral container storage:
 
-| Variable | Description |
-|----------|-------------|
-| `WASABI_ENDPOINT` | Wasabi S3 endpoint |
-| `WASABI_REGION` | Wasabi region |
-| `WASABI_ACCESS_KEY_ID` | Wasabi access key |
-| `WASABI_SECRET_ACCESS_KEY` | Wasabi secret key |
-| `WASABI_BUCKET_NAME` | Wasabi bucket name |
+| Variable                   | Description        |
+| -------------------------- | ------------------ |
+| `WASABI_ENDPOINT`          | Wasabi S3 endpoint |
+| `WASABI_REGION`            | Wasabi region      |
+| `WASABI_ACCESS_KEY_ID`     | Wasabi access key  |
+| `WASABI_SECRET_ACCESS_KEY` | Wasabi secret key  |
+| `WASABI_BUCKET_NAME`       | Wasabi bucket name |
 
 ## Post-Deployment Steps
 
@@ -166,34 +169,79 @@ If you want persistent file storage instead of ephemeral container storage:
 
 ## Troubleshooting
 
+### JavaScript Heap Out of Memory Error
+
+**Error:** `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`
+
+**Causes:**
+
+1. Render is using `npm start` (development mode) instead of production start command
+2. Build process is running out of memory
+3. Node.js default heap size is too small
+
+**Solutions:**
+
+1. **Check Start Command:**
+   - Go to your web service → "Settings" → "Build & Deploy"
+   - **Start Command** should be: `node --max-old-space-size=512 dist/main.js`
+   - NOT: `npm start` or `nest start`
+   - If using render.yaml, it should be set automatically
+
+2. **If you set up manually (not using Blueprint):**
+   - Go to web service → "Settings"
+   - Under "Build & Deploy":
+     - **Build Command:** `npm install && npm run build && npm run db:generate`
+     - **Start Command:** `node --max-old-space-size=512 dist/main.js`
+   - Save changes and redeploy
+
+3. **Verify Build Completed:**
+   - Check build logs for: `✅ Build completed successfully`
+   - Ensure `dist/` folder exists with compiled files
+   - If build fails, fix build errors first
+
+4. **Increase Memory (if still failing):**
+   - Add environment variable: `NODE_OPTIONS=--max-old-space-size=1024`
+   - Or upgrade to a higher plan with more memory
+   - Update start command to: `node --max-old-space-size=1024 dist/main.js`
+
+5. **Check Root Directory:**
+   - If your repo has a `backend/` folder, set **Root Directory** to `backend`
+   - This ensures Render runs commands in the correct directory
+
 ### Build Fails
 
 **Error:** `Cannot find module '@nestjs/...'`
+
 - **Fix:** Ensure `package.json` has all dependencies
 - Run `npm install` locally to verify
 
 **Error:** `Prisma Client not generated`
+
 - **Fix:** Build command should include `npm run db:generate`
 - Check that `prisma/schema.prisma` exists
 
 ### Application Won't Start
 
 **Error:** `Database connection failed`
+
 - **Fix:** Verify `DATABASE_URL` is set correctly
 - Check PostgreSQL service is running
 - Ensure database is in same region as web service
 
 **Error:** `Port already in use`
+
 - **Fix:** Render sets `PORT` automatically, don't override it
 - Use `process.env.PORT` in your code (already done)
 
 **Error:** `JWT_SECRET is required`
+
 - **Fix:** Add `JWT_SECRET` environment variable
 - Generate a strong random string
 
 ### Jobs Not Processing
 
 **Symptom:** Jobs stay in `QUEUED` status
+
 - **Check:** Logs for `⚠️ Job queue not available`
 - **Fix:** Add Redis service and set `REDIS_URL`
 - Or jobs will process synchronously (slower)
@@ -201,6 +249,7 @@ If you want persistent file storage instead of ephemeral container storage:
 ### OpenAI Errors
 
 **Error:** `OpenAI API authentication failed`
+
 - **Fix:** Verify `OPENAI_API_KEY` is set correctly
 - Check API key is valid and has credits
 - Key should start with `sk-` or `sk-proj-`
@@ -232,11 +281,13 @@ If you want persistent file storage instead of ephemeral container storage:
 ## Cost Estimation
 
 **Starter Plan (Free Tier):**
+
 - Web Service: Free (with limitations)
 - PostgreSQL: Free (limited)
 - Redis: Free (limited)
 
 **Paid Plans:**
+
 - Web Service: ~$7/month (Starter)
 - PostgreSQL: ~$7/month (Starter)
 - Redis: ~$10/month (Starter)
@@ -256,4 +307,3 @@ If you want persistent file storage instead of ephemeral container storage:
 - Render Docs: https://render.com/docs
 - Render Community: https://community.render.com
 - Project Issues: Check your repository issues
-
