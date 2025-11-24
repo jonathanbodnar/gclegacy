@@ -4,8 +4,8 @@ services:
     env: node
     region: oregon
     plan: starter
-    buildCommand: npm install && npm run build && npm run db:generate
-    startCommand: node --max-old-space-size=512 dist/main.js
+    buildCommand: export NODE_OPTIONS="--max-old-space-size=2048" && npm install --include=dev && npm run build && npm run db:generate
+    startCommand: node --max-old-space-size=1024 dist/main.js
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
@@ -34,7 +34,7 @@ services:
       - key: LOG_LEVEL
         value: info
       - key: NODE_OPTIONS
-        value: "--max-old-space-size=512"
+        value: "--max-old-space-size=1024"
       # Note: Add these manually in Render dashboard after deployment:
       # - OPENAI_API_KEY (required for plan analysis)
       # - REDIS_URL (optional, from Redis service connection string)
