@@ -4,8 +4,8 @@ services:
     env: node
     region: oregon
     plan: starter
-    buildCommand: export NODE_OPTIONS="--max-old-space-size=2048" && npm install --include=dev && npm run build && npm run db:generate
-    startCommand: node --max-old-space-size=1024 dist/main.js
+    buildCommand: npm install --include=dev && npm run build:render && npm run db:generate:render
+    startCommand: node --max-old-space-size=1024 dist/main
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
