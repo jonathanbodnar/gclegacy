@@ -16,7 +16,7 @@ coverage/
 Dockerfile*
 docker-compose.yml
 railway.toml
-nixpacks.toml
+# nixpacks.toml - Keep this for Railway, but Render uses render.yaml
 RAILWAY_DEPLOYMENT.md
 REDIS_SETUP.md
 REQUIRED_ENV_VARS.md
