@@ -233,7 +233,35 @@ export class PdfIngestService {
         const sheets: SheetData[] = [];
         const rawPages: RawPage[] = [];
 
-        for (let i = 0; i < pdfDoc.numPages; i++) {
+        // Process pages in batches to manage memory better
+        const batchSize = parseInt(process.env.PDF_PAGE_BATCH_SIZE || "5", 10);
+        const totalPages = pdfDoc.numPages;
+
+        for (let batchStart = 0; batchStart < totalPages; batchStart += batchSize) {
+          const batchEnd = Math.min(batchStart + batchSize, totalPages);
+          
+          // Log batch progress
+          if (totalPages > batchSize) {
+            this.logger.log(
+              `Processing PDF pages ${batchStart + 1}-${batchEnd} of ${totalPages}`
+            );
+          }
+
+          // Check memory before processing batch
+          const memBefore = process.memoryUsage();
+          const heapUsedMB = Math.round(memBefore.heapUsed / 1024 / 1024);
+          
+          // If memory is high, force GC if available
+          if (heapUsedMB > 400 && global.gc) {
+            try {
+              global.gc();
+              this.logger.debug(`Triggered GC before batch: ${heapUsedMB}MB`);
+            } catch (e) {
+              // Ignore GC errors
+            }
+          }
+
+          for (let i = batchStart; i < batchEnd; i++) {
           const pageNumber = i + 1;
           try {
             const page = await pdfDoc.getPage(pageNumber);
@@ -334,6 +362,26 @@ export class PdfIngestService {
             );
             // Continue to next page instead of crashing
             continue;
+          }
+        }
+
+          // Cleanup after batch - force GC if memory is high
+          if (batchEnd < totalPages) {
+            const memAfter = process.memoryUsage();
+            const heapUsedAfterMB = Math.round(memAfter.heapUsed / 1024 / 1024);
+            
+            if (heapUsedAfterMB > 300 && global.gc) {
+              try {
+                global.gc();
+                const memAfterGC = process.memoryUsage();
+                const heapUsedAfterGCMB = Math.round(memAfterGC.heapUsed / 1024 / 1024);
+                this.logger.debug(
+                  `Batch cleanup: ${heapUsedAfterMB}MB -> ${heapUsedAfterGCMB}MB`
+                );
+              } catch (e) {
+                // Ignore GC errors
+              }
+            }
           }
         }
 

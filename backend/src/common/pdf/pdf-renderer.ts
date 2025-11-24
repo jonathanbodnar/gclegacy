@@ -332,9 +332,14 @@ async function renderPageWithDpi(
   const context = canvas.getContext("2d");
 
   let renderTask: any = null;
+  let buffer: Buffer;
+  
   try {
     renderTask = page.render({ canvasContext: context, viewport });
     await renderTask.promise;
+    
+    // Get the buffer immediately after rendering
+    buffer = canvas.toBuffer("image/png");
   } catch (renderError: any) {
     // If rendering fails, try to cancel the task gracefully
     if (renderTask && typeof renderTask.cancel === "function") {
@@ -351,13 +356,24 @@ async function renderPageWithDpi(
       }
     }
     throw renderError;
+  } finally {
+    // Explicitly clean up canvas resources
+    // Note: @napi-rs/canvas doesn't have explicit cleanup methods,
+    // but we can try to clear the context to free memory
+    try {
+      if (context && typeof context.clearRect === "function") {
+        context.clearRect(0, 0, width, height);
+      }
+    } catch (cleanupError) {
+      // Ignore cleanup errors - canvas will be GC'd
+    }
+    
+    // Clear references to help GC
+    // The canvas will be garbage collected after this function returns
   }
 
-  // Get the buffer before any potential cleanup issues
-  const buffer = canvas.toBuffer("image/png");
-
   return {
-    buffer: buffer,
+    buffer: buffer!,
     widthPx: width,
     heightPx: height,
   };
