@@ -1,9 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import OpenAI from "openai";
 
-import { SheetData } from '../ingest/ingest.service';
-import { RoomScheduleEntry } from './room-schedule-extraction.service';
+import { SheetData } from "../ingest/ingest.service";
+import { RoomScheduleEntry } from "./room-schedule-extraction.service";
 
 export interface RoomSpatialMapping {
   sheetIndex: number;
@@ -17,32 +17,39 @@ export interface RoomSpatialMapping {
 }
 
 const ROOM_SPATIAL_SCHEMA = {
-  type: 'object',
-  required: ['mappings'],
+  type: "object",
+  required: ["mappings"],
   additionalProperties: false,
   properties: {
     mappings: {
-      type: 'array',
+      type: "array",
       items: {
-        type: 'object',
-        required: ['room_number', 'room_name', 'label_center_px', 'bounding_box_px', 'confidence', 'notes'],
+        type: "object",
+        required: [
+          "room_number",
+          "room_name",
+          "label_center_px",
+          "bounding_box_px",
+          "confidence",
+          "notes",
+        ],
         properties: {
-          room_number: { type: 'string' },
-          room_name: { type: ['string', 'null'] },
+          room_number: { type: "string" },
+          room_name: { type: ["string", "null"] },
           label_center_px: {
-            type: ['array', 'null'],
-            items: { type: 'number' },
+            type: ["array", "null"],
+            items: { type: "number" },
             minItems: 2,
             maxItems: 2,
           },
           bounding_box_px: {
-            type: ['array', 'null'],
-            items: { type: 'number' },
+            type: ["array", "null"],
+            items: { type: "number" },
             minItems: 4,
             maxItems: 4,
           },
-          confidence: { type: ['number', 'null'] },
-          notes: { type: ['string', 'null'] },
+          confidence: { type: ["number", "null"] },
+          notes: { type: ["string", "null"] },
         },
         additionalProperties: false,
       },
@@ -58,26 +65,28 @@ export class RoomSpatialMappingService {
   private readonly scheduleContextBudget: number;
 
   constructor(private readonly configService: ConfigService) {
-    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
+    const apiKey = this.configService.get<string>("OPENAI_API_KEY");
     this.model =
-      this.configService.get<string>('OPENAI_ROOM_SPATIAL_MODEL') ||
-      this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-5-mini-2025-08-07';
+      this.configService.get<string>("OPENAI_ROOM_SPATIAL_MODEL") ||
+      this.configService.get<string>("OPENAI_TAKEOFF_MODEL") ||
+      "gpt-5.1-2025-11-13";
     this.scheduleContextBudget = parseInt(
-      this.configService.get<string>('ROOM_SPATIAL_SCHEDULE_LIMIT') || '8000',
-      10,
+      this.configService.get<string>("ROOM_SPATIAL_SCHEDULE_LIMIT") || "8000",
+      10
     );
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
     } else {
-      this.logger.warn('OPENAI_API_KEY not configured - skipping room spatial mapping');
+      this.logger.warn(
+        "OPENAI_API_KEY not configured - skipping room spatial mapping"
+      );
     }
   }
 
   async mapRooms(
     scheduleEntries: RoomScheduleEntry[],
-    sheets: SheetData[],
+    sheets: SheetData[]
   ): Promise<RoomSpatialMapping[]> {
     if (!this.openai || !scheduleEntries.length) {
       return [];
@@ -85,8 +94,7 @@ export class RoomSpatialMappingService {
 
     const floorPlanSheets = sheets.filter((sheet) => {
       const category = sheet.classification?.category;
-      const isPlanCategory =
-        category === 'floor' || category === 'demo_floor';
+      const isPlanCategory = category === "floor" || category === "demo_floor";
       const isPrimaryPlan = sheet.classification?.isPrimaryPlan;
       return (
         (isPlanCategory || isPrimaryPlan) &&
@@ -103,11 +111,11 @@ export class RoomSpatialMappingService {
       scheduleEntries.map((entry) => ({
         room_number: entry.room_number,
         room_name: entry.room_name,
-      })),
+      }))
     );
     const scheduleContext =
       scheduleJson.length > this.scheduleContextBudget
-        ? scheduleJson.slice(0, this.scheduleContextBudget) + '...'
+        ? scheduleJson.slice(0, this.scheduleContextBudget) + "..."
         : scheduleJson;
 
     const results: RoomSpatialMapping[] = [];
@@ -115,7 +123,9 @@ export class RoomSpatialMappingService {
     for (const sheet of floorPlanSheets) {
       try {
         const sheetMappings = await this.mapSheet(sheet, scheduleContext);
-        const entries = Array.isArray(sheetMappings?.mappings) ? sheetMappings.mappings : [];
+        const entries = Array.isArray(sheetMappings?.mappings)
+          ? sheetMappings.mappings
+          : [];
         for (const mapping of entries) {
           results.push({
             sheetIndex: sheet.index,
@@ -125,7 +135,7 @@ export class RoomSpatialMappingService {
         }
       } catch (error: any) {
         this.logger.warn(
-          `Room spatial mapping failed for sheet ${sheet.name || sheet.index}: ${error.message}`,
+          `Room spatial mapping failed for sheet ${sheet.name || sheet.index}: ${error.message}`
         );
       }
     }
@@ -136,10 +146,10 @@ export class RoomSpatialMappingService {
   private async mapSheet(sheet: SheetData, scheduleContext: string) {
     const rasterBuffer = sheet.content?.rasterData;
     if (!rasterBuffer || !rasterBuffer.length) {
-      throw new Error('Floor plan sheet missing raster data');
+      throw new Error("Floor plan sheet missing raster data");
     }
 
-    const base64Image = rasterBuffer.toString('base64');
+    const base64Image = rasterBuffer.toString("base64");
     const instructions =
       `You are analyzing an architectural floor plan image.\n` +
       `Use the provided rooms_from_schedule list to locate each room on the plan.\n` +
@@ -150,28 +160,28 @@ export class RoomSpatialMappingService {
     const response = await this.openai!.chat.completions.create({
       model: this.model,
       response_format: {
-        type: 'json_schema',
+        type: "json_schema",
         json_schema: {
-          name: 'RoomSpatialMapping',
+          name: "RoomSpatialMapping",
           schema: ROOM_SPATIAL_SCHEMA,
           strict: true,
         },
       },
       messages: [
         {
-          role: 'system',
+          role: "system",
           content:
-            'You map schedule-defined rooms onto floor plan images. Return JSON only.',
+            "You map schedule-defined rooms onto floor plan images. Return JSON only.",
         },
         {
-          role: 'user',
+          role: "user",
           content: [
-            { type: 'text', text: instructions },
+            { type: "text", text: instructions },
             {
-              type: 'image_url',
+              type: "image_url",
               image_url: {
                 url: `data:image/png;base64,${base64Image}`,
-                detail: 'low',
+                detail: "low",
               },
             },
           ],
@@ -181,10 +191,10 @@ export class RoomSpatialMappingService {
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
-      throw new Error('Empty response from spatial mapper');
+      throw new Error("Empty response from spatial mapper");
     }
 
     const parsed = JSON.parse(content);
-    return parsed && typeof parsed === 'object' ? parsed : { mappings: [] };
+    return parsed && typeof parsed === "object" ? parsed : { mappings: [] };
   }
 }

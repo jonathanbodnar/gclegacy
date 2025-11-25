@@ -1,10 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import OpenAI from "openai";
 
-import { SheetData } from '../ingest/ingest.service';
-import { RoomSpatialMapping } from './room-spatial-mapping.service';
-import { SpaceDefinition } from './space-extraction.service';
+import { SheetData } from "../ingest/ingest.service";
+import { RoomSpatialMapping } from "./room-spatial-mapping.service";
+import { SpaceDefinition } from "./space-extraction.service";
 
 export interface RoomCeilingHeight {
   sheetIndex: number;
@@ -19,23 +19,31 @@ export interface RoomCeilingHeight {
 }
 
 const CEILING_HEIGHT_SCHEMA = {
-  type: 'object',
-  required: ['entries'],
+  type: "object",
+  required: ["entries"],
   additionalProperties: false,
   properties: {
     entries: {
-      type: 'array',
+      type: "array",
       items: {
-        type: 'object',
-        required: ['space_id', 'room_number', 'height_ft', 'source_sheet', 'source_note', 'confidence', 'notes'],
+        type: "object",
+        required: [
+          "space_id",
+          "room_number",
+          "height_ft",
+          "source_sheet",
+          "source_note",
+          "confidence",
+          "notes",
+        ],
         properties: {
-          space_id: { type: 'string' },
-          room_number: { type: ['string', 'null'] },
-          height_ft: { type: ['number', 'null'] },
-          source_note: { type: ['string', 'null'] },
-          source_sheet: { type: ['string', 'null'] },
-          confidence: { type: ['number', 'null'] },
-          notes: { type: ['string', 'null'] },
+          space_id: { type: "string" },
+          room_number: { type: ["string", "null"] },
+          height_ft: { type: ["number", "null"] },
+          source_note: { type: ["string", "null"] },
+          source_sheet: { type: ["string", "null"] },
+          confidence: { type: ["number", "null"] },
+          notes: { type: ["string", "null"] },
         },
         additionalProperties: false,
       },
@@ -52,31 +60,33 @@ export class CeilingHeightExtractionService {
   private readonly roomContextBudget: number;
 
   constructor(private readonly configService: ConfigService) {
-    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
+    const apiKey = this.configService.get<string>("OPENAI_API_KEY");
     this.model =
-      this.configService.get<string>('OPENAI_CEILING_MODEL') ||
-      this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-5-mini-2025-08-07';
+      this.configService.get<string>("OPENAI_CEILING_MODEL") ||
+      this.configService.get<string>("OPENAI_TAKEOFF_MODEL") ||
+      "gpt-5.1-2025-11-13";
     this.textBudget = parseInt(
-      this.configService.get<string>('CEILING_TEXT_LIMIT') || '6000',
-      10,
+      this.configService.get<string>("CEILING_TEXT_LIMIT") || "6000",
+      10
     );
     this.roomContextBudget = parseInt(
-      this.configService.get<string>('CEILING_ROOM_CONTEXT_LIMIT') || '8000',
-      10,
+      this.configService.get<string>("CEILING_ROOM_CONTEXT_LIMIT") || "8000",
+      10
     );
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
     } else {
-      this.logger.warn('OPENAI_API_KEY not configured - skipping ceiling extraction');
+      this.logger.warn(
+        "OPENAI_API_KEY not configured - skipping ceiling extraction"
+      );
     }
   }
 
   async extractHeights(
     sheets: SheetData[],
     roomSpatialMappings: RoomSpatialMapping[],
-    spaces: SpaceDefinition[] = [],
+    spaces: SpaceDefinition[] = []
   ): Promise<RoomCeilingHeight[]> {
     if (!this.openai) {
       return [];
@@ -84,9 +94,9 @@ export class CeilingHeightExtractionService {
 
     const rcSheets = sheets.filter(
       (sheet) =>
-        sheet.classification?.category === 'rcp' &&
+        sheet.classification?.category === "rcp" &&
         sheet.content?.rasterData &&
-        sheet.content.rasterData.length > 0,
+        sheet.content.rasterData.length > 0
     );
 
     if (!rcSheets.length) {
@@ -97,7 +107,14 @@ export class CeilingHeightExtractionService {
       return [];
     }
 
-    const spatialBySheet = new Map<number, Array<{ space_id: string; name?: string | null; bbox_px?: [number, number, number, number] | null }>>();
+    const spatialBySheet = new Map<
+      number,
+      Array<{
+        space_id: string;
+        name?: string | null;
+        bbox_px?: [number, number, number, number] | null;
+      }>
+    >();
     for (const space of spaces) {
       if (!spatialBySheet.has(space.sheetIndex)) {
         spatialBySheet.set(space.sheetIndex, []);
@@ -109,7 +126,14 @@ export class CeilingHeightExtractionService {
       });
     }
 
-    const roomMappingBySheet = new Map<number, Array<{ space_id: string; name?: string | null; bbox_px?: [number, number, number, number] | null }>>();
+    const roomMappingBySheet = new Map<
+      number,
+      Array<{
+        space_id: string;
+        name?: string | null;
+        bbox_px?: [number, number, number, number] | null;
+      }>
+    >();
     for (const mapping of roomSpatialMappings) {
       if (!roomMappingBySheet.has(mapping.sheetIndex)) {
         roomMappingBySheet.set(mapping.sheetIndex, []);
@@ -126,14 +150,18 @@ export class CeilingHeightExtractionService {
     for (const sheet of rcSheets) {
       try {
         const contextEntries =
-          spatialBySheet.get(sheet.index) || roomMappingBySheet.get(sheet.index) || [];
+          spatialBySheet.get(sheet.index) ||
+          roomMappingBySheet.get(sheet.index) ||
+          [];
         const contextJson = JSON.stringify(contextEntries);
         const trimmedContext =
           contextJson.length > this.roomContextBudget
-            ? contextJson.slice(0, this.roomContextBudget) + '...'
+            ? contextJson.slice(0, this.roomContextBudget) + "..."
             : contextJson;
         const entries = await this.extractFromSheet(sheet, trimmedContext);
-        const heightEntries = Array.isArray(entries?.entries) ? entries.entries : [];
+        const heightEntries = Array.isArray(entries?.entries)
+          ? entries.entries
+          : [];
         for (const entry of heightEntries) {
           results.push({
             sheetIndex: sheet.index,
@@ -142,14 +170,15 @@ export class CeilingHeightExtractionService {
             space_id: entry.space_id,
             height_ft: entry.height_ft,
             source_note: entry.source_note,
-            source_sheet: entry.source_sheet ?? sheet.classification?.category ?? null,
+            source_sheet:
+              entry.source_sheet ?? sheet.classification?.category ?? null,
             confidence: entry.confidence,
             notes: entry.notes,
           });
         }
       } catch (error: any) {
         this.logger.warn(
-          `Ceiling height extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`,
+          `Ceiling height extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
         );
       }
     }
@@ -158,15 +187,17 @@ export class CeilingHeightExtractionService {
   }
 
   private async extractFromSheet(sheet: SheetData, roomContext: string) {
-    const text = sheet.content?.textData || sheet.text || '';
+    const text = sheet.content?.textData || sheet.text || "";
     const snippet =
-      text.length > this.textBudget ? `${text.slice(0, this.textBudget)}...` : text;
+      text.length > this.textBudget
+        ? `${text.slice(0, this.textBudget)}...`
+        : text;
     const buffer = sheet.content?.rasterData;
     if (!buffer || !buffer.length) {
-      throw new Error('Missing raster data for ceiling plan');
+      throw new Error("Missing raster data for ceiling plan");
     }
 
-    const base64Image = buffer.toString('base64');
+    const base64Image = buffer.toString("base64");
     const instructions =
       `You are extracting ceiling heights by space from a reflected ceiling plan or elevation.\n` +
       `Text snippet:\n${snippet}\n` +
@@ -177,28 +208,28 @@ export class CeilingHeightExtractionService {
     const response = await this.openai!.chat.completions.create({
       model: this.model,
       response_format: {
-        type: 'json_schema',
+        type: "json_schema",
         json_schema: {
-          name: 'RoomCeilingHeights',
+          name: "RoomCeilingHeights",
           schema: CEILING_HEIGHT_SCHEMA,
           strict: true,
         },
       },
       messages: [
         {
-          role: 'system',
+          role: "system",
           content:
-            'You map ceiling height notes from reflected ceiling plans to room numbers. Use image + text context to decide.',
+            "You map ceiling height notes from reflected ceiling plans to room numbers. Use image + text context to decide.",
         },
         {
-          role: 'user',
+          role: "user",
           content: [
-            { type: 'text', text: instructions },
+            { type: "text", text: instructions },
             {
-              type: 'image_url',
+              type: "image_url",
               image_url: {
                 url: `data:image/png;base64,${base64Image}`,
-                detail: 'high',
+                detail: "high",
               },
             },
           ],
@@ -208,10 +239,10 @@ export class CeilingHeightExtractionService {
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
-      throw new Error('Empty ceiling extraction response');
+      throw new Error("Empty ceiling extraction response");
     }
 
     const parsed = JSON.parse(content);
-    return parsed && typeof parsed === 'object' ? parsed : { entries: [] };
+    return parsed && typeof parsed === "object" ? parsed : { entries: [] };
   }
 }

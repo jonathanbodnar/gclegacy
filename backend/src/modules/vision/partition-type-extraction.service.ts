@@ -1,8 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import OpenAI from "openai";
 
-import { SheetData } from '../ingest/ingest.service';
+import { SheetData } from "../ingest/ingest.service";
 
 export interface PartitionTypeDefinition {
   sheetIndex: number;
@@ -17,21 +17,21 @@ export interface PartitionTypeDefinition {
 }
 
 const PARTITION_TYPE_SCHEMA = {
-  type: 'array',
+  type: "array",
   items: {
-    type: 'object',
-    required: ['partition_type_id'],
+    type: "object",
+    required: ["partition_type_id"],
     properties: {
-      partition_type_id: { type: 'string' },
-      fire_rating: { type: ['string', 'null'] },
+      partition_type_id: { type: "string" },
+      fire_rating: { type: ["string", "null"] },
       layer_description: {
-        type: 'array',
-        items: { type: 'string' },
+        type: "array",
+        items: { type: "string" },
       },
-      stud_size: { type: ['string', 'null'] },
-      stud_gauge: { type: ['string', 'null'] },
-      has_acoustical_insulation: { type: ['boolean', 'null'] },
-      notes: { type: ['string', 'null'] },
+      stud_size: { type: ["string", "null"] },
+      stud_gauge: { type: ["string", "null"] },
+      has_acoustical_insulation: { type: ["boolean", "null"] },
+      notes: { type: ["string", "null"] },
     },
     additionalProperties: false,
   },
@@ -45,33 +45,34 @@ export class PartitionTypeExtractionService {
   private readonly textBudget: number;
 
   constructor(private readonly configService: ConfigService) {
-    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
+    const apiKey = this.configService.get<string>("OPENAI_API_KEY");
     this.model =
-      this.configService.get<string>('OPENAI_PARTITION_MODEL') ||
-      this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-5-mini-2025-08-07';
+      this.configService.get<string>("OPENAI_PARTITION_MODEL") ||
+      this.configService.get<string>("OPENAI_TAKEOFF_MODEL") ||
+      "gpt-5.1-2025-11-13";
     this.textBudget = parseInt(
-      this.configService.get<string>('PARTITION_TEXT_LIMIT') || '6000',
-      10,
+      this.configService.get<string>("PARTITION_TEXT_LIMIT") || "6000",
+      10
     );
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
     } else {
-      this.logger.warn('OPENAI_API_KEY not configured - skipping partition extraction');
+      this.logger.warn(
+        "OPENAI_API_KEY not configured - skipping partition extraction"
+      );
     }
   }
 
-  async extractPartitionTypes(sheets: SheetData[]): Promise<PartitionTypeDefinition[]> {
+  async extractPartitionTypes(
+    sheets: SheetData[]
+  ): Promise<PartitionTypeDefinition[]> {
     if (!this.openai) return [];
 
     const definitions: PartitionTypeDefinition[] = [];
     const candidateSheets = sheets.filter((sheet) => {
-      const text = (sheet.content?.textData || sheet.text || '').toUpperCase();
-      return (
-        text.includes('PARTITION') &&
-        text.includes('TYPE')
-      );
+      const text = (sheet.content?.textData || sheet.text || "").toUpperCase();
+      return text.includes("PARTITION") && text.includes("TYPE");
     });
 
     for (const sheet of candidateSheets) {
@@ -86,7 +87,7 @@ export class PartitionTypeExtractionService {
         }
       } catch (error: any) {
         this.logger.warn(
-          `Partition type extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`,
+          `Partition type extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
         );
       }
     }
@@ -95,13 +96,15 @@ export class PartitionTypeExtractionService {
   }
 
   private async extractFromSheet(sheet: SheetData) {
-    const text = sheet.content?.textData || sheet.text || '';
+    const text = sheet.content?.textData || sheet.text || "";
     if (!text.trim()) {
       return [];
     }
 
     const snippet =
-      text.length > this.textBudget ? `${text.slice(0, this.textBudget)}...` : text;
+      text.length > this.textBudget
+        ? `${text.slice(0, this.textBudget)}...`
+        : text;
 
     const instructions =
       `You are extracting partition type definitions from architectural notes.\n` +
@@ -111,26 +114,26 @@ export class PartitionTypeExtractionService {
     const response = await this.openai!.chat.completions.create({
       model: this.model,
       response_format: {
-        type: 'json_schema',
+        type: "json_schema",
         json_schema: {
-          name: 'PartitionTypes',
+          name: "PartitionTypes",
           schema: PARTITION_TYPE_SCHEMA,
           strict: true,
         },
       },
       messages: [
         {
-          role: 'system',
+          role: "system",
           content:
-            'You convert architectural partition schedules into structured JSON. Return only JSON arrays.',
+            "You convert architectural partition schedules into structured JSON. Return only JSON arrays.",
         },
-        { role: 'user', content: instructions },
+        { role: "user", content: instructions },
       ],
     });
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
-      throw new Error('Empty partition extraction response');
+      throw new Error("Empty partition extraction response");
     }
 
     const parsed = JSON.parse(content);

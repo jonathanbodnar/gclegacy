@@ -38,7 +38,7 @@ export class FeatureExtractionService {
 
       // Update sheet with scale information if available
       if (analysisFeatures.scale) {
-        await this.updateSheetScale(sheetId, analysisFeatures.scale);
+        await this.updateSheetScale(sheetId, analysisFeatures.scale, jobId);
       }
 
       // analysisFeatures already contains the OpenAI Vision results
@@ -309,13 +309,58 @@ export class FeatureExtractionService {
 
   private async updateSheetScale(
     sheetId: string,
-    scale: VisionAnalysisResult["scale"]
+    scale: VisionAnalysisResult["scale"],
+    jobId?: string
   ): Promise<void> {
     if (!scale || !sheetId) return;
 
     try {
+      // Resolve sheetId if it's a page index (string number) rather than a database ID
+      let resolvedSheetId = sheetId;
+      if (jobId) {
+        const resolved = await this.resolveSheetId(jobId, sheetId);
+        if (resolved) {
+          resolvedSheetId = resolved;
+        } else {
+          // If we can't resolve it, try to find by index
+          const sheetIndex = Number(sheetId);
+          if (!Number.isNaN(sheetIndex) && jobId) {
+            const sheet = await this.prisma.sheet.findFirst({
+              where: { jobId, index: sheetIndex },
+              select: { id: true },
+            });
+            if (sheet) {
+              resolvedSheetId = sheet.id;
+            } else {
+              this.logger.warn(
+                `Cannot resolve sheet ID for sheetId: ${sheetId}, jobId: ${jobId}`
+              );
+              return;
+            }
+          } else {
+            this.logger.warn(
+              `Cannot resolve sheet ID for sheetId: ${sheetId}, jobId: ${jobId}`
+            );
+            return;
+          }
+        }
+      }
+
+      // Check if sheet exists before updating
+      const existingSheet = await this.prisma.sheet.findUnique({
+        where: { id: resolvedSheetId },
+        select: { id: true },
+      });
+
+      if (!existingSheet) {
+        this.logger.warn(
+          `Sheet not found for ID: ${resolvedSheetId} (original: ${sheetId})`
+        );
+        return;
+      }
+
       await this.prisma.sheet.update({
-        where: { id: sheetId },
+        where: { id: resolvedSheetId },
         data: {
           scale: scale.detected,
           units: scale.units,
@@ -325,7 +370,7 @@ export class FeatureExtractionService {
       // Only log in development
       if (process.env.NODE_ENV !== "production") {
         this.logger.log(
-          `Updated sheet ${sheetId} with scale: ${scale.detected} (ratio: ${scale.ratio})`
+          `Updated sheet ${resolvedSheetId} with scale: ${scale.detected} (ratio: ${scale.ratio})`
         );
       }
     } catch (error) {

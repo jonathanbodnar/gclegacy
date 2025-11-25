@@ -216,33 +216,65 @@ export class RulesEngineService {
     // Simple expression evaluator
     // In production, you'd want a more robust and secure expression parser
     
-    // Replace variables
-    let expr = expression;
+    // Build a map of all available values (vars first, then feature properties)
+    const valueMap = new Map<string, number>();
     
-    // Replace feature properties
-    expr = expr.replace(/(\w+)/g, (match) => {
-      if (vars.hasOwnProperty(match)) {
-        return vars[match].toString();
+    // Add variables from vars
+    for (const [key, value] of Object.entries(vars)) {
+      const numValue = typeof value === 'number' ? value : Number(value);
+      if (!Number.isNaN(numValue)) {
+        valueMap.set(key, numValue);
       }
-      
-      const featureValue = this.getFeatureValue(feature, match);
-      if (featureValue !== undefined) {
-        return featureValue.toString();
+    }
+    
+    // Add feature properties (check both top-level and props)
+    const featureProps = ['length', 'area', 'count'];
+    for (const prop of featureProps) {
+      if (feature[prop] !== undefined && feature[prop] !== null) {
+        const numValue = typeof feature[prop] === 'number' ? feature[prop] : Number(feature[prop]);
+        if (!Number.isNaN(numValue)) {
+          valueMap.set(prop, numValue);
+        }
       }
-      
-      return match;
-    });
+    }
+    
+    // Also check props object for additional properties
+    if (feature.props && typeof feature.props === 'object') {
+      for (const [key, value] of Object.entries(feature.props)) {
+        if (typeof value === 'number' || (typeof value === 'string' && !Number.isNaN(Number(value)))) {
+          const numValue = typeof value === 'number' ? value : Number(value);
+          if (!Number.isNaN(numValue)) {
+            valueMap.set(key, numValue);
+          }
+        }
+      }
+    }
+    
+    // Replace variables in expression, being careful to match whole words only
+    let expr = expression;
+    const sortedKeys = Array.from(valueMap.keys()).sort((a, b) => b.length - a.length); // Sort by length descending to match longer names first
+    
+    for (const key of sortedKeys) {
+      // Match whole word boundaries to avoid partial replacements
+      const regex = new RegExp(`\\b${key}\\b`, 'g');
+      expr = expr.replace(regex, valueMap.get(key)!.toString());
+    }
 
     // Basic math operations (be very careful with eval in production!)
     try {
       // Only allow basic math operations for security
       if (!/^[0-9+\-*/.() ]+$/.test(expr)) {
-        throw new Error('Invalid expression');
+        throw new Error('Invalid expression - contains non-numeric or non-operator characters');
       }
       
-      return eval(expr);
+      const result = eval(expr);
+      if (typeof result !== 'number' || Number.isNaN(result)) {
+        throw new Error('Expression did not evaluate to a valid number');
+      }
+      
+      return result;
     } catch (error) {
-      throw new Error(`Cannot evaluate expression: ${expression}`);
+      throw new Error(`Cannot evaluate expression: ${expression} - ${error.message}`);
     }
   }
 

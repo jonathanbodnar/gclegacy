@@ -173,11 +173,20 @@ export class PdfIngestService {
       process.on("unhandledRejection", unhandledRejectionHandler);
 
       try {
-        // Parse PDF for quick metadata
-        const pdfData = await pdfParse(fileBuffer);
-
-        // Load pdfjs for per-page text and dimensions
+        // Load pdfjs for per-page text and dimensions (we can get page count from pdfDoc)
         const pdfjsLib = await this.loadPdfJs();
+        
+        // Parse PDF for quick metadata only if needed (can be skipped if we get page count from pdfDoc)
+        let pdfData: any = null;
+        try {
+          pdfData = await this.withTimeout(
+            pdfParse(fileBuffer),
+            10000, // 10 second timeout for initial parse
+            "PDF metadata parsing timeout"
+          );
+        } catch (parseError: any) {
+          this.logger.warn(`Failed to parse PDF metadata: ${parseError?.message}. Will get page count from pdfDoc.`);
+        }
 
         let pdfDoc;
         try {
@@ -229,90 +238,85 @@ export class PdfIngestService {
           }
         }
 
-        const renderDpi = parseInt(process.env.PDF_RENDER_DPI || "220", 10);
+        const renderDpi = parseInt(process.env.PDF_RENDER_DPI || "150", 10); // Reduced default from 220 to 150 for faster processing
         const sheets: SheetData[] = [];
         const rawPages: RawPage[] = [];
 
         // Process pages in batches to manage memory better
-        const batchSize = parseInt(process.env.PDF_PAGE_BATCH_SIZE || "5", 10);
+        const batchSize = parseInt(process.env.PDF_PAGE_BATCH_SIZE || "10", 10); // Increased default batch size
+        const maxConcurrentPages = parseInt(process.env.PDF_MAX_CONCURRENT_PAGES || "3", 10); // Parallel processing within batch
+        const skipRendering = options?.skipRendering === true; // Option to skip image rendering for faster processing
         const totalPages = pdfDoc.numPages;
 
-        for (let batchStart = 0; batchStart < totalPages; batchStart += batchSize) {
-          const batchEnd = Math.min(batchStart + batchSize, totalPages);
-          
-          // Log batch progress
-          if (totalPages > batchSize) {
-            this.logger.log(
-              `Processing PDF pages ${batchStart + 1}-${batchEnd} of ${totalPages}`
-            );
-          }
-
-          // Check memory before processing batch
-          const memBefore = process.memoryUsage();
-          const heapUsedMB = Math.round(memBefore.heapUsed / 1024 / 1024);
-          
-          // If memory is high, force GC if available
-          if (heapUsedMB > 400 && global.gc) {
-            try {
-              global.gc();
-              this.logger.debug(`Triggered GC before batch: ${heapUsedMB}MB`);
-            } catch (e) {
-              // Ignore GC errors
-            }
-          }
-
-          for (let i = batchStart; i < batchEnd; i++) {
+        // Helper function to process a single page
+        const processPage = async (i: number): Promise<{ sheet: SheetData | null; rawPage: RawPage | null }> => {
           const pageNumber = i + 1;
           try {
             const page = await pdfDoc.getPage(pageNumber);
 
-            // Extract text content for this page with timeout
-            let pageText = "";
-            try {
-              pageText = await this.withTimeout(
-                this.extractPageTextContent(page),
-                30000,
-                `Text extraction timeout after 30s on page ${pageNumber}`
-              );
-            } catch (textError: any) {
+            // Extract text content for this page with timeout (parallel with rendering if not skipping)
+            const textPromise = this.withTimeout(
+              this.extractPageTextContent(page),
+              15000, // Reduced timeout from 30s to 15s
+              `Text extraction timeout after 15s on page ${pageNumber}`
+            ).catch((textError: any) => {
               this.logger.warn(
                 `Failed to extract text from page ${pageNumber}: ${textError?.message || String(textError)}. Continuing with empty text.`
               );
-              pageText = "";
-            }
+              return "";
+            });
 
-            const sheetIdGuess = this.extractSheetName(pageText);
-
-            // Get page dimensions
+            // Get page dimensions (fast operation)
             const viewport = page.getViewport({ scale: 1 });
             const pageSize = {
               widthPt: viewport.width,
               heightPt: viewport.height,
             };
 
-            // Render page with timeout protection (slow but reliable)
+            // Render page in parallel with text extraction (unless skipping)
             let renderedImage;
             let imagePath = "";
             let widthPx = 0;
             let heightPx = 0;
-            try {
-              renderedImage = await this.withTimeout(
-                renderPdfPage(page, { dpi: renderDpi }),
-                20000, // 20 second timeout per page
-                `Page render timeout after 20 sec on page ${pageNumber}`
-              );
-              imagePath = await this.saveTempImage(renderedImage.buffer);
-              widthPx = renderedImage.widthPx;
-              heightPx = renderedImage.heightPx;
-            } catch (renderError: any) {
-              this.logger.warn(
-                `Failed to render page ${pageNumber}: ${renderError?.message || String(renderError)}. Using estimated dimensions.`
-              );
-              // Fall back to estimated dimensions if rendering fails
+            
+            const renderPromise = skipRendering 
+              ? Promise.resolve(null)
+              : this.withTimeout(
+                  renderPdfPage(page, { dpi: renderDpi }),
+                  15000, // Reduced timeout from 20s to 15s
+                  `Page render timeout after 15 sec on page ${pageNumber}`
+                ).then(async (rendered) => {
+                  if (rendered) {
+                    imagePath = await this.saveTempImage(rendered.buffer);
+                    widthPx = rendered.widthPx;
+                    heightPx = rendered.heightPx;
+                    return rendered;
+                  }
+                  return null;
+                }).catch((renderError: any) => {
+                  this.logger.warn(
+                    `Failed to render page ${pageNumber}: ${renderError?.message || String(renderError)}. Using estimated dimensions.`
+                  );
+                  // Fall back to estimated dimensions if rendering fails
+                  const viewportPx = page.getViewport({ scale: renderDpi / 72 });
+                  widthPx = Math.round(viewportPx.width);
+                  heightPx = Math.round(viewportPx.height);
+                  return null;
+                });
+
+            // Wait for both text and rendering to complete
+            const [pageText, rendered] = await Promise.all([textPromise, renderPromise]);
+            
+            if (rendered) {
+              renderedImage = rendered;
+            } else if (!skipRendering && widthPx === 0) {
+              // Fallback dimensions if rendering was skipped
               const viewportPx = page.getViewport({ scale: renderDpi / 72 });
               widthPx = Math.round(viewportPx.width);
               heightPx = Math.round(viewportPx.height);
             }
+
+            const sheetIdGuess = this.extractSheetName(pageText);
 
             // Detect discipline from page content
             const discipline = this.detectDisciplineFromText(pageText);
@@ -347,23 +351,70 @@ export class PdfIngestService {
               },
             };
 
-            sheets.push(sheet);
-            rawPages.push({
+            const rawPage: RawPage = {
               index: i,
               text: pageText,
               imagePath,
               widthPx,
               heightPx,
-            });
+            };
+
+            return { sheet, rawPage };
           } catch (pageError: any) {
             // Log the error but continue processing other pages
             this.logger.warn(
               `Failed to process page ${pageNumber}/${pdfDoc.numPages}: ${pageError?.message || String(pageError)}. Skipping this page and continuing.`
             );
-            // Continue to next page instead of crashing
-            continue;
+            return { sheet: null, rawPage: null };
           }
-        }
+        };
+
+        // Process pages in batches with parallelization
+        for (let batchStart = 0; batchStart < totalPages; batchStart += batchSize) {
+          const batchEnd = Math.min(batchStart + batchSize, totalPages);
+          
+          // Log batch progress
+          if (totalPages > batchSize) {
+            this.logger.log(
+              `Processing PDF pages ${batchStart + 1}-${batchEnd} of ${totalPages} (parallel: ${maxConcurrentPages})`
+            );
+          }
+
+          // Check memory before processing batch
+          const memBefore = process.memoryUsage();
+          const heapUsedMB = Math.round(memBefore.heapUsed / 1024 / 1024);
+          
+          // If memory is high, force GC if available
+          if (heapUsedMB > 400 && global.gc) {
+            try {
+              global.gc();
+              this.logger.debug(`Triggered GC before batch: ${heapUsedMB}MB`);
+            } catch (e) {
+              // Ignore GC errors
+            }
+          }
+
+          // Process pages in parallel within the batch (with concurrency limit)
+          const pageIndices = Array.from({ length: batchEnd - batchStart }, (_, idx) => batchStart + idx);
+          const pageResults: Array<{ sheet: SheetData | null; rawPage: RawPage | null }> = [];
+          
+          // Process pages with concurrency control
+          for (let i = 0; i < pageIndices.length; i += maxConcurrentPages) {
+            const concurrentBatch = pageIndices.slice(i, i + maxConcurrentPages);
+            const batchPromises = concurrentBatch.map(index => processPage(index));
+            const batchResults = await Promise.all(batchPromises);
+            pageResults.push(...batchResults);
+          }
+
+          // Add successful results to arrays
+          for (const result of pageResults) {
+            if (result.sheet) {
+              sheets.push(result.sheet);
+            }
+            if (result.rawPage) {
+              rawPages.push(result.rawPage);
+            }
+          }
 
           // Cleanup after batch - force GC if memory is high
           if (batchEnd < totalPages) {
@@ -394,7 +445,7 @@ export class PdfIngestService {
           sheets,
           rawPages,
           metadata: {
-            totalPages: pdfData.numpages,
+            totalPages: pdfDoc.numPages || pdfData?.numpages || sheets.length,
             detectedDisciplines,
             fileType: "PDF",
           },

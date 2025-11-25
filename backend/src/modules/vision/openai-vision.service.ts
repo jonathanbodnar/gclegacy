@@ -137,7 +137,7 @@ export class OpenAIVisionService {
     options?: any
   ): Promise<VisionAnalysisResult> {
     // Only log in development to reduce log volume
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== "production") {
       this.logger.log(
         `Analyzing plan image with OpenAI Vision (disciplines: ${disciplines.join(",")}, targets: ${targets.join(",")})`
       );
@@ -164,13 +164,16 @@ export class OpenAIVisionService {
 
       // Retry logic with exponential backoff for rate limiting
       const maxRetries = parseInt(process.env.OPENAI_MAX_RETRIES || "3", 10);
-      const baseDelay = parseInt(process.env.OPENAI_RETRY_DELAY_MS || "1000", 10);
+      const baseDelay = parseInt(
+        process.env.OPENAI_RETRY_DELAY_MS || "1000",
+        10
+      );
       let lastError: any = null;
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           const response = await this.openai.chat.completions.create({
-            model: "gpt-4o",
+            model: "gpt-5.1-2025-11-13",
             messages: [
               {
                 role: "system",
@@ -206,23 +209,27 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
           }
 
           // Process the response (moved outside retry loop)
-          return await this.processAnalysisResponse(analysisText, disciplines, targets);
+          return await this.processAnalysisResponse(
+            analysisText,
+            disciplines,
+            targets
+          );
         } catch (error: any) {
           lastError = error;
-          
+
           // Check if it's a rate limit error
-          const isRateLimit = 
-            error.status === 429 || 
-            error.message?.includes('rate limit') ||
-            error.message?.includes('Rate limit') ||
-            error.code === 'rate_limit_exceeded';
-          
+          const isRateLimit =
+            error.status === 429 ||
+            error.message?.includes("rate limit") ||
+            error.message?.includes("Rate limit") ||
+            error.code === "rate_limit_exceeded";
+
           // Check if it's a retryable error
-          const isRetryable = 
+          const isRetryable =
             isRateLimit ||
             (error.status >= 500 && error.status < 600) || // Server errors
-            error.code === 'internal_error' ||
-            error.code === 'server_error';
+            error.code === "internal_error" ||
+            error.code === "server_error";
 
           // If not retryable or out of retries, throw immediately
           if (!isRetryable || attempt >= maxRetries) {
@@ -235,19 +242,21 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
           const totalDelay = delay + jitter;
 
           // Only log retries in development to reduce log volume
-          if (process.env.NODE_ENV !== 'production') {
+          if (process.env.NODE_ENV !== "production") {
             this.logger.warn(
-              `OpenAI API ${isRateLimit ? 'rate limit' : 'error'} (attempt ${attempt + 1}/${maxRetries + 1}): ${error.message}. Retrying in ${Math.round(totalDelay)}ms...`
+              `OpenAI API ${isRateLimit ? "rate limit" : "error"} (attempt ${attempt + 1}/${maxRetries + 1}): ${error.message}. Retrying in ${Math.round(totalDelay)}ms...`
             );
           }
 
           // Wait before retrying
-          await new Promise(resolve => setTimeout(resolve, totalDelay));
+          await new Promise((resolve) => setTimeout(resolve, totalDelay));
         }
       }
 
       // Should never reach here, but just in case
-      throw lastError || new Error("Failed to analyze plan image after retries");
+      throw (
+        lastError || new Error("Failed to analyze plan image after retries")
+      );
     } catch (error: any) {
       const errorDetails = {
         message: error.message,
@@ -255,15 +264,23 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
         code: error.code,
         type: error.type,
       };
-      
+
       this.logger.error("OpenAI vision analysis failed:", errorDetails);
-      
+
       // Check for authentication errors
-      if (error.status === 401 || error.message?.includes('Incorrect API key') || error.message?.includes('authentication')) {
-        this.logger.error('❌ OpenAI API Key is invalid or missing! Set OPENAI_API_KEY in Railway environment variables.');
-        throw new Error('OpenAI API authentication failed. Please configure a valid OPENAI_API_KEY.');
+      if (
+        error.status === 401 ||
+        error.message?.includes("Incorrect API key") ||
+        error.message?.includes("authentication")
+      ) {
+        this.logger.error(
+          "❌ OpenAI API Key is invalid or missing! Set OPENAI_API_KEY in Railway environment variables."
+        );
+        throw new Error(
+          "OpenAI API authentication failed. Please configure a valid OPENAI_API_KEY."
+        );
       }
-      
+
       await appendVisionLog("OpenAI vision analysis failed", {
         disciplines,
         targets,
@@ -273,10 +290,12 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
 
       // Fallback to mock data for testing
       if (this.allowMockFallback) {
-        this.logger.warn('⚠️  Falling back to mock data (VISION_ALLOW_MOCK=true)');
+        this.logger.warn(
+          "⚠️  Falling back to mock data (VISION_ALLOW_MOCK=true)"
+        );
         return this.generateMockAnalysis(disciplines, targets);
       }
-      this.logger.warn('⚠️  Returning empty analysis due to failure.');
+      this.logger.warn("⚠️  Returning empty analysis due to failure.");
       return this.generateEmptyAnalysis(targets);
     }
   }
@@ -295,13 +314,13 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
 
       if (this.allowMockFallback) {
         this.logger.warn(
-          '⚠️  OpenAI vision refusal – falling back to mock data (VISION_ALLOW_MOCK=true)'
+          "⚠️  OpenAI vision refusal – falling back to mock data (VISION_ALLOW_MOCK=true)"
         );
         return this.generateMockAnalysis(disciplines, targets);
       }
 
       this.logger.warn(
-        '⚠️  OpenAI vision refusal detected – returning empty analysis so pipeline can continue.'
+        "⚠️  OpenAI vision refusal detected – returning empty analysis so pipeline can continue."
       );
       return this.generateEmptyAnalysis(targets);
     }
@@ -318,7 +337,7 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
     const result = await this.parseAnalysisResponse(analysisText, targets);
 
     // Only log in development
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== "production") {
       this.logger.log(
         `OpenAI analysis completed: ${result.rooms.length} rooms, ${result.walls.length} walls, ${result.fixtures.length} fixtures`
       );
@@ -704,7 +723,7 @@ IMPORTANT:
     }
 
     // Only log in development
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== "production") {
       this.logger.log(
         `Validated ${validRooms.length} rooms (filtered ${rooms.length - validRooms.length} invalid)`
       );
@@ -813,7 +832,7 @@ IMPORTANT:
     }
 
     // Only log in development
-    if (process.env.NODE_ENV !== 'production') {
+    if (process.env.NODE_ENV !== "production") {
       this.logger.log(
         `Validated ${validWalls.length} walls (filtered ${walls.length - validWalls.length} invalid/columns)`
       );
@@ -858,14 +877,23 @@ IMPORTANT:
 
   private normalizeScale(scale: any): VisionAnalysisResult["scale"] {
     if (!scale || typeof scale !== "object") {
-      return { detected: "Unknown", units: "ft", ratio: 1, confidence: "low", method: "assumed" };
+      return {
+        detected: "Unknown",
+        units: "ft",
+        ratio: 1,
+        confidence: "low",
+        method: "assumed",
+      };
     }
 
     const ratio = this.toNumber(scale.ratio) || 1;
     const units = scale.units === "m" ? "m" : "ft";
-    const detected = typeof scale.detected === "string" ? scale.detected : "Unknown";
-    const confidence = scale.confidence || (detected === "Unknown" ? "low" : "medium");
-    const method = scale.method || (detected === "Unknown" ? "assumed" : "titleblock");
+    const detected =
+      typeof scale.detected === "string" ? scale.detected : "Unknown";
+    const confidence =
+      scale.confidence || (detected === "Unknown" ? "low" : "medium");
+    const method =
+      scale.method || (detected === "Unknown" ? "assumed" : "titleblock");
 
     // Validate ratio is reasonable
     if (ratio < 1 || ratio > 10000) {
@@ -987,13 +1015,30 @@ IMPORTANT:
             referenceDatum: "Level 1 = 0'-0\"",
           }
         : undefined,
-      scale: { detected: '1/4"=1\'-0"', units: "ft", ratio: 48, confidence: "high", method: "titleblock" },
-      materials: targets.includes("materials") || true
-        ? [
-            { id: "M1", type: "wall", specification: "PT-1", source: "legend" },
-            { id: "M2", type: "pipe", specification: "1\" PVC", source: "callout" },
-          ]
-        : [],
+      scale: {
+        detected: '1/4"=1\'-0"',
+        units: "ft",
+        ratio: 48,
+        confidence: "high",
+        method: "titleblock",
+      },
+      materials:
+        targets.includes("materials") || true
+          ? [
+              {
+                id: "M1",
+                type: "wall",
+                specification: "PT-1",
+                source: "legend",
+              },
+              {
+                id: "M2",
+                type: "pipe",
+                specification: '1" PVC',
+                source: "callout",
+              },
+            ]
+          : [],
     };
   }
 
@@ -1001,18 +1046,24 @@ IMPORTANT:
     const includes = (key: string) => targets.includes(key);
     return {
       sheetTitle: undefined,
-      rooms: includes('rooms') ? [] : [],
-      walls: includes('walls') ? [] : [],
-      openings: includes('doors') || includes('windows') ? [] : [],
-      pipes: includes('pipes') ? [] : [],
-      ducts: includes('ducts') ? [] : [],
-      fixtures: includes('fixtures') ? [] : [],
-      levels: includes('levels') ? [] : [],
-      elevations: includes('elevations') ? [] : [],
-      sections: includes('sections') ? [] : [],
-      risers: includes('risers') ? [] : [],
+      rooms: includes("rooms") ? [] : [],
+      walls: includes("walls") ? [] : [],
+      openings: includes("doors") || includes("windows") ? [] : [],
+      pipes: includes("pipes") ? [] : [],
+      ducts: includes("ducts") ? [] : [],
+      fixtures: includes("fixtures") ? [] : [],
+      levels: includes("levels") ? [] : [],
+      elevations: includes("elevations") ? [] : [],
+      sections: includes("sections") ? [] : [],
+      risers: includes("risers") ? [] : [],
       verticalMetadata: undefined,
-      scale: { detected: "Unknown", units: "ft", ratio: 1, confidence: "low", method: "assumed" },
+      scale: {
+        detected: "Unknown",
+        units: "ft",
+        ratio: 1,
+        confidence: "low",
+        method: "assumed",
+      },
       materials: [],
     };
   }
@@ -1020,7 +1071,7 @@ IMPORTANT:
   async analyzeText(text: string, context: string): Promise<any> {
     try {
       const response = await this.openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-5.1-2025-11-13",
         messages: [
           {
             role: "system",
@@ -1057,13 +1108,19 @@ Return as structured JSON.`,
 
   async detectScale(
     imageBuffer: Buffer
-  ): Promise<{ detected: string; units: "ft" | "m"; ratio: number; confidence?: "high" | "medium" | "low"; method?: "titleblock" | "dimensions" | "reference" | "assumed" }> {
+  ): Promise<{
+    detected: string;
+    units: "ft" | "m";
+    ratio: number;
+    confidence?: "high" | "medium" | "low";
+    method?: "titleblock" | "dimensions" | "reference" | "assumed";
+  }> {
     try {
       const base64Image = imageBuffer.toString("base64");
       const imageUrl = `data:image/png;base64,${base64Image}`;
 
       const response = await this.openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-5.1-2025-11-13",
         messages: [
           {
             role: "user",
@@ -1102,7 +1159,13 @@ Return ONLY a JSON object with:
       return this.normalizeScale(result);
     } catch (error) {
       this.logger.warn("OpenAI scale detection failed:", error.message);
-      return this.normalizeScale({ detected: "Unknown", units: "ft", ratio: 1, confidence: "low", method: "assumed" });
+      return this.normalizeScale({
+        detected: "Unknown",
+        units: "ft",
+        ratio: 1,
+        confidence: "low",
+        method: "assumed",
+      });
     }
   }
 

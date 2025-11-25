@@ -1,10 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
-import Ajv, { ValidateFunction } from 'ajv';
-import addFormats from 'ajv-formats';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import OpenAI from "openai";
+import Ajv, { ValidateFunction } from "ajv";
+import addFormats from "ajv-formats";
 
-import { TAKEOFF_JSON_SCHEMA } from './takeoff.schema';
+import { TAKEOFF_JSON_SCHEMA } from "./takeoff.schema";
 
 const SYSTEM_PROMPT = `You are an expert construction takeoff analyst. Use ONLY the artifacts provided (text extracted from PDFs and low-res page images). Your response MUST populate every section of the schema (project, sheets, levels, rooms, walls, electrical, meta) using observed data; when something is missing, return nulls and add notes/confidence rather than inventing data.
 
@@ -58,9 +58,10 @@ export class TakeoffAggregatorService {
   private readonly model: string;
 
   constructor(configService: ConfigService) {
-    const apiKey = configService.get<string>('OPENAI_API_KEY');
+    const apiKey = configService.get<string>("OPENAI_API_KEY");
     this.openai = new OpenAI({ apiKey });
-    this.model = configService.get<string>('OPENAI_TAKEOFF_MODEL') || 'gpt-5-mini-2025-08-07';
+    this.model =
+      configService.get<string>("OPENAI_TAKEOFF_MODEL") || "gpt-5.1-2025-11-13";
 
     this.ajv = new Ajv({ allErrors: true, strict: false });
     addFormats(this.ajv);
@@ -73,13 +74,17 @@ export class TakeoffAggregatorService {
       const result = await this.invokeModel(messages);
       return result;
     } catch (initialError) {
-      this.logger.warn(`Initial takeoff aggregation failed: ${initialError.message}`);
+      this.logger.warn(
+        `Initial takeoff aggregation failed: ${initialError.message}`
+      );
       try {
         const retryMessages = this.buildMessages(input, true);
         const retryResult = await this.invokeModel(retryMessages);
         return retryResult;
       } catch (retryError) {
-        this.logger.error(`Retry takeoff aggregation failed: ${retryError.message}`);
+        this.logger.error(
+          `Retry takeoff aggregation failed: ${retryError.message}`
+        );
         return null;
       }
     }
@@ -88,10 +93,12 @@ export class TakeoffAggregatorService {
   private buildMessages(input: AggregatorInput, validationRetry: boolean) {
     const sheetBlocks = (input.pages || [])
       .map((page, idx) => this.describeSheet(page, idx))
-      .join('\n\n');
+      .join("\n\n");
 
     const featureSummary = this.describeFeatureTotals(input.features);
-    const summaryBlock = input.summary ? `\nSUMMARY_OVERVIEW:\n${JSON.stringify(input.summary)}` : '';
+    const summaryBlock = input.summary
+      ? `\nSUMMARY_OVERVIEW:\n${JSON.stringify(input.summary)}`
+      : "";
     const fusionBlock = this.describeFusionData(input.fusion);
 
     let userContent = `AGGREGATED_SHEET_ARTIFACTS:
@@ -109,18 +116,15 @@ OUTPUT: Return ONLY the final project JSON. No explanations. No markdown. No key
     }
 
     return [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userContent },
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userContent },
     ] as OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   }
 
   private describeSheet(page: any, index: number): string {
-    const header = `SHEET ${index + 1}: ${page.fileName || page.name || 'Unnamed'}`;
+    const header = `SHEET ${index + 1}: ${page.fileName || page.name || "Unnamed"}`;
     const scale =
-      page.scale?.detected ||
-      page.scale?.value ||
-      page.scale ||
-      'Unknown';
+      page.scale?.detected || page.scale?.value || page.scale || "Unknown";
     const sheetInfo = {
       index: page.pageIndex ?? index,
       scale,
@@ -128,13 +132,16 @@ OUTPUT: Return ONLY the final project JSON. No explanations. No markdown. No key
       discipline: page.discipline || null,
       metadata: page.metadata || {},
     };
-    const featureCounts = Object.keys(page.features || {}).reduce((acc, key) => {
-      const items = page.features[key];
-      if (Array.isArray(items) && items.length > 0) {
-        acc[key] = items.length;
-      }
-      return acc;
-    }, {} as Record<string, number>);
+    const featureCounts = Object.keys(page.features || {}).reduce(
+      (acc, key) => {
+        const items = page.features[key];
+        if (Array.isArray(items) && items.length > 0) {
+          acc[key] = items.length;
+        }
+        return acc;
+      },
+      {} as Record<string, number>
+    );
 
     return `${header}
 INFO: ${JSON.stringify(sheetInfo)}
@@ -142,18 +149,21 @@ FEATURE_COUNTS: ${JSON.stringify(featureCounts)}`;
   }
 
   private describeFeatureTotals(features: any[]): string {
-    const counts = features.reduce((acc, feature) => {
-      const type = feature.type || 'UNKNOWN';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+    const counts = features.reduce(
+      (acc, feature) => {
+        const type = feature.type || "UNKNOWN";
+        acc[type] = (acc[type] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
 
     return JSON.stringify(counts);
   }
 
   private describeFusionData(fusion: any): string {
     if (!fusion) {
-      return '';
+      return "";
     }
     const summaryPayload = {
       rooms: Array.isArray(fusion.rooms) ? fusion.rooms : [],
@@ -162,18 +172,22 @@ FEATURE_COUNTS: ${JSON.stringify(featureCounts)}`;
     };
     const json = JSON.stringify(summaryPayload);
     const maxLen = 8000;
-    const truncated = json.length > maxLen ? `${json.slice(0, maxLen)}...` : json;
-    const label = json.length > maxLen ? 'FUSION_DATA (truncated)' : 'FUSION_DATA';
+    const truncated =
+      json.length > maxLen ? `${json.slice(0, maxLen)}...` : json;
+    const label =
+      json.length > maxLen ? "FUSION_DATA (truncated)" : "FUSION_DATA";
     return `\n${label}:\n${truncated}`;
   }
 
-  private async invokeModel(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]) {
+  private async invokeModel(
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]
+  ) {
     const response = await this.openai.chat.completions.create({
       model: this.model,
       response_format: {
-        type: 'json_schema',
+        type: "json_schema",
         json_schema: {
-          name: 'ProjectTakeoff',
+          name: "ProjectTakeoff",
           schema: TAKEOFF_JSON_SCHEMA,
           strict: true,
         },
@@ -183,7 +197,7 @@ FEATURE_COUNTS: ${JSON.stringify(featureCounts)}`;
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
-      throw new Error('Empty response from OpenAI');
+      throw new Error("Empty response from OpenAI");
     }
 
     let parsed: any;
@@ -194,7 +208,9 @@ FEATURE_COUNTS: ${JSON.stringify(featureCounts)}`;
     }
 
     if (!this.validator(parsed)) {
-      const detail = this.validator.errors?.map(err => `${err.instancePath} ${err.message}`).join('; ');
+      const detail = this.validator.errors
+        ?.map((err) => `${err.instancePath} ${err.message}`)
+        .join("; ");
       throw new Error(`Schema validation failed: ${detail}`);
     }
 

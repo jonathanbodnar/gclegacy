@@ -1,10 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import OpenAI from "openai";
 
-import { SheetData } from '../ingest/ingest.service';
+import { SheetData } from "../ingest/ingest.service";
 
-export type SpaceFinishCategory = 'cafe' | 'boh' | 'restroom' | 'patio' | 'other';
+export type SpaceFinishCategory =
+  | "cafe"
+  | "boh"
+  | "restroom"
+  | "patio"
+  | "other";
 
 export interface SpaceFinishDefinition {
   sheetIndex: number;
@@ -18,28 +23,28 @@ export interface SpaceFinishDefinition {
 }
 
 const FINISH_SCHEMA = {
-  type: 'object',
-  required: ['entries'],
+  type: "object",
+  required: ["entries"],
   additionalProperties: false,
   properties: {
     entries: {
-      type: 'array',
+      type: "array",
       items: {
-        type: 'object',
-        required: ['category', 'floor', 'walls', 'ceiling', 'base', 'notes'],
+        type: "object",
+        required: ["category", "floor", "walls", "ceiling", "base", "notes"],
         properties: {
           category: {
-            type: 'string',
-            enum: ['cafe', 'boh', 'restroom', 'patio', 'other'],
+            type: "string",
+            enum: ["cafe", "boh", "restroom", "patio", "other"],
           },
-          floor: { type: ['string', 'null'] },
+          floor: { type: ["string", "null"] },
           walls: {
-            type: 'array',
-            items: { type: ['string', 'null'] },
+            type: "array",
+            items: { type: ["string", "null"] },
           },
-          ceiling: { type: ['string', 'null'] },
-          base: { type: ['string', 'null'] },
-          notes: { type: ['string', 'null'] },
+          ceiling: { type: ["string", "null"] },
+          base: { type: ["string", "null"] },
+          notes: { type: ["string", "null"] },
         },
         additionalProperties: false,
       },
@@ -55,20 +60,22 @@ export class MaterialsExtractionService {
   private readonly textBudget: number;
 
   constructor(private readonly configService: ConfigService) {
-    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
+    const apiKey = this.configService.get<string>("OPENAI_API_KEY");
     this.model =
-      this.configService.get<string>('OPENAI_MATERIALS_MODEL') ||
-      this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-5-mini-2025-08-07';
+      this.configService.get<string>("OPENAI_MATERIALS_MODEL") ||
+      this.configService.get<string>("OPENAI_TAKEOFF_MODEL") ||
+      "gpt-5.1-2025-11-13";
     this.textBudget = parseInt(
-      this.configService.get<string>('MATERIALS_TEXT_LIMIT') || '7000',
-      10,
+      this.configService.get<string>("MATERIALS_TEXT_LIMIT") || "7000",
+      10
     );
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
     } else {
-      this.logger.warn('OPENAI_API_KEY not configured - skipping materials extraction');
+      this.logger.warn(
+        "OPENAI_API_KEY not configured - skipping materials extraction"
+      );
     }
   }
 
@@ -79,9 +86,7 @@ export class MaterialsExtractionService {
 
     const finishSheets = sheets.filter((sheet) => {
       const category = sheet.classification?.category;
-      return (
-        category === 'materials' || category === 'rr_details'
-      );
+      return category === "materials" || category === "rr_details";
     });
 
     const results: SpaceFinishDefinition[] = [];
@@ -106,43 +111,45 @@ export class MaterialsExtractionService {
   }
 
   private async extractFromSheet(sheet: SheetData) {
-    const rawText = sheet.content?.textData || sheet.text || '';
+    const rawText = sheet.content?.textData || sheet.text || "";
     const textSnippet =
-      rawText.length > this.textBudget ? `${rawText.slice(0, this.textBudget)}...` : rawText;
+      rawText.length > this.textBudget
+        ? `${rawText.slice(0, this.textBudget)}...`
+        : rawText;
 
     const instructions =
       `You are extracting finishes/materials keyed by space type from a materials/finishes sheet.\n` +
       `Space types: "cafe","boh","restroom","patio","other".\n` +
       `For each type, return floor, wall (array), ceiling, base, and optional notes if the sheet specifies them.\n` +
       `Return a top-level object {"entries": [...]} where each entry has category plus those fields (use null if unknown).\n` +
-      `TEXT_SNIPPET:\n${textSnippet || '(no text extracted)'}`;
+      `TEXT_SNIPPET:\n${textSnippet || "(no text extracted)"}`;
 
     const response = await this.openai!.chat.completions.create({
       model: this.model,
       response_format: {
-        type: 'json_schema',
+        type: "json_schema",
         json_schema: {
-          name: 'FinishAssignments',
+          name: "FinishAssignments",
           schema: FINISH_SCHEMA,
           strict: true,
         },
       },
       messages: [
         {
-          role: 'system',
+          role: "system",
           content:
-            'You convert materials/finish specifications into structured JSON keyed by space type. Return JSON only.',
+            "You convert materials/finish specifications into structured JSON keyed by space type. Return JSON only.",
         },
-        { role: 'user', content: instructions },
+        { role: "user", content: instructions },
       ],
     });
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
-      throw new Error('Empty materials extraction response');
+      throw new Error("Empty materials extraction response");
     }
 
     const parsed = JSON.parse(content);
-    return parsed && typeof parsed === 'object' ? parsed : { entries: [] };
+    return parsed && typeof parsed === "object" ? parsed : { entries: [] };
   }
 }

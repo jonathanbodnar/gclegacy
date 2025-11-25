@@ -1,8 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import OpenAI from "openai";
 
-import { SheetData } from '../ingest/ingest.service';
+import { SheetData } from "../ingest/ingest.service";
 
 export interface ScaleRatio {
   plan_units?: string | null;
@@ -23,32 +23,39 @@ export interface ScaleAnnotation {
 }
 
 const SCALE_EXTRACTION_SCHEMA = {
-  type: 'object',
-  required: ['annotations'],
+  type: "object",
+  required: ["annotations"],
   additionalProperties: false,
   properties: {
     annotations: {
-      type: 'array',
+      type: "array",
       items: {
-        type: 'object',
-        required: ['sheet_id', 'viewport_label', 'scale_note', 'scale_ratio', 'confidence', 'notes'],
+        type: "object",
+        required: [
+          "sheet_id",
+          "viewport_label",
+          "scale_note",
+          "scale_ratio",
+          "confidence",
+          "notes",
+        ],
         properties: {
-          sheet_id: { type: ['string', 'null'] },
-          viewport_label: { type: ['string', 'null'] },
-          scale_note: { type: ['string', 'null'] },
+          sheet_id: { type: ["string", "null"] },
+          viewport_label: { type: ["string", "null"] },
+          scale_note: { type: ["string", "null"] },
           scale_ratio: {
-            type: ['object', 'null'],
-            required: ['plan_units', 'plan_value', 'real_units', 'real_value'],
+            type: ["object", "null"],
+            required: ["plan_units", "plan_value", "real_units", "real_value"],
             properties: {
-              plan_units: { type: ['string', 'null'] },
-              plan_value: { type: ['number', 'null'] },
-              real_units: { type: ['string', 'null'] },
-              real_value: { type: ['number', 'null'] },
+              plan_units: { type: ["string", "null"] },
+              plan_value: { type: ["number", "null"] },
+              real_units: { type: ["string", "null"] },
+              real_value: { type: ["number", "null"] },
             },
             additionalProperties: false,
           },
-          confidence: { type: ['number', 'null'] },
-          notes: { type: ['string', 'null'] },
+          confidence: { type: ["number", "null"] },
+          notes: { type: ["string", "null"] },
         },
         additionalProperties: false,
       },
@@ -64,20 +71,22 @@ export class ScaleExtractionService {
   private readonly textBudget: number;
 
   constructor(private readonly configService: ConfigService) {
-    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
+    const apiKey = this.configService.get<string>("OPENAI_API_KEY");
     this.model =
-      this.configService.get<string>('OPENAI_SCALE_MODEL') ||
-      this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-5-mini-2025-08-07';
+      this.configService.get<string>("OPENAI_SCALE_MODEL") ||
+      this.configService.get<string>("OPENAI_TAKEOFF_MODEL") ||
+      "gpt-5.1-2025-11-13";
     this.textBudget = parseInt(
-      this.configService.get<string>('SCALE_EXTRACTION_TEXT_LIMIT') || '6000',
-      10,
+      this.configService.get<string>("SCALE_EXTRACTION_TEXT_LIMIT") || "6000",
+      10
     );
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
     } else {
-      this.logger.warn('OPENAI_API_KEY not configured - skipping scale extraction');
+      this.logger.warn(
+        "OPENAI_API_KEY not configured - skipping scale extraction"
+      );
     }
   }
 
@@ -88,7 +97,7 @@ export class ScaleExtractionService {
 
     const annotations: ScaleAnnotation[] = [];
     for (const sheet of sheets) {
-      const text = sheet.content?.textData || sheet.text || '';
+      const text = sheet.content?.textData || sheet.text || "";
       if (!text.trim()) {
         continue;
       }
@@ -104,7 +113,7 @@ export class ScaleExtractionService {
         }
       } catch (error: any) {
         this.logger.warn(
-          `Scale extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`,
+          `Scale extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
         );
       }
     }
@@ -112,14 +121,19 @@ export class ScaleExtractionService {
     return annotations;
   }
 
-  private async extractFromSheet(sheet: SheetData, text: string): Promise<ScaleAnnotation[]> {
+  private async extractFromSheet(
+    sheet: SheetData,
+    text: string
+  ): Promise<ScaleAnnotation[]> {
     const snippet =
-      text.length > this.textBudget ? `${text.slice(0, this.textBudget)}...` : text;
+      text.length > this.textBudget
+        ? `${text.slice(0, this.textBudget)}...`
+        : text;
 
     const instructions =
       `You extract drawing scales from architectural sheet text. ` +
       `Return JSON with a top-level object {"annotations": [...]} where each entry contains: ` +
-      `sheet_id (e.g., ${sheet.sheetIdGuess || 'A-1.1'}), viewport_label/title, scale_note (verbatim text like "1/4\" = 1'-0""), ` +
+      `sheet_id (e.g., ${sheet.sheetIdGuess || "A-1.1"}), viewport_label/title, scale_note (verbatim text like "1/4\" = 1'-0""), ` +
       `scale_ratio { plan_units (inch/mm/etc), plan_value (numeric), real_units (foot/meter/etc), real_value }, confidence, and notes. ` +
       `Omit entries where the scale cannot be parsed. If multiple scales exist, include each separately. ` +
       `TEXT_SNIPPET:\n${snippet}`;
@@ -127,30 +141,32 @@ export class ScaleExtractionService {
     const response = await this.openai!.chat.completions.create({
       model: this.model,
       response_format: {
-        type: 'json_schema',
+        type: "json_schema",
         json_schema: {
-          name: 'ScaleAnnotations',
+          name: "ScaleAnnotations",
           schema: SCALE_EXTRACTION_SCHEMA,
           strict: true,
         },
       },
       messages: [
         {
-          role: 'system',
+          role: "system",
           content:
-            'You convert architectural sheet text into structured scale annotations. Return JSON arrays only.',
+            "You convert architectural sheet text into structured scale annotations. Return JSON arrays only.",
         },
-        { role: 'user', content: instructions },
+        { role: "user", content: instructions },
       ],
     });
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
-      throw new Error('Empty scale extraction response');
+      throw new Error("Empty scale extraction response");
     }
 
     const parsed = JSON.parse(content);
-    const annotations = Array.isArray(parsed?.annotations) ? parsed.annotations : [];
+    const annotations = Array.isArray(parsed?.annotations)
+      ? parsed.annotations
+      : [];
     return annotations;
   }
 }
