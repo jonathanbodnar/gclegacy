@@ -356,6 +356,18 @@ export class JobsService {
         error instanceof PrismaClientKnownRequestError ||
         error instanceof Error
       ) {
+        // Handle case where job doesn't exist (might have been deleted)
+        if (
+          error instanceof PrismaClientKnownRequestError &&
+          error.code === "P2025"
+        ) {
+          this.logger.warn(
+            `Job ${jobId} not found while updating status - job may have been deleted. Skipping update.`
+          );
+          // Don't throw - job was likely deleted intentionally (e.g., via clearAllJobs)
+          return;
+        }
+
         if (
           error.message?.includes("Can't reach database server") ||
           error.message?.includes("database server")
@@ -483,6 +495,14 @@ export class JobsService {
         select: { options: true },
       });
 
+      // If job doesn't exist, log and return (job may have been deleted)
+      if (!job) {
+        this.logger.warn(
+          `Job ${jobId} not found while merging options - job may have been deleted. Skipping merge.`
+        );
+        return;
+      }
+
       const baseOptions =
         job?.options &&
         typeof job.options === "object" &&
@@ -504,6 +524,18 @@ export class JobsService {
         error instanceof PrismaClientKnownRequestError ||
         error instanceof Error
       ) {
+        // Handle case where job doesn't exist (might have been deleted)
+        if (
+          error instanceof PrismaClientKnownRequestError &&
+          error.code === "P2025"
+        ) {
+          this.logger.warn(
+            `Job ${jobId} not found while merging options - job may have been deleted. Skipping merge.`
+          );
+          // Don't throw - job was likely deleted intentionally
+          return;
+        }
+
         if (
           error.message?.includes("Can't reach database server") ||
           error.message?.includes("database server")

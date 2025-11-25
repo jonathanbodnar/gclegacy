@@ -48,18 +48,24 @@ export class PlanAnalysisService {
     try {
       // Convert PDF pages or plan sheets to images for vision analysis
       this.logger.log(`Converting PDF to images for analysis: ${fileName}`);
-      // Default to 30 minutes, but allow configuration via environment variable
+      // Default to 60 minutes for large PDFs, but allow configuration via environment variable
       // Format: PDF_CONVERSION_TIMEOUT_MS (in milliseconds) or PDF_CONVERSION_TIMEOUT_MIN (in minutes)
       const timeoutMs = process.env.PDF_CONVERSION_TIMEOUT_MS
         ? parseInt(process.env.PDF_CONVERSION_TIMEOUT_MS, 10)
         : process.env.PDF_CONVERSION_TIMEOUT_MIN
         ? parseInt(process.env.PDF_CONVERSION_TIMEOUT_MIN, 10) * 60 * 1000
-        : 1800000; // 30 minutes default (increased from 15 minutes)
+        : 3600000; // 60 minutes default (increased from 30 minutes for large PDFs)
       const timeoutMinutes = Math.round(timeoutMs / 60000);
+      
+      // Log timeout configuration for debugging
+      this.logger.log(
+        `PDF conversion timeout set to ${timeoutMinutes} minutes for ${fileName}`
+      );
+      
       const images = await this.withTimeout(
         this.convertToImages(fileBuffer, fileName),
         timeoutMs,
-        `PDF to images conversion timeout after ${timeoutMinutes} minutes for ${fileName}`
+        `PDF to images conversion timeout after ${timeoutMinutes} minutes for ${fileName}. Consider increasing PDF_CONVERSION_TIMEOUT_MIN or processing the PDF in smaller batches.`
       );
       this.logger.log(`Successfully converted ${images.length} pages to images`);
 

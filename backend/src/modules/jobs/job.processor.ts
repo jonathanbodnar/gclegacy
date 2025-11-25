@@ -84,12 +84,20 @@ export class JobProcessor {
 
     // Create a progress reporter that uses Bull job
     const progressReporter = async (percent: number) => {
-      await job.progress(percent);
-      await this.jobsService.updateJobStatus(
-        job.data.jobId,
-        JobStatus.PROCESSING,
-        percent
-      );
+      try {
+        await job.progress(percent);
+        await this.jobsService.updateJobStatus(
+          job.data.jobId,
+          JobStatus.PROCESSING,
+          percent
+        );
+      } catch (error) {
+        // Log but don't throw - job might have been deleted
+        // This prevents progress updates from failing the entire job
+        this.logger.warn(
+          `Failed to update progress for job ${job.data.jobId}: ${error.message}`
+        );
+      }
     };
 
     try {
