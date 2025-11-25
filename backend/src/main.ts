@@ -1,3 +1,16 @@
+// Set up canvas module alias before any other imports
+// This allows PDF.js to require('canvas') and get '@napi-rs/canvas'
+const Module = require('module');
+const originalRequire = Module.prototype.require;
+
+Module.prototype.require = function(id: string) {
+  if (id === 'canvas') {
+    // Redirect 'canvas' to '@napi-rs/canvas'
+    return originalRequire.call(this, '@napi-rs/canvas');
+  }
+  return originalRequire.apply(this, arguments);
+};
+
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
