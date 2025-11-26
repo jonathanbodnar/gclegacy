@@ -762,50 +762,56 @@ IMPORTANT:
     if (!shouldInclude || !Array.isArray(rooms)) return [];
 
     const validRooms: VisionAnalysisResult["rooms"] = [];
+    
+    this.logger.log(`Validating ${rooms.length} rooms from OpenAI response`);
 
     for (const room of rooms) {
-      // Validate polygon if present
+      // Validate polygon if present - but allow rooms WITHOUT polygons too!
       if (room.polygon) {
         const polygon = room.polygon;
         if (!Array.isArray(polygon) || polygon.length < 3) {
-          this.logger.debug(
-            `Skipping room ${room.id}: invalid polygon (needs at least 3 vertices)`
+          this.logger.warn(
+            `Room ${room.id} has invalid polygon (${polygon?.length || 0} vertices), accepting without geometry`
           );
-          continue;
+          // Don't skip - just clear the polygon and continue
+          room.polygon = null;
         }
 
-        // Check if polygon is closed (first and last points should match)
-        const first = polygon[0];
-        const last = polygon[polygon.length - 1];
-        const isClosed =
-          Array.isArray(first) &&
-          Array.isArray(last) &&
-          first.length >= 2 &&
-          last.length >= 2 &&
-          Math.abs(first[0] - last[0]) < 0.001 &&
-          Math.abs(first[1] - last[1]) < 0.001;
+        if (room.polygon) {
+          // Check if polygon is closed (first and last points should match)
+          const first = polygon[0];
+          const last = polygon[polygon.length - 1];
+          const isClosed =
+            Array.isArray(first) &&
+            Array.isArray(last) &&
+            first.length >= 2 &&
+            last.length >= 2 &&
+            Math.abs(first[0] - last[0]) < 0.001 &&
+            Math.abs(first[1] - last[1]) < 0.001;
 
-        if (!isClosed) {
-          this.logger.debug(
-            `Room ${room.id}: polygon not closed, auto-closing by duplicating first point`
-          );
-          // Auto-close the polygon
-          room.polygon = [...polygon, [first[0], first[1]]];
-        }
+          if (!isClosed && Array.isArray(first) && first.length >= 2) {
+            this.logger.debug(
+              `Room ${room.id}: polygon not closed, auto-closing by duplicating first point`
+            );
+            // Auto-close the polygon
+            room.polygon = [...polygon, [first[0], first[1]]];
+          }
 
-        // Validate all coordinates are valid numbers
-        const hasInvalidCoords = room.polygon.some(
-          (pt: any) =>
-            !Array.isArray(pt) ||
-            pt.length < 2 ||
-            !Number.isFinite(pt[0]) ||
-            !Number.isFinite(pt[1])
-        );
-        if (hasInvalidCoords) {
-          this.logger.debug(
-            `Skipping room ${room.id}: polygon has invalid coordinates`
+          // Validate all coordinates are valid numbers
+          const hasInvalidCoords = room.polygon.some(
+            (pt: any) =>
+              !Array.isArray(pt) ||
+              pt.length < 2 ||
+              !Number.isFinite(pt[0]) ||
+              !Number.isFinite(pt[1])
           );
-          continue;
+          if (hasInvalidCoords) {
+            this.logger.warn(
+              `Room ${room.id} has invalid polygon coordinates, accepting without geometry`
+            );
+            // Don't skip - just clear the polygon
+            room.polygon = null;
+          }
         }
       }
 
