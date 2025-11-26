@@ -82,6 +82,23 @@ export class JobProcessor {
     this.logger.log(`🔄 Processing job ${jobId} from queue (Bull job ID: ${job.id})`);
     this.logger.log(`📋 Job data: fileId=${fileId}, disciplines=${disciplines.join(",")}, targets=${targets.join(",")}`);
 
+    // CRITICAL: Check if job is already completed or failed - skip if so
+    // This prevents infinite loops where completed jobs are picked up again from the queue
+    const existingJob = await this.prisma.job.findUnique({
+      where: { id: jobId },
+      select: { status: true }
+    });
+
+    if (!existingJob) {
+      this.logger.warn(`⚠️  Job ${jobId} not found in database - skipping`);
+      return;
+    }
+
+    if (existingJob.status === JobStatus.COMPLETED || existingJob.status === JobStatus.FAILED) {
+      this.logger.log(`✅ Job ${jobId} already ${existingJob.status} - skipping reprocessing`);
+      return;
+    }
+
     // Create a progress reporter that uses Bull job
     const progressReporter = async (percent: number) => {
       try {

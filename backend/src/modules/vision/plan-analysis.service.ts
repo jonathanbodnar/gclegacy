@@ -169,22 +169,27 @@ export class PlanAnalysisService {
           batch[idx] = Buffer.alloc(0); // Replace with empty buffer
         });
 
-        // Force GC after each batch if memory is high
+        // CRITICAL: Force GC after EVERY batch (not just when heap > 70%)
+        // This is necessary because native canvas memory doesn't count toward heap
         if (global.gc) {
-          const memUsage = process.memoryUsage();
-          const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-          const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
-          const rssMB = Math.round(memUsage.rss / 1024 / 1024);
+          const beforeMem = process.memoryUsage();
+          const beforeRssMB = Math.round(beforeMem.rss / 1024 / 1024);
 
-          if (heapUsedMB > heapTotalMB * 0.7) {
-            try {
-              const before = heapUsedMB;
-              global.gc();
-              const after = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-              this.logger.debug(`🧹 GC after batch ${batchNumber}: Heap ${before}MB -> ${after}MB, RSS ${rssMB}MB`);
-            } catch (e) {
-              // Ignore GC errors
+          try {
+            global.gc();
+
+            const afterMem = process.memoryUsage();
+            const afterRssMB = Math.round(afterMem.rss / 1024 / 1024);
+
+            // Only log GC stats if there was significant memory freed (>50MB) or if RSS is high (>2GB)
+            const freedMB = beforeRssMB - afterRssMB;
+            if (freedMB > 50 || beforeRssMB > 2000) {
+              this.logger.log(
+                `🧹 GC after batch ${batchNumber}/${totalBatches}: RSS ${beforeRssMB}MB -> ${afterRssMB}MB (freed ${freedMB}MB)`
+              );
             }
+          } catch (e) {
+            // Ignore GC errors
           }
         }
 
