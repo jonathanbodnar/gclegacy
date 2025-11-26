@@ -88,11 +88,13 @@ export class SpaceExtractionService {
 
     const targetSheets = sheets.filter((sheet) => {
       const category = sheet.classification?.category;
-      return (
-        (category === 'floor' || category === 'demo_floor' || category === 'fixture') &&
-        sheet.content?.rasterData &&
-        sheet.content.rasterData.length > 0
-      );
+      const hasValidCategory = category === 'floor' || category === 'demo_floor' || category === 'fixture';
+      
+      // Accept sheets with either rasterData OR textData (fallback to text-only analysis)
+      const hasRasterData = sheet.content?.rasterData && sheet.content.rasterData.length > 0;
+      const hasTextData = sheet.content?.textData && sheet.content.textData.length > 100; // At least 100 chars
+      
+      return hasValidCategory && (hasRasterData || hasTextData);
     });
 
     this.logger.log(`Found ${targetSheets.length} candidate sheets for space extraction`);
