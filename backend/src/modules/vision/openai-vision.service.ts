@@ -888,36 +888,6 @@ IMPORTANT:
         }
       }
 
-        // Validate all coordinates are valid numbers
-        const hasInvalidCoords = polyline.some(
-          (pt: any) =>
-            !Array.isArray(pt) ||
-            pt.length < 2 ||
-            !Number.isFinite(pt[0]) ||
-            !Number.isFinite(pt[1])
-        );
-        if (hasInvalidCoords) {
-          this.logger.debug(
-            `Skipping wall ${wall.id}: polyline has invalid coordinates`
-          );
-          continue;
-        }
-
-        // Calculate actual length from polyline to validate against reported length
-        let calculatedLength = 0;
-        for (let i = 1; i < polyline.length; i++) {
-          const dx = polyline[i][0] - polyline[i - 1][0];
-          const dy = polyline[i][1] - polyline[i - 1][1];
-          calculatedLength += Math.sqrt(dx * dx + dy * dy);
-        }
-        if (calculatedLength < 0.001) {
-          this.logger.debug(
-            `Skipping wall ${wall.id}: calculated polyline length is zero`
-          );
-          continue;
-        }
-      }
-
       // Filter out columns and non-wall symbols
       // Columns are typically small, square/circular elements
       // Check if this might be a column based on characteristics
