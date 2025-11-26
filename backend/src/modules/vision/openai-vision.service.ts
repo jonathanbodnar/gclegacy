@@ -581,12 +581,12 @@ MATERIAL EXTRACTION:
 - For fixtures: extract material specs if shown in schedules
 
 DIMENSION EXTRACTION (CRITICAL FOR PIPES/DUCTS/WALLS):
-- For PIPES: Measure the visible pipe path from start to end, OR read dimension callouts like "24'-6 LF"
+- For PIPES: Measure the visible pipe path from start to end, OR read dimension callouts like 24'-6 LF
 - For DUCTS: Measure the visible duct centerline, OR read dimension annotations
 - For WALLS: Measure wall segment length from end to end
 - Convert measurements using the detected scale ratio
-- Always return LENGTH as a numeric value in FEET (strip units like "ft", "'", "LF")
-- If you see "24'-6"" convert to 24.5 feet (6 inches = 0.5 feet)
+- Always return LENGTH as a numeric value in FEET (strip units like ft, LF)
+- If you see 24'-6 convert to 24.5 feet (6 inches = 0.5 feet)
 - NEVER return length as null/undefined if the element is visible - measure it!
 
 ZERO-HALLUCINATION MODE:
