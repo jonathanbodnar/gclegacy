@@ -143,6 +143,12 @@ export class OpenAIVisionService {
     );
     }
 
+    // 🔍 DEBUG: Log image buffer info
+    console.log('\n========== IMAGE BUFFER INFO ==========');
+    console.log(`Image size: ${(imageBuffer.length / 1024).toFixed(2)} KB`);
+    console.log(`First 20 bytes (hex): ${imageBuffer.slice(0, 20).toString('hex')}`);
+    console.log('=======================================\n');
+
     try {
       // Validate image buffer before processing
       this.validateImageBuffer(imageBuffer);
@@ -161,6 +167,12 @@ export class OpenAIVisionService {
 
       // Create comprehensive prompt based on disciplines and targets
       const prompt = this.createAnalysisPrompt(disciplines, targets);
+
+      // 🔍 DEBUG: Log prompt being sent
+      console.log('\n========== OPENAI PROMPT INFO ==========');
+      console.log(`Prompt length: ${prompt.length} characters`);
+      console.log(`First 500 chars of prompt:\n${prompt.substring(0, 500)}...`);
+      console.log('=========================================\n');
 
       // Retry logic with exponential backoff for rate limiting
       const maxRetries = parseInt(process.env.OPENAI_MAX_RETRIES || "3", 10);
@@ -199,14 +211,35 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
             ],
           },
         ],
-        max_completion_tokens: 4000,
+        max_completion_tokens: 16000,  // Increased from 4000 to allow more detailed responses
       });
 
           // Success - break out of retry loop
       const analysisText = response.choices[0]?.message?.content;
+      
+      // 🔍 DEBUG: Log full OpenAI response metadata
+      console.log('\n========== OPENAI RESPONSE INFO ==========');
+      console.log(`Model used: ${response.model}`);
+      console.log(`Total tokens: ${response.usage?.total_tokens || 'N/A'}`);
+      console.log(`Prompt tokens: ${response.usage?.prompt_tokens || 'N/A'}`);
+      console.log(`Completion tokens: ${response.usage?.completion_tokens || 'N/A'}`);
+      console.log(`Response length: ${analysisText?.length || 0} characters`);
+      console.log(`Finish reason: ${response.choices[0]?.finish_reason || 'N/A'}`);
+      
       if (!analysisText) {
+        console.log('❌ ERROR: No analysis text in response!');
+        console.log('Full response:', JSON.stringify(response, null, 2));
         throw new Error("No analysis response from OpenAI");
       }
+      
+      console.log('\n--- FULL OPENAI RESPONSE (First 1000 chars) ---');
+      console.log(analysisText.substring(0, 1000));
+      console.log('\n--- END OF RESPONSE PREVIEW ---');
+      
+      if (analysisText.length > 1000) {
+        console.log(`\n... (${analysisText.length - 1000} more characters)`);
+      }
+      console.log('==========================================\n');
 
           // Log response preview for debugging
           this.logger.log(
@@ -219,6 +252,31 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
             disciplines,
             targets
           );
+          
+          // 🔍 DEBUG: Log parsed result details
+          console.log('\n========== PARSED RESULT DETAILS ==========');
+          console.log(`✅ Rooms: ${result.rooms.length}`);
+          if (result.rooms.length > 0) {
+            console.log('First room:', JSON.stringify(result.rooms[0], null, 2));
+          }
+          console.log(`✅ Walls: ${result.walls.length}`);
+          if (result.walls.length > 0) {
+            console.log('First wall:', JSON.stringify(result.walls[0], null, 2));
+          }
+          console.log(`✅ Pipes: ${result.pipes.length}`);
+          if (result.pipes.length > 0) {
+            console.log('First pipe:', JSON.stringify(result.pipes[0], null, 2));
+          }
+          console.log(`✅ Ducts: ${result.ducts.length}`);
+          if (result.ducts.length > 0) {
+            console.log('First duct:', JSON.stringify(result.ducts[0], null, 2));
+          }
+          console.log(`✅ Fixtures: ${result.fixtures.length}`);
+          if (result.fixtures.length > 0) {
+            console.log('First fixture:', JSON.stringify(result.fixtures[0], null, 2));
+          }
+          console.log(`✅ Scale: ${result.scale?.detected || 'N/A'} (ratio: ${result.scale?.ratio || 'N/A'})`);
+          console.log('===========================================\n');
           
           // Log what was extracted
           this.logger.log(
@@ -272,6 +330,15 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
         lastError || new Error("Failed to analyze plan image after retries")
       );
     } catch (error: any) {
+      // 🔍 DEBUG: Log detailed error information
+      console.log('\n========== OPENAI ERROR ==========');
+      console.log('Error message:', error.message);
+      console.log('Error status:', error.status);
+      console.log('Error code:', error.code);
+      console.log('Error type:', error.type);
+      console.log('Full error:', JSON.stringify(error, null, 2));
+      console.log('==================================\n');
+      
       const errorDetails = {
         message: error.message,
         status: error.status,
@@ -409,16 +476,16 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       "id": "unique_id",
       "name": "room name or number from plan (read exact text)",
       "area": "calculated area in square units",
-      "polygon": [[x1,y1], [x2,y2], [x3,y3], [x1,y1]] - closed polygon (first and last point must match),
+      "polygon": [[x1,y1], [x2,y2], [x3,y3], [x1,y1]] - REQUIRED: closed polygon by TRACING visible room boundaries. Must have at least 3 distinct vertices. Empty array [] is FAILURE,
       "program": "ONLY if explicitly labeled on plan - use null if not shown, DO NOT guess"
     }
   ]`,
       `  "walls": [
     {
       "id": "unique_id", 
-      "length": "linear length (must be > 0)",
+      "length": "linear length in feet (must be > 0) - calculate using scale ratio",
       "partitionType": "wall type from legend (PT-1, EXT-1, etc.)",
-      "polyline": [[x1,y1], [x2,y2]] - wall centerline with at least 2 distinct points
+      "polyline": [[x1,y1], [x2,y2]] - REQUIRED: wall centerline by TRACING visible walls. Must have at least 2 distinct points. Empty array [] means you didn't extract the wall
     }
   ]`,
       `  "openings": [
@@ -561,14 +628,17 @@ Please provide a detailed analysis in the following JSON format:
 ${jsonSections.join(",\n\n")}
 }
 
-SCALE EXTRACTION (CRITICAL):
+SCALE EXTRACTION (CRITICAL - NEVER SKIP THIS):
 - Read scale EXACTLY as shown in title block (e.g., "1/4\\"=1'-0\\"", "SCALE: 1/8\\"=1'-0\\"", "1:100")
 - Calculate ratio accurately: 1/4"=1'-0" = 48 (1/4 inch represents 1 foot = 12 inches, so 12 / 0.25 = 48)
-- If scale is not in title block, look for scale bars or dimension strings
-- You can calibrate scale by measuring a known dimension (e.g., door width ~3ft, wall heights typically 8-12ft)
+- If scale is "AS NOTED" or not in title block, CALIBRATE using visible dimensions:
+  * Standard door width = 3 feet (36 inches)
+  * Room dimensions typically 10-30 feet
+  * Measure a door or known dimension on the image and calculate the scale from it
 - Common architectural scales: 1/4"=1'-0" (48), 1/8"=1'-0" (96), 1/2"=1'-0" (24)
-- If no scale found, estimate based on typical building dimensions (doors ~3ft, rooms 10-30ft)
-- Set confidence="low" and method="assumed" for estimates, but ALWAYS provide a scale ratio
+- For floor plans without explicit scale, assume 1/4"=1'-0" (ratio=48) as default
+- YOU MUST ALWAYS provide a numeric scale ratio - it is REQUIRED for geometry extraction
+- Set confidence="low" and method="assumed" for estimates, confidence="high" when read from title block
 
 MATERIAL EXTRACTION:
 - Extract materials from: wall type legends, finish schedules, pipe/duct specifications, fixture schedules
@@ -580,28 +650,47 @@ MATERIAL EXTRACTION:
 - For ducts: extract size and material from specifications
 - For fixtures: extract material specs if shown in schedules
 
-DIMENSION EXTRACTION (CRITICAL FOR PIPES/DUCTS/WALLS):
-- For PIPES: Measure the visible pipe path from start to end, OR read dimension callouts like 24'-6 LF
-- For DUCTS: Measure the visible duct centerline, OR read dimension annotations
-- For WALLS: Measure wall segment length from end to end
-- Convert measurements using the detected scale ratio
-- Always return LENGTH as a numeric value in FEET (strip units like ft, LF)
-- If you see 24'-6 convert to 24.5 feet (6 inches = 0.5 feet)
-- NEVER return length as null/undefined if the element is visible - measure it!
+GEOMETRY EXTRACTION (CRITICAL - THIS IS YOUR PRIMARY TASK):
+- For ROOMS: Trace the VISIBLE boundary polygon of each room you can see on the plan
+  * Extract polygon coordinates by following the wall lines that enclose each room
+  * Polygon MUST be a closed shape with at least 3 distinct points
+  * Example: [[0,0], [100,0], [100,50], [0,50], [0,0]]
+  * You MUST provide coordinates for every visible room - empty polygons are NOT acceptable
+- For WALLS: Trace the VISIBLE centerline of each wall segment
+  * Extract polyline coordinates along the wall centerline
+  * Polyline must have at least 2 distinct points
+  * Measure length using scale ratio
+- For PIPES/DUCTS: Trace the VISIBLE path from start to end
+  * Measure the path length using scale ratio OR read dimension callouts
+  * Always return LENGTH as numeric value in FEET
+  * Convert 24'-6" to 24.5 feet (6 inches = 0.5 feet)
 
-ZERO-HALLUCINATION MODE:
-- If a value is not clearly visible, use null or omit it - DO NOT guess
-- Dimensions must be read from dimension strings or calculated from scale - never estimated
-- Material specifications must be read from legends/schedules - never inferred
-- Room programs must be explicitly labeled - never guessed from context
+WHAT TO EXTRACT vs WHAT NOT TO GUESS:
+✅ DO EXTRACT (this is NOT guessing - it's reading what's visible):
+- Room boundary polygons by tracing visible walls
+- Wall polylines by following visible partition lines  
+- Pipe/duct paths by tracing visible runs
+- Dimensions by measuring with scale ratio
+- Room names/numbers that are labeled on the plan
+- Materials listed in legends/schedules
 
-IMPORTANT: 
-- Look for scale information in title blocks FIRST, then dimension strings, then reference elements
-- Count and measure visible elements accurately using detected scale
+❌ DO NOT GUESS (only null if truly not shown):
+- Room program/use if not explicitly labeled
+- Material specifications if not in legend
+- Dimensions if element is not visible
+- Scale if no reference dimensions exist
+
+CRITICAL: Extracting visible geometry (polygons, polylines, coordinates) from the drawing is your PRIMARY TASK and is NOT guessing or hallucinating!
+
+IMPORTANT - YOUR SUCCESS IS MEASURED BY GEOMETRY EXTRACTED: 
+- Extract coordinates (polygons/polylines) for EVERY visible room, wall, pipe, and duct you can see
+- Empty arrays are a FAILURE - if you can see rooms/walls on the plan, extract their geometry
+- Calibrate/estimate scale if needed (use doors ~3ft, typical room sizes) - DO NOT leave ratio as null
+- Trace visible lines to create polygons/polylines - this is NOT guessing, it's your core task
+- Count and measure all visible elements using your calibrated scale
 - Use standard architectural/MEP terminology
-- Provide realistic dimensions based on measured values, not typical construction
-- Include only elements that are clearly visible in the drawing${verticalInstruction}${wallRules}${roomRules}
-- Return valid JSON only`;
+- Provide realistic dimensions based on measured values and scale ratio${verticalInstruction}${wallRules}${roomRules}
+- Return valid JSON only - but JSON with empty arrays for visible elements is INCOMPLETE`;
   }
 
   private async parseAnalysisResponse(
@@ -1179,7 +1268,7 @@ Extract:
 Return as structured JSON.`,
           },
         ],
-        max_completion_tokens: 1000,
+        max_completion_tokens: 2000,  // Increased for better text analysis
       });
 
       return JSON.parse(response.choices[0]?.message?.content || "{}");
@@ -1235,7 +1324,7 @@ Return ONLY a JSON object with:
             ],
           },
         ],
-        max_completion_tokens: 500,
+        max_completion_tokens: 1000,  // Increased for scale detection
       });
 
       const result = JSON.parse(response.choices[0]?.message?.content || "{}");
