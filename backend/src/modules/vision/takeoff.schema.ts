@@ -42,7 +42,7 @@ export const TAKEOFF_JSON_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['name'],
+        required: ['name', 'elevation_ft', 'height_ft', 'reference_sheet'],
         properties: {
           name: { type: 'string' },
           elevation_ft: { type: ['number', 'null'] },
