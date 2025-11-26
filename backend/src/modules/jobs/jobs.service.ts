@@ -769,6 +769,77 @@ export class JobsService {
   }
 
   /**
+   * Reset stuck PROCESSING jobs back to QUEUED after server restart
+   * This handles jobs that were interrupted by crashes/SIGTERM
+   */
+  async resetStuckProcessingJobs(): Promise<number> {
+    try {
+      // Find PROCESSING jobs that started more than 5 minutes ago
+      // (likely stuck due to server crash/restart)
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+
+      const stuckJobs = await this.prisma.job.findMany({
+        where: {
+          status: JobStatus.PROCESSING,
+          OR: [
+            { startedAt: { lt: fiveMinutesAgo } }, // Started more than 5 min ago
+            { startedAt: null }, // Or never actually started (shouldn't happen but handle it)
+          ],
+        },
+      });
+
+      if (stuckJobs.length === 0) {
+        return 0;
+      }
+
+      this.logger.warn(
+        `Found ${stuckJobs.length} stuck PROCESSING jobs - resetting to QUEUED`
+      );
+
+      // Reset all stuck jobs back to QUEUED
+      const result = await this.prisma.job.updateMany({
+        where: {
+          id: { in: stuckJobs.map((j) => j.id) },
+        },
+        data: {
+          status: JobStatus.QUEUED,
+          progress: 0,
+          error: "Job was interrupted by server restart - will retry",
+          startedAt: null,
+          finishedAt: null,
+        },
+      });
+
+      // If using Bull queue, re-add these jobs to the queue
+      if (this.jobQueue) {
+        for (const job of stuckJobs) {
+          try {
+            await this.jobQueue.add("process-job", {
+              jobId: job.id,
+              fileId: job.fileId,
+              disciplines: job.disciplines,
+              targets: job.targets,
+              materialsRuleSetId: job.materialsRuleSetId,
+              options: job.options,
+            });
+            this.logger.log(`Re-queued stuck job ${job.id}`);
+          } catch (error) {
+            this.logger.error(
+              `Failed to re-queue stuck job ${job.id}:`,
+              error.message
+            );
+          }
+        }
+      }
+
+      return result.count;
+    } catch (error) {
+      this.logger.error("Error resetting stuck PROCESSING jobs:", error.message);
+      return 0;
+    }
+  }
+
+  /**
    * Get stuck queued jobs (jobs that have been queued for more than 30 seconds)
    * This helps identify jobs that might not be getting picked up by the processor
    */

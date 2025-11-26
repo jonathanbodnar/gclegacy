@@ -82,6 +82,18 @@ export class JobsModule implements OnModuleInit {
         }
       }, 1000);
 
+      // CRITICAL: Reset stuck PROCESSING jobs after backend restart
+      setTimeout(async () => {
+        try {
+          const resetCount = await this.jobsService.resetStuckProcessingJobs();
+          if (resetCount > 0) {
+            console.log(`🔄 Reset ${resetCount} stuck PROCESSING job(s) back to QUEUED`);
+          }
+        } catch (error) {
+          console.error("Error resetting stuck jobs:", error.message);
+        }
+      }, 3000); // Check after 3 seconds
+
       // Fallback: Check for stuck queued jobs and process them after a delay
       // This handles cases where the processor might not be picking up jobs
       setTimeout(async () => {
