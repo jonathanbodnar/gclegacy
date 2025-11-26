@@ -52,6 +52,7 @@ export const TAKEOFF_JSON_SCHEMA = {
             type: 'array',
             items: {
               type: 'object',
+              required: ['room_number', 'height_ft', 'heightSource'],
               properties: {
                 room_number: { type: ['string', 'null'] },
                 height_ft: { type: ['number', 'null'] },

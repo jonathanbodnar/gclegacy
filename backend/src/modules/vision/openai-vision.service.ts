@@ -660,6 +660,14 @@ IMPORTANT:
       const length = this.parseNumericValue(item.length);
       const heightFt = this.parseNumericValue(item.heightFt);
 
+      // Debug logging for pipe length parsing
+      if (item.length !== undefined && length === undefined) {
+        Logger.warn(
+          `Failed to parse pipe length: raw="${item.length}" → parsed=undefined`,
+          'OpenAIVisionService'
+        );
+      }
+
       return {
         id: item.id || `pipe_${index + 1}`,
         service: item.service || "CW",
@@ -679,6 +687,14 @@ IMPORTANT:
       // Normalize numeric fields
       const length = this.parseNumericValue(item.length);
       const heightFt = this.parseNumericValue(item.heightFt);
+
+      // Debug logging for duct length parsing
+      if (item.length !== undefined && length === undefined) {
+        Logger.warn(
+          `Failed to parse duct length: raw="${item.length}" → parsed=undefined`,
+          'OpenAIVisionService'
+        );
+      }
 
       return {
         id: item.id || `duct_${index + 1}`,
