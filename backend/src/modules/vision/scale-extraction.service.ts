@@ -133,9 +133,15 @@ export class ScaleExtractionService {
     const instructions =
       `You extract drawing scales from architectural sheet text. ` +
       `Return JSON with a top-level object {"annotations": [...]} where each entry contains: ` +
-      `sheet_id (e.g., ${sheet.sheetIdGuess || "A-1.1"}), viewport_label/title, scale_note (verbatim text like "1/4\" = 1'-0""), ` +
+      `sheet_id (e.g., ${sheet.sheetIdGuess || "A-1.1"}), viewport_label/title, scale_note (verbatim text like "1/4\" = 1'-0"" or "SCALE: 1/8\" = 1'-0""), ` +
       `scale_ratio { plan_units (inch/mm/etc), plan_value (numeric), real_units (foot/meter/etc), real_value }, confidence, and notes. ` +
-      `Omit entries where the scale cannot be parsed. If multiple scales exist, include each separately. ` +
+      `If scale is not explicitly stated, you can ESTIMATE based on typical building dimensions: ` +
+      `- Doors are typically 3 feet wide ` +
+      `- Wall heights are typically 8-12 feet ` +
+      `- Rooms are typically 10-30 feet wide ` +
+      `Use confidence="low" for estimates. ALWAYS return at least one scale annotation, even if estimated. ` +
+      `Common architectural scales: 1/4"=1'-0" (ratio 48), 1/8"=1'-0" (ratio 96), 1/2"=1'-0" (ratio 24). ` +
+      `If multiple scales or viewports exist, include each separately. ` +
       `TEXT_SNIPPET:\n${snippet}`;
 
     const response = await this.openai!.chat.completions.create({
