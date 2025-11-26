@@ -865,27 +865,28 @@ IMPORTANT:
       if (wall.polyline) {
         const polyline = wall.polyline;
         if (!Array.isArray(polyline) || polyline.length < 2) {
-          this.logger.debug(
-            `Skipping wall ${wall.id}: invalid polyline (needs at least 2 points)`
+          this.logger.warn(
+            `Wall ${wall.id} has invalid polyline (${polyline?.length || 0} points), clearing geometry`
           );
-          continue;
-        }
-
-        // Check for distinct points (not all the same)
-        const firstPoint = polyline[0];
-        const allSame = polyline.every(
-          (pt: any) =>
-            Array.isArray(pt) &&
-            pt.length >= 2 &&
-            Math.abs(pt[0] - firstPoint[0]) < 0.001 &&
-            Math.abs(pt[1] - firstPoint[1]) < 0.001
-        );
-        if (allSame) {
-          this.logger.debug(
-            `Skipping wall ${wall.id}: all polyline points are the same (0-length wall)`
+          wall.polyline = null;
+        } else {
+          // Check for distinct points (not all the same)
+          const firstPoint = polyline[0];
+          const allSame = polyline.every(
+            (pt: any) =>
+              Array.isArray(pt) &&
+              pt.length >= 2 &&
+              Math.abs(pt[0] - firstPoint[0]) < 0.001 &&
+              Math.abs(pt[1] - firstPoint[1]) < 0.001
           );
-          continue;
+          if (allSame) {
+            this.logger.warn(
+              `Wall ${wall.id} has degenerate polyline, clearing geometry`
+            );
+            wall.polyline = null;
+          }
         }
+      }
 
         // Validate all coordinates are valid numbers
         const hasInvalidCoords = polyline.some(
