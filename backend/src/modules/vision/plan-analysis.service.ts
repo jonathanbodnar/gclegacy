@@ -164,6 +164,30 @@ export class PlanAnalysisService {
         const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
 
+        // CRITICAL: Clear image buffers from this batch to free memory
+        batch.forEach((imageBuffer, idx) => {
+          batch[idx] = Buffer.alloc(0); // Replace with empty buffer
+        });
+
+        // Force GC after each batch if memory is high
+        if (global.gc) {
+          const memUsage = process.memoryUsage();
+          const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+          const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
+          const rssMB = Math.round(memUsage.rss / 1024 / 1024);
+
+          if (heapUsedMB > heapTotalMB * 0.7) {
+            try {
+              const before = heapUsedMB;
+              global.gc();
+              const after = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+              this.logger.debug(`🧹 GC after batch ${batchNumber}: Heap ${before}MB -> ${after}MB, RSS ${rssMB}MB`);
+            } catch (e) {
+              // Ignore GC errors
+            }
+          }
+        }
+
         // Only log batch completion in development
         if (process.env.NODE_ENV !== "production") {
           this.logger.log(
