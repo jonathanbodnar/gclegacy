@@ -138,13 +138,14 @@ export class SpaceExtractionService {
       rawText.length > this.textBudget ? `${rawText.slice(0, this.textBudget)}...` : rawText;
 
     const instructions =
-      `You are extracting logical spaces (rooms or zones) from a ${hasRasterData ? 'plan' : 'text-based plan document'}.\n` +
-      `A "space" is a region of the plan with a distinct use (Cafe, Lounge, Back of House, Restroom, Sales Area, Patio, etc.).\n` +
-      `If formal room numbers exist, keep them as space ids; otherwise synthesize descriptive ids (e.g., CAFE, RR-1).\n` +
-      `Return JSON with a top-level object {"spaces": [...]} where each entry includes: space_id, name, raw_label_text (exact text string from the sheet that identifies the space), raw_area_string (exact substring like "1208 SQFT"), category (cafe/sales/boh/restroom/patio/other), bbox_px [x1,y1,x2,y2], sheet_ref, confidence, and notes (use null when unknown).\n` +
-      `Every name MUST be a substring of raw_label_text. If area text is not visible, set raw_area_string to null and do not invent an area.\n` +
-      ${!hasRasterData ? `⚠️  IMAGE NOT AVAILABLE - Extract spaces from text only. Use [0,0,0,0] for bbox_px.\n` : ''}` +
-      `TEXT_SNIPPET:\n${textSnippet || '(no text extracted)'}`;
+      `You are extracting logical spaces (rooms or zones) from a ${hasRasterData ? 'plan' : 'text-based plan document'}.
+A "space" is a region of the plan with a distinct use (Cafe, Lounge, Back of House, Restroom, Sales Area, Patio, etc.).
+If formal room numbers exist, keep them as space ids; otherwise synthesize descriptive ids (e.g., CAFE, RR-1).
+Return JSON with a top-level object {"spaces": [...]} where each entry includes: space_id, name, raw_label_text (exact text string from the sheet that identifies the space), raw_area_string (exact substring like "1208 SQFT"), category (cafe/sales/boh/restroom/patio/other), bbox_px [x1,y1,x2,y2], sheet_ref, confidence, and notes (use null when unknown).
+Every name MUST be a substring of raw_label_text. If area text is not visible, set raw_area_string to null and do not invent an area.
+${!hasRasterData ? '⚠️  IMAGE NOT AVAILABLE - Extract spaces from text only. Use [0,0,0,0] for bbox_px.\n' : ''}
+TEXT_SNIPPET:
+${textSnippet || '(no text extracted)'}`;
 
     // Build message content based on available data
     const messageContent: any[] = [{ type: 'text', text: instructions }];
