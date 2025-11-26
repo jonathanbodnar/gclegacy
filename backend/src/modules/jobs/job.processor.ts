@@ -386,6 +386,28 @@ export class JobProcessor {
       // Extract features from analysis results
       const features = [];
       for (const pageResult of analysisResult.pages) {
+        // Log what OpenAI returned for this page
+        const rawFeatures = pageResult.features;
+        if (rawFeatures) {
+          this.logger.log(
+            `Page ${pageResult.pageIndex}: OpenAI returned ` +
+            `${rawFeatures.rooms?.length || 0} rooms, ` +
+            `${rawFeatures.walls?.length || 0} walls, ` +
+            `${rawFeatures.pipes?.length || 0} pipes, ` +
+            `${rawFeatures.ducts?.length || 0} ducts`
+          );
+          
+          // Log pipe details to debug length issue
+          if (rawFeatures.pipes?.length > 0) {
+            rawFeatures.pipes.forEach((pipe: any, idx: number) => {
+              this.logger.log(
+                `  Pipe ${idx + 1}: id=${pipe.id}, service=${pipe.service}, ` +
+                `diameter=${pipe.diameter}, length=${pipe.length} (type: ${typeof pipe.length})`
+              );
+            });
+          }
+        }
+        
         const pageFeatures =
           await this.featureExtractionService.extractFeatures(
             jobId,
