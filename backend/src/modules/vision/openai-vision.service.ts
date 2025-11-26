@@ -208,12 +208,26 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
         throw new Error("No analysis response from OpenAI");
       }
 
+          // Log response preview for debugging
+          this.logger.log(
+            `OpenAI response preview (${analysisText.length} chars): ${analysisText.substring(0, 200)}...`
+          );
+
           // Process the response (moved outside retry loop)
-          return await this.processAnalysisResponse(
+          const result = await this.processAnalysisResponse(
             analysisText,
             disciplines,
             targets
           );
+          
+          // Log what was extracted
+          this.logger.log(
+            `Parsed ${result.rooms.length} rooms, ${result.walls.length} walls, ` +
+            `${result.pipes.length} pipes, ${result.ducts.length} ducts, ` +
+            `${result.fixtures.length} fixtures from OpenAI response`
+          );
+          
+          return result;
         } catch (error: any) {
           lastError = error;
 
