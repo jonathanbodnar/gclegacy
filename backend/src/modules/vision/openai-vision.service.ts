@@ -848,15 +848,17 @@ IMPORTANT:
     if (!shouldInclude || !Array.isArray(walls)) return [];
 
     const validWalls: VisionAnalysisResult["walls"] = [];
+    
+    this.logger.log(`Validating ${walls.length} walls from OpenAI response`);
 
     for (const wall of walls) {
-      // Validate length - must be > 0
+      // Parse length - warn if missing but don't skip the wall
       const length = this.toNumber(wall.length);
       if (!length || length <= 0) {
-        this.logger.debug(
-          `Skipping wall ${wall.id}: invalid or zero length (${length})`
+        this.logger.warn(
+          `Wall ${wall.id} has invalid/missing length (${wall.length}), keeping wall anyway`
         );
-        continue;
+        // Don't skip - length might be calculated later or extracted from polyline
       }
 
       // Validate polyline if present
