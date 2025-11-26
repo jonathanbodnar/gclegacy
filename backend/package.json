@@ -18,6 +18,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/src/main.js",
+    "start:render": "node --max-old-space-size=3072 --expose-gc dist/src/main.js",
     "start:resilient": "node scripts/railway-start-resilient.js",
     "start:health": "node simple-health.js",
     "start:instant": "node instant-health.js",
