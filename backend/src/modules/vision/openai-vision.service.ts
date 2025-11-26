@@ -138,9 +138,9 @@ export class OpenAIVisionService {
   ): Promise<VisionAnalysisResult> {
     // Only log in development to reduce log volume
     if (process.env.NODE_ENV !== "production") {
-      this.logger.log(
-        `Analyzing plan image with OpenAI Vision (disciplines: ${disciplines.join(",")}, targets: ${targets.join(",")})`
-      );
+    this.logger.log(
+      `Analyzing plan image with OpenAI Vision (disciplines: ${disciplines.join(",")}, targets: ${targets.join(",")})`
+    );
     }
 
     try {
@@ -172,41 +172,41 @@ export class OpenAIVisionService {
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-          const response = await this.openai.chat.completions.create({
+      const response = await this.openai.chat.completions.create({
             model: "gpt-5.1-2025-11-13",
-            messages: [
-              {
-                role: "system",
-                content: `You are an expert architectural/MEP plan analyst with full visual access to the provided drawing.
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert architectural/MEP plan analyst with full visual access to the provided drawing.
 Return VALID JSON only that matches the requested schema.
 If data is missing, use nulls or empty arrays—never apologize or say you cannot analyze.
 Do not add prose, markdown, or explanations beyond the JSON object.`,
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: prompt,
               },
               {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: prompt,
-                  },
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: imageUrl,
-                      detail: "high",
-                    },
-                  },
-                ],
+                type: "image_url",
+                image_url: {
+                  url: imageUrl,
+                  detail: "high",
+                },
               },
             ],
-            max_completion_tokens: 4000,
-          });
+          },
+        ],
+        max_completion_tokens: 4000,
+      });
 
           // Success - break out of retry loop
-          const analysisText = response.choices[0]?.message?.content;
-          if (!analysisText) {
-            throw new Error("No analysis response from OpenAI");
-          }
+      const analysisText = response.choices[0]?.message?.content;
+      if (!analysisText) {
+        throw new Error("No analysis response from OpenAI");
+      }
 
           // Process the response (moved outside retry loop)
           return await this.processAnalysisResponse(
@@ -305,12 +305,12 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
     disciplines: string[],
     targets: string[]
   ): Promise<VisionAnalysisResult> {
-    if (this.isRefusalResponse(analysisText)) {
-      await appendVisionLog("OpenAI vision refusal", {
-        disciplines,
-        targets,
-        message: analysisText.slice(0, 500),
-      });
+      if (this.isRefusalResponse(analysisText)) {
+        await appendVisionLog("OpenAI vision refusal", {
+          disciplines,
+          targets,
+          message: analysisText.slice(0, 500),
+        });
 
       if (this.allowMockFallback) {
         this.logger.warn(
@@ -321,20 +321,20 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
 
       this.logger.warn(
         "⚠️  OpenAI vision refusal detected – returning empty analysis so pipeline can continue."
-      );
+        );
       return this.generateEmptyAnalysis(targets);
-    }
+      }
 
-    await appendVisionLog("OpenAI vision raw response", {
-      disciplines,
-      targets,
-      length: analysisText.length,
-      preview: analysisText.slice(0, 500),
-      timestamp: new Date().toISOString(),
-    });
+      await appendVisionLog("OpenAI vision raw response", {
+        disciplines,
+        targets,
+        length: analysisText.length,
+        preview: analysisText.slice(0, 500),
+        timestamp: new Date().toISOString(),
+      });
 
-    // Parse the structured response
-    const result = await this.parseAnalysisResponse(analysisText, targets);
+      // Parse the structured response
+      const result = await this.parseAnalysisResponse(analysisText, targets);
 
     // Only log in development
     if (process.env.NODE_ENV !== "production") {
@@ -343,7 +343,7 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       );
     }
 
-    return result;
+      return result;
   }
 
   private createAnalysisPrompt(
@@ -358,12 +358,12 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
     };
 
     const targetMap = {
-      rooms: "room boundaries and areas with names/numbers",
-      walls: "wall centerlines with partition types",
-      doors: "door locations with sizes",
-      windows: "window locations with sizes",
-      pipes: "piping systems with diameters and services (CW/HW/SAN)",
-      ducts: "ductwork with sizes",
+      rooms: "room boundaries and areas with names/numbers - measure dimensions",
+      walls: "wall centerlines with partition types - measure linear length in feet",
+      doors: "door locations with sizes - read dimensions from annotations",
+      windows: "window locations with sizes - read dimensions from annotations",
+      pipes: "piping systems with diameters, services (CW/HW/SAN), and RUN LENGTHS - measure or read dimension annotations",
+      ducts: "ductwork with sizes and RUN LENGTHS - measure or read dimension annotations",
       fixtures: "plumbing/electrical fixtures with types and counts",
       levels: "building levels with elevations and clear heights",
       elevations: "exterior/interior elevations that show story heights",
@@ -419,15 +419,15 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
     {
       "id": "unique_id",
       "service": "CW (cold water), HW (hot water), SAN (sanitary), or VENT",
-      "diameter": "pipe diameter in inches",
-      "length": "pipe run length"
+      "diameter": "pipe diameter in inches (numeric value only)",
+      "length": "pipe run length in FEET (numeric value only) - measure the visible pipe path OR read from dimension annotations like '24-6 LF' - REQUIRED for every pipe"
     }
   ]`,
       `  "ducts": [
     {
       "id": "unique_id", 
       "size": "duct size (e.g. 12x10)",
-      "length": "duct run length"
+      "length": "duct run length in FEET (numeric value only) - measure the visible duct path OR read from dimension annotations - REQUIRED for every duct"
     }
   ]`,
       `  "fixtures": [
@@ -563,6 +563,15 @@ MATERIAL EXTRACTION:
 - For pipes: extract material and diameter from line types or callouts
 - For ducts: extract size and material from specifications
 - For fixtures: extract material specs if shown in schedules
+
+DIMENSION EXTRACTION (CRITICAL FOR PIPES/DUCTS/WALLS):
+- For PIPES: Measure the visible pipe path from start to end, OR read dimension callouts like "24'-6 LF"
+- For DUCTS: Measure the visible duct centerline, OR read dimension annotations
+- For WALLS: Measure wall segment length from end to end
+- Convert measurements using the detected scale ratio
+- Always return LENGTH as a numeric value in FEET (strip units like "ft", "'", "LF")
+- If you see "24'-6"" convert to 24.5 feet (6 inches = 0.5 feet)
+- NEVER return length as null/undefined if the element is visible - measure it!
 
 ZERO-HALLUCINATION MODE:
 - If a value is not clearly visible, use null or omit it - DO NOT guess
@@ -793,9 +802,9 @@ IMPORTANT:
 
     // Only log in development
     if (process.env.NODE_ENV !== "production") {
-      this.logger.log(
-        `Validated ${validRooms.length} rooms (filtered ${rooms.length - validRooms.length} invalid)`
-      );
+    this.logger.log(
+      `Validated ${validRooms.length} rooms (filtered ${rooms.length - validRooms.length} invalid)`
+    );
     }
     return validRooms;
   }
@@ -902,9 +911,9 @@ IMPORTANT:
 
     // Only log in development
     if (process.env.NODE_ENV !== "production") {
-      this.logger.log(
-        `Validated ${validWalls.length} walls (filtered ${walls.length - validWalls.length} invalid/columns)`
-      );
+    this.logger.log(
+      `Validated ${validWalls.length} walls (filtered ${walls.length - validWalls.length} invalid/columns)`
+    );
     }
     return validWalls;
   }
