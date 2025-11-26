@@ -88,20 +88,29 @@ export class SpaceExtractionService {
 
     const targetSheets = sheets.filter((sheet) => {
       const category = sheet.classification?.category;
-      const hasValidCategory = category === 'floor' || category === 'demo_floor' || category === 'fixture';
-      
-      // Accept sheets with either rasterData OR textData (fallback to text-only analysis)
-      const hasRasterData = sheet.content?.rasterData && sheet.content.rasterData.length > 0;
-      const hasTextData = sheet.content?.textData && sheet.content.textData.length > 100; // At least 100 chars
-      
-      return hasValidCategory && (hasRasterData || hasTextData);
+      return (
+        (category === 'floor' || category === 'demo_floor' || category === 'fixture') &&
+        sheet.content?.rasterData &&
+        sheet.content.rasterData.length > 0
+      );
     });
 
+    this.logger.log(`Found ${targetSheets.length} candidate sheets for space extraction`);
+    
     const spaces: SpaceDefinition[] = [];
     for (const sheet of targetSheets) {
       try {
+        this.logger.log(
+          `Extracting spaces from sheet ${sheet.index} (${sheet.name || 'unnamed'}), ` +
+          `hasRaster=${!!(sheet.content?.rasterData?.length)}, ` +
+          `hasText=${!!(sheet.content?.textData?.length)}`
+        );
+        
         const parsed = await this.extractFromSheet(sheet);
         const spaceEntries = Array.isArray(parsed?.spaces) ? parsed.spaces : [];
+        
+        this.logger.log(`Sheet ${sheet.index}: OpenAI returned ${spaceEntries.length} spaces`);
+        
         for (const entry of spaceEntries) {
           const approxArea = this.parseArea(entry.raw_area_string);
           spaces.push({
@@ -120,12 +129,14 @@ export class SpaceExtractionService {
           });
         }
       } catch (error: any) {
-        this.logger.warn(
+        this.logger.error(
           `Space extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`,
+          error.stack
         );
       }
     }
 
+    this.logger.log(`Total spaces extracted: ${spaces.length}`);
     return spaces;
   }
 
