@@ -358,12 +358,12 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
     };
 
     const targetMap = {
-      rooms: "room boundaries and areas with names/numbers - measure dimensions",
-      walls: "wall centerlines with partition types - measure linear length in feet",
-      doors: "door locations with sizes - read dimensions from annotations",
-      windows: "window locations with sizes - read dimensions from annotations",
-      pipes: "piping systems with diameters, services (CW/HW/SAN), and RUN LENGTHS - measure or read dimension annotations",
-      ducts: "ductwork with sizes and RUN LENGTHS - measure or read dimension annotations",
+      rooms: "room boundaries and areas with names/numbers - measure dimensions and calculate square footage",
+      walls: "wall centerlines with partition types - MEASURE linear length in feet for EVERY wall segment",
+      doors: "door locations with sizes - read dimensions from annotations or measure",
+      windows: "window locations with sizes - read dimensions from annotations or measure",
+      pipes: "piping systems with diameters, services (CW/HW/SAN), and RUN LENGTHS - MEASURE visible pipe centerline OR read dimension annotations like '24-6 LF'",
+      ducts: "ductwork with sizes and RUN LENGTHS - MEASURE visible duct centerline OR read dimension annotations",
       fixtures: "plumbing/electrical fixtures with types and counts",
       levels: "building levels with elevations and clear heights",
       elevations: "exterior/interior elevations that show story heights",
@@ -550,9 +550,11 @@ ${jsonSections.join(",\n\n")}
 SCALE EXTRACTION (CRITICAL):
 - Read scale EXACTLY as shown in title block (e.g., "1/4\\"=1'-0\\"", "SCALE: 1/8\\"=1'-0\\"", "1:100")
 - Calculate ratio accurately: 1/4"=1'-0" = 48 (1/4 inch represents 1 foot = 12 inches, so 12 / 0.25 = 48)
-- If scale is not visible, use dimension strings to calibrate (measure a known dimension like a door ~3ft)
-- If no scale found, set confidence="low" and method="assumed", but still provide best estimate
-- NEVER guess or make up scale values - if truly unknown, use ratio=1 and confidence="low"
+- If scale is not in title block, look for scale bars or dimension strings
+- You can calibrate scale by measuring a known dimension (e.g., door width ~3ft, wall heights typically 8-12ft)
+- Common architectural scales: 1/4"=1'-0" (48), 1/8"=1'-0" (96), 1/2"=1'-0" (24)
+- If no scale found, estimate based on typical building dimensions (doors ~3ft, rooms 10-30ft)
+- Set confidence="low" and method="assumed" for estimates, but ALWAYS provide a scale ratio
 
 MATERIAL EXTRACTION:
 - Extract materials from: wall type legends, finish schedules, pipe/duct specifications, fixture schedules
@@ -663,16 +665,16 @@ IMPORTANT:
   private validatePipes(items: any[], shouldInclude: boolean): VisionAnalysisResult["pipes"] {
     if (!shouldInclude || !Array.isArray(items)) return [];
 
-    return items.map((item, index) => {
+    const validatedPipes = items.map((item, index) => {
       // Normalize numeric fields
       const diameter = this.parseNumericValue(item.diameter);
       const length = this.parseNumericValue(item.length);
       const heightFt = this.parseNumericValue(item.heightFt);
 
-      // Debug logging for pipe length parsing
-      if (item.length !== undefined && length === undefined) {
+      // Debug logging for pipe extraction
+      if (!item.length || length === undefined) {
         Logger.warn(
-          `Failed to parse pipe length: raw="${item.length}" → parsed=undefined`,
+          `Pipe ${item.id || index} missing length: raw=${JSON.stringify(item.length)} → parsed=${length}`,
           'OpenAIVisionService'
         );
       }
@@ -687,6 +689,16 @@ IMPORTANT:
         heightFt: heightFt,
       };
     });
+
+    const withLengths = validatedPipes.filter(p => p.length !== undefined);
+    if (withLengths.length < validatedPipes.length) {
+      Logger.warn(
+        `${validatedPipes.length - withLengths.length} of ${validatedPipes.length} pipes missing length values`,
+        'OpenAIVisionService'
+      );
+    }
+
+    return validatedPipes;
   }
 
   private validateDucts(items: any[], shouldInclude: boolean): VisionAnalysisResult["ducts"] {
