@@ -19,7 +19,7 @@ export const TAKEOFF_JSON_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['id', 'name', 'number', 'scale', 'pixelsPerFoot', 'scaleSource'],
+        required: ['id', 'name', 'number', 'scale', 'pixelsPerFoot', 'scaleSource', 'disciplines'],
         properties: {
           id: { type: 'string' },
           name: { type: 'string' },

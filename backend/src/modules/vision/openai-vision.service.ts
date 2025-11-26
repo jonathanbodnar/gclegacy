@@ -610,8 +610,8 @@ IMPORTANT:
           parsed.openings,
           targets.includes("doors") || targets.includes("windows")
         ),
-        pipes: this.validateArray(parsed.pipes, targets.includes("pipes")),
-        ducts: this.validateArray(parsed.ducts, targets.includes("ducts")),
+        pipes: this.validatePipes(parsed.pipes, targets.includes("pipes")),
+        ducts: this.validateDucts(parsed.ducts, targets.includes("ducts")),
         fixtures: this.validateArray(
           parsed.fixtures,
           targets.includes("fixtures")
@@ -649,6 +649,59 @@ IMPORTANT:
       id: item.id || `item_${index + 1}`,
       ...item,
     }));
+  }
+
+  private validatePipes(items: any[], shouldInclude: boolean): VisionAnalysisResult["pipes"] {
+    if (!shouldInclude || !Array.isArray(items)) return [];
+
+    return items.map((item, index) => {
+      // Normalize numeric fields
+      const diameter = this.parseNumericValue(item.diameter);
+      const length = this.parseNumericValue(item.length);
+      const heightFt = this.parseNumericValue(item.heightFt);
+
+      return {
+        id: item.id || `pipe_${index + 1}`,
+        service: item.service || "CW",
+        diameter: diameter,
+        length: length,
+        polyline: item.polyline,
+        level: item.level,
+        heightFt: heightFt,
+      };
+    });
+  }
+
+  private validateDucts(items: any[], shouldInclude: boolean): VisionAnalysisResult["ducts"] {
+    if (!shouldInclude || !Array.isArray(items)) return [];
+
+    return items.map((item, index) => {
+      // Normalize numeric fields
+      const length = this.parseNumericValue(item.length);
+      const heightFt = this.parseNumericValue(item.heightFt);
+
+      return {
+        id: item.id || `duct_${index + 1}`,
+        size: item.size,
+        length: length,
+        polyline: item.polyline,
+        level: item.level,
+        heightFt: heightFt,
+      };
+    });
+  }
+
+  private parseNumericValue(value: any): number | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      // Strip units (ft, in, ", ', etc.) and parse
+      const cleaned = value.replace(/[^\d.-]/g, '');
+      if (!cleaned) return undefined;
+      const parsed = parseFloat(cleaned);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return undefined;
   }
 
   private validateAndFilterRooms(

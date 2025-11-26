@@ -159,7 +159,10 @@ export class RulesEngineService {
               });
             }
           } catch (error) {
-            this.logger.warn(`Error evaluating material ${materialItem.sku} for feature ${feature.id}: ${error.message}`);
+            this.logger.warn(
+              `Error evaluating material ${materialItem.sku} for feature ${feature.id}: ${error.message} ` +
+              `(Feature props: length=${feature.length}, area=${feature.area}, count=${feature.count}, type=${feature.type})`
+            );
           }
         }
       }
