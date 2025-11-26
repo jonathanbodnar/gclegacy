@@ -130,19 +130,22 @@ export class JobProcessor {
 
     try {
       // Update job status to processing
+      this.logger.log(`📊 [Job ${jobId}] Step 0/10: Initializing job processing`);
       await this.jobsService.updateJobStatus(jobId, JobStatus.PROCESSING, 0);
 
       // Step 1: Ingest and parse file (20% progress)
+      this.logger.log(`📊 [Job ${jobId}] Step 1/10: Starting file ingestion (progress: 10%)`);
       await progressReporter(10);
       const ingestResult = await this.ingestService.ingestFile(
         fileId,
         disciplines,
         options
       );
+      this.logger.log(`📊 [Job ${jobId}] Step 1/10: File ingestion complete - ${ingestResult.sheets?.length || 0} sheets found (progress: 20%)`);
       await progressReporter(20);
 
       // Stage 1: classify sheets using GPT (know which pages drive which prompts)
-      this.logger.log(`Starting sheet classification for job ${jobId}`);
+      this.logger.log(`📊 [Job ${jobId}] Step 2/10: Starting sheet classification`);
       try {
         const sheetClassifications =
           await this.sheetClassificationService.classifySheets(
@@ -151,10 +154,11 @@ export class JobProcessor {
         await this.jobsService.mergeJobOptions(jobId, {
           sheetClassifications,
         });
-        this.logger.log(`Sheet classification completed for job ${jobId}: ${sheetClassifications.length} sheets classified`);
+        this.logger.log(`📊 [Job ${jobId}] Step 2/10: Sheet classification completed - ${sheetClassifications.length} sheets classified`);
       } catch (classificationError) {
-        this.logger.warn(
-          `Sheet classification failed for job ${jobId}: ${classificationError.message}`
+        this.logger.error(
+          `📊 [Job ${jobId}] Step 2/10: ❌ Sheet classification failed: ${classificationError.message}`,
+          classificationError.stack
         );
       }
 

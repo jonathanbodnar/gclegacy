@@ -91,6 +91,7 @@ export class SheetClassificationService {
     sheets: SheetData[]
   ): Promise<SheetClassificationMetadata[]> {
     if (!this.openai) {
+      this.logger.warn('OpenAI not configured - skipping sheet classification');
       return sheets.map(() => ({
         discipline: [],
         category: "other",
@@ -98,15 +99,20 @@ export class SheetClassificationService {
       }));
     }
 
+    this.logger.log(`📄 Classifying ${sheets.length} sheets using model: ${this.model}`);
     const results: SheetClassificationMetadata[] = [];
-    for (const sheet of sheets) {
+    for (let i = 0; i < sheets.length; i++) {
+      const sheet = sheets[i];
       try {
+        this.logger.log(`  🔍 Classifying sheet ${i + 1}/${sheets.length} (index: ${sheet.index}, name: ${sheet.name})`);
         const classification = await this.classifySingleSheet(sheet);
         sheet.classification = classification;
         results.push(classification);
+        this.logger.log(`  ✅ Sheet ${i + 1} classified as: ${classification.category} (${classification.discipline.join(', ') || 'no discipline'})`);
       } catch (error: any) {
-        this.logger.warn(
-          `Sheet classification failed for sheet index ${sheet.index}: ${error.message}`
+        this.logger.error(
+          `  ❌ Sheet classification failed for sheet ${i + 1}/${sheets.length} (index ${sheet.index}): ${error.message}`,
+          error.stack
         );
         const fallback: SheetClassificationMetadata = {
           sheetId: sheet.sheetIdGuess || sheet.name,
@@ -121,6 +127,7 @@ export class SheetClassificationService {
       }
     }
 
+    this.logger.log(`✅ Sheet classification complete: ${results.length} sheets processed`);
     return results;
   }
 
@@ -158,28 +165,41 @@ export class SheetClassificationService {
       ...imageParts,
     ];
 
-    const response = await this.openai.chat.completions.create({
-      model: this.model,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "SheetClassification",
-          schema: SHEET_CLASSIFICATION_SCHEMA,
-          strict: true,
+    this.logger.debug(`    🤖 Calling OpenAI API (model: ${this.model}, has_image: ${imageParts.length > 0})`);
+    const startTime = Date.now();
+
+    let response;
+    try {
+      response = await this.openai.chat.completions.create({
+        model: this.model,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "SheetClassification",
+            schema: SHEET_CLASSIFICATION_SCHEMA,
+            strict: true,
+          },
         },
-      },
-      messages: [
-        {
-          role: "system",
-          content:
-            "You classify architectural PDF sheets. Base decisions strictly on provided text/image. No prose.",
-        },
-        {
-          role: "user",
-          content: userContent,
-        },
-      ],
-    });
+        messages: [
+          {
+            role: "system",
+            content:
+              "You classify architectural PDF sheets. Base decisions strictly on provided text/image. No prose.",
+          },
+          {
+            role: "user",
+            content: userContent,
+          },
+        ],
+      });
+
+      const duration = Date.now() - startTime;
+      this.logger.debug(`    ✅ OpenAI API responded in ${duration}ms`);
+    } catch (apiError: any) {
+      const duration = Date.now() - startTime;
+      this.logger.error(`    ❌ OpenAI API call failed after ${duration}ms: ${apiError.message}`, apiError.stack);
+      throw apiError;
+    }
 
     const content = response.choices[0]?.message?.content;
     if (!content) {
