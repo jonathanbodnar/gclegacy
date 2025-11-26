@@ -109,6 +109,29 @@ export class SheetClassificationService {
         sheet.classification = classification;
         results.push(classification);
         this.logger.log(`  ✅ Sheet ${i + 1} classified as: ${classification.category} (${classification.discipline.join(', ') || 'no discipline'})`);
+
+        // CRITICAL: Clear raster buffer after classification to free memory
+        if (sheet.content?.rasterData) {
+          sheet.content.rasterData = undefined;
+        }
+
+        // Force GC every 5 sheets if memory is high and GC is available
+        if ((i + 1) % 5 === 0 && global.gc) {
+          const memUsage = process.memoryUsage();
+          const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+          const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
+
+          if (heapUsedMB > heapTotalMB * 0.75) {
+            try {
+              const before = heapUsedMB;
+              global.gc();
+              const after = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+              this.logger.debug(`  🧹 GC after sheet ${i + 1}: ${before}MB -> ${after}MB`);
+            } catch (e) {
+              // Ignore GC errors
+            }
+          }
+        }
       } catch (error: any) {
         this.logger.error(
           `  ❌ Sheet classification failed for sheet ${i + 1}/${sheets.length} (index ${sheet.index}): ${error.message}`,
@@ -124,6 +147,11 @@ export class SheetClassificationService {
         };
         sheet.classification = fallback;
         results.push(fallback);
+
+        // Clear buffer even on error
+        if (sheet.content?.rasterData) {
+          sheet.content.rasterData = undefined;
+        }
       }
     }
 
