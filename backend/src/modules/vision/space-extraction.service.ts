@@ -27,30 +27,30 @@ const SPACE_SCHEMA = {
   additionalProperties: false,
   properties: {
     spaces: {
-      type: 'array',
-      items: {
-        type: 'object',
+  type: 'array',
+  items: {
+    type: 'object',
         required: ['space_id', 'name', 'raw_label_text', 'raw_area_string', 'category', 'bbox_px', 'sheet_ref', 'confidence', 'notes'],
-        properties: {
-          space_id: { type: 'string' },
-          name: { type: ['string', 'null'] },
+    properties: {
+      space_id: { type: 'string' },
+      name: { type: ['string', 'null'] },
           raw_label_text: { type: ['string', 'null'] },
           raw_area_string: { type: ['string', 'null'] },
-          category: {
-            type: 'string',
-            enum: ['cafe', 'sales', 'boh', 'restroom', 'patio', 'other'],
-          },
-          bbox_px: {
-            type: 'array',
-            minItems: 4,
-            maxItems: 4,
-            items: { type: 'number' },
-          },
-          sheet_ref: { type: ['string', 'null'] },
-          confidence: { type: ['number', 'null'] },
-          notes: { type: ['string', 'null'] },
-        },
-        additionalProperties: false,
+      category: {
+        type: 'string',
+        enum: ['cafe', 'sales', 'boh', 'restroom', 'patio', 'other'],
+      },
+      bbox_px: {
+        type: 'array',
+        minItems: 4,
+        maxItems: 4,
+        items: { type: 'number' },
+      },
+      sheet_ref: { type: ['string', 'null'] },
+      confidence: { type: ['number', 'null'] },
+      notes: { type: ['string', 'null'] },
+    },
+    additionalProperties: false,
       },
     },
   },
@@ -68,7 +68,7 @@ export class SpaceExtractionService {
     this.model =
       this.configService.get<string>('OPENAI_SPACE_MODEL') ||
       this.configService.get<string>('OPENAI_TAKEOFF_MODEL') ||
-      'gpt-4o-mini';
+      'gpt-5.1-2025-11-13';
     this.textBudget = parseInt(
       this.configService.get<string>('SPACE_TEXT_LIMIT') || '6000',
       10,
