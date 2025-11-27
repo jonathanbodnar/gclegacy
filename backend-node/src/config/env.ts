@@ -43,6 +43,43 @@ const envSchema = z.object({
 
 const raw = envSchema.parse(process.env);
 
+const STATIC_FRONTEND_ORIGINS = [
+  'https://gclegacy-2.onrender.com',
+  'https://gclegacy-backend-nodejs.onrender.com',
+  'http://localhost:4173',
+  'http://localhost:5173',
+];
+
+const normalizeOrigin = (origin: string) => {
+  const trimmed = origin.trim();
+  if (!trimmed || trimmed === '*') {
+    return trimmed;
+  }
+  return trimmed.replace(/\/+$/, '');
+};
+
+const buildAllowedOrigins = (rawValue?: string) => {
+  if (!rawValue) {
+    return STATIC_FRONTEND_ORIGINS;
+  }
+
+  const parsed = rawValue
+    .split(',')
+    .map(normalizeOrigin)
+    .filter(Boolean);
+
+  if (parsed.includes('*')) {
+    return ['*'];
+  }
+
+  const merged = new Set<string>([
+    ...parsed,
+    ...STATIC_FRONTEND_ORIGINS,
+  ]);
+
+  return Array.from(merged);
+};
+
 export const config = {
   nodeEnv: raw.NODE_ENV,
   port: raw.PORT,
@@ -58,9 +95,7 @@ export const config = {
   storageDir: raw.STORAGE_DIR,
   jobProcessingDelayMs: raw.JOB_PROCESSING_DELAY_MS,
   webhookTimeoutMs: raw.WEBHOOK_TIMEOUT_MS,
-  allowedOrigins:
-    raw.ALLOW_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean) ??
-    ['*'],
+  allowedOrigins: buildAllowedOrigins(raw.ALLOW_ORIGINS),
   openAiApiKey: raw.OPENAI_API_KEY,
   openAiModel: raw.OPENAI_MODEL,
   openAiTemperature: raw.OPENAI_TEMPERATURE,
