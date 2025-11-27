@@ -28,22 +28,43 @@ export const createFile = async (input: CreateFileInput): Promise<FileDocument> 
   const buffer = await fs.readFile(input.storagePath);
   const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
 
+  const computePdfPages = async (): Promise<number | undefined> => {
+    if (input.mimeType !== 'application/pdf') {
+      return undefined;
+    }
+    try {
+      const pdfData = await pdfParse(buffer);
+      return pdfData.numpages;
+    } catch {
+      return undefined;
+    }
+  };
+
   const existing = await FileModel.findOne({ checksum });
   if (existing) {
+    const existingFileAccessible = await fs
+      .access(existing.storagePath)
+      .then(() => true)
+      .catch(() => false);
+
+    if (!existingFileAccessible) {
+      const storageKey = resolveStorageKey(path.resolve(input.storagePath));
+      const pages = await computePdfPages();
+      existing.storagePath = input.storagePath;
+      existing.storageKey = storageKey;
+      existing.storageUrl = input.storagePath;
+      existing.size = input.size;
+      existing.mimeType = input.mimeType;
+      existing.pages = pages;
+      await existing.save();
+      return existing;
+    }
+
     await fs.unlink(input.storagePath).catch(() => undefined);
     return existing;
   }
 
-  let pages: number | undefined;
-  if (input.mimeType === 'application/pdf') {
-    try {
-      const pdfData = await pdfParse(buffer);
-      pages = pdfData.numpages;
-    } catch {
-      pages = undefined;
-    }
-  }
-
+  const pages = await computePdfPages();
   const storageKey = resolveStorageKey(path.resolve(input.storagePath));
 
   const file = await FileModel.create({
