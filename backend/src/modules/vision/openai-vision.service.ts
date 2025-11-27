@@ -113,6 +113,7 @@ export class OpenAIVisionService {
   private readonly logger = new Logger(OpenAIVisionService.name);
   private openai: OpenAI;
   private allowMockFallback: boolean;
+  private savedImageCount = 0; // Track how many images we've saved
 
   constructor(private configService: ConfigService) {
     const apiKey = this.configService.get("OPENAI_API_KEY");
@@ -144,10 +145,12 @@ export class OpenAIVisionService {
     }
 
     // 🔍 DEBUG: Log image buffer info
-    console.log('\n========== IMAGE BUFFER INFO ==========');
-    console.log(`Image size: ${(imageBuffer.length / 1024).toFixed(2)} KB`);
-    console.log(`First 20 bytes (hex): ${imageBuffer.slice(0, 20).toString('hex')}`);
-    console.log('=======================================\n');
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('\n========== IMAGE BUFFER INFO ==========');
+      console.log(`Image size: ${(imageBuffer.length / 1024).toFixed(2)} KB`);
+      console.log(`First 20 bytes (hex): ${imageBuffer.slice(0, 20).toString('hex')}`);
+      console.log('=======================================\n');
+    }
 
     try {
       // Validate image buffer before processing
@@ -165,14 +168,118 @@ export class OpenAIVisionService {
       const base64Image = imageBuffer.toString("base64");
       const imageUrl = `data:image/${imageFormat};base64,${base64Image}`;
 
+      // 🔍 DEBUG: Validate base64 encoding and data URL format
+      if (process.env.NODE_ENV !== 'production' && process.env.VALIDATE_BASE64 === 'true') {
+        console.log('\n========== BASE64 VALIDATION ==========');
+        console.log(`Base64 length: ${base64Image.length} characters`);
+        console.log(`Base64 first 100 chars: ${base64Image.substring(0, 100)}...`);
+        console.log(`Base64 last 50 chars: ...${base64Image.substring(base64Image.length - 50)}`);
+        
+        // Validate base64 format (should only contain: A-Z, a-z, 0-9, +, /, =)
+        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+        const isValidBase64 = base64Regex.test(base64Image);
+        console.log(`✅ Base64 format valid: ${isValidBase64}`);
+        
+        // Validate data URL format
+        const hasCorrectPrefix = imageUrl.startsWith(`data:image/${imageFormat};base64,`);
+        console.log(`✅ Data URL prefix correct: ${hasCorrectPrefix}`);
+        console.log(`Data URL length: ${imageUrl.length} characters`);
+        console.log(`Data URL first 100 chars: ${imageUrl.substring(0, 100)}...`);
+        
+        // Test decode base64 to verify it's valid
+        try {
+          const decoded = Buffer.from(base64Image, 'base64');
+          console.log(`✅ Base64 decode successful: ${decoded.length} bytes`);
+          console.log(`Decoded size matches original: ${decoded.length === imageBuffer.length}`);
+          
+          // Check PNG/JPEG magic numbers in decoded data
+          const magicNumber = decoded.slice(0, 4).toString('hex');
+          const isPNG = magicNumber === '89504e47';
+          const isJPEG = magicNumber.substring(0, 6) === 'ffd8ff';
+          console.log(`Magic number: ${magicNumber}`);
+          console.log(`✅ Valid image format: PNG=${isPNG}, JPEG=${isJPEG}`);
+        } catch (error) {
+          console.log(`❌ Base64 decode FAILED: ${error.message}`);
+        }
+        
+        console.log('=======================================\n');
+      }
+
+      // 🔍 DEBUG: Save HTML file to test data URL in browser (independent of validation)
+      if (process.env.NODE_ENV !== 'production' && process.env.SAVE_HTML_TEST === 'true' && this.savedImageCount < 3) {
+        const fs = require('fs');
+        const path = require('path');
+        const testDir = path.join(process.cwd(), 'debug-images');
+        
+        if (!fs.existsSync(testDir)) {
+          fs.mkdirSync(testDir, { recursive: true });
+        }
+        
+        // Save HTML for first 3 images only
+        const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Data URL Test</title>
+  <style>
+    body { margin: 20px; font-family: Arial; }
+    img { max-width: 100%; border: 2px solid #ccc; }
+    .info { background: #f0f0f0; padding: 10px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>Data URL Image Test</h1>
+  <div class="info">
+    <p><strong>Base64 Length:</strong> ${base64Image.length} characters</p>
+    <p><strong>Image Format:</strong> ${imageFormat}</p>
+    <p><strong>Original Size:</strong> ${(imageBuffer.length / 1024).toFixed(2)} KB</p>
+  </div>
+  <h2>If you see the image below, base64 encoding is CORRECT:</h2>
+  <img src="${imageUrl}" alt="Test Image">
+  <div class="info">
+    <p>✅ If image displays correctly = Base64 encoding works!</p>
+    <p>❌ If broken image icon = Base64 encoding failed!</p>
+  </div>
+</body>
+</html>`;
+        
+        const htmlPath = path.join(testDir, `base64-test-${Date.now()}.html`);
+        fs.writeFileSync(htmlPath, htmlContent);
+        console.log(`\n🌐 HTML TEST FILE: ${htmlPath}`);
+        console.log(`   Open this file in a browser to verify data URL works!\n`);
+      }
+
+      // 🔍 DEBUG: Save first 3 images to verify quality (remove in production)
+      if (process.env.NODE_ENV !== 'production' && process.env.SAVE_SAMPLE_IMAGES === 'true' && this.savedImageCount < 3) {
+        const fs = require('fs');
+        const path = require('path');
+        const sampleDir = path.join(process.cwd(), 'debug-images');
+        
+        // Create debug directory if it doesn't exist
+        if (!fs.existsSync(sampleDir)) {
+          fs.mkdirSync(sampleDir, { recursive: true });
+        }
+        
+        // Save first 3 images only
+        const timestamp = Date.now();
+        const randomId = Math.random().toString(36).substring(2, 8);
+        const samplePath = path.join(sampleDir, `page-${timestamp}-${randomId}.${imageFormat}`);
+        
+        fs.writeFileSync(samplePath, imageBuffer);
+        this.savedImageCount++; // Increment counter
+        console.log(`\n🖼️  IMAGE SAVED (${this.savedImageCount}/3): ${samplePath}`);
+        console.log(`   Size: ${(imageBuffer.length / 1024).toFixed(2)} KB\n`);
+      }
+
       // Create comprehensive prompt based on disciplines and targets
       const prompt = this.createAnalysisPrompt(disciplines, targets);
 
       // 🔍 DEBUG: Log prompt being sent
-      console.log('\n========== OPENAI PROMPT INFO ==========');
-      console.log(`Prompt length: ${prompt.length} characters`);
-      console.log(`First 500 chars of prompt:\n${prompt.substring(0, 500)}...`);
-      console.log('=========================================\n');
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('\n========== OPENAI PROMPT INFO ==========');
+        console.log(`Prompt length: ${prompt.length} characters`);
+        console.log(`First 500 chars of prompt:\n${prompt.substring(0, 500)}...`);
+        console.log('=========================================\n');
+      }
 
       // Retry logic with exponential backoff for rate limiting
       const maxRetries = parseInt(process.env.OPENAI_MAX_RETRIES || "3", 10);
@@ -218,28 +325,33 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       const analysisText = response.choices[0]?.message?.content;
       
       // 🔍 DEBUG: Log full OpenAI response metadata
-      console.log('\n========== OPENAI RESPONSE INFO ==========');
-      console.log(`Model used: ${response.model}`);
-      console.log(`Total tokens: ${response.usage?.total_tokens || 'N/A'}`);
-      console.log(`Prompt tokens: ${response.usage?.prompt_tokens || 'N/A'}`);
-      console.log(`Completion tokens: ${response.usage?.completion_tokens || 'N/A'}`);
-      console.log(`Response length: ${analysisText?.length || 0} characters`);
-      console.log(`Finish reason: ${response.choices[0]?.finish_reason || 'N/A'}`);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('\n========== OPENAI RESPONSE INFO ==========');
+        console.log(`Model used: ${response.model}`);
+        console.log(`Total tokens: ${response.usage?.total_tokens || 'N/A'}`);
+        console.log(`Prompt tokens: ${response.usage?.prompt_tokens || 'N/A'}`);
+        console.log(`Completion tokens: ${response.usage?.completion_tokens || 'N/A'}`);
+        console.log(`Response length: ${analysisText?.length || 0} characters`);
+        console.log(`Finish reason: ${response.choices[0]?.finish_reason || 'N/A'}`);
+      
+        if (!analysisText) {
+          console.log('❌ ERROR: No analysis text in response!');
+          console.log('Full response:', JSON.stringify(response, null, 2));
+        }
+        
+        console.log('\n--- FULL OPENAI RESPONSE (First 1000 chars) ---');
+        console.log(analysisText?.substring(0, 1000) || 'N/A');
+        console.log('\n--- END OF RESPONSE PREVIEW ---');
+        
+        if (analysisText && analysisText.length > 1000) {
+          console.log(`\n... (${analysisText.length - 1000} more characters)`);
+        }
+        console.log('==========================================\n');
+      }
       
       if (!analysisText) {
-        console.log('❌ ERROR: No analysis text in response!');
-        console.log('Full response:', JSON.stringify(response, null, 2));
         throw new Error("No analysis response from OpenAI");
       }
-      
-      console.log('\n--- FULL OPENAI RESPONSE (First 1000 chars) ---');
-      console.log(analysisText.substring(0, 1000));
-      console.log('\n--- END OF RESPONSE PREVIEW ---');
-      
-      if (analysisText.length > 1000) {
-        console.log(`\n... (${analysisText.length - 1000} more characters)`);
-      }
-      console.log('==========================================\n');
 
           // Log response preview for debugging
           this.logger.log(
@@ -254,29 +366,31 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
           );
           
           // 🔍 DEBUG: Log parsed result details
-          console.log('\n========== PARSED RESULT DETAILS ==========');
-          console.log(`✅ Rooms: ${result.rooms.length}`);
-          if (result.rooms.length > 0) {
-            console.log('First room:', JSON.stringify(result.rooms[0], null, 2));
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('\n========== PARSED RESULT DETAILS ==========');
+            console.log(`✅ Rooms: ${result.rooms.length}`);
+            if (result.rooms.length > 0) {
+              console.log('First room:', JSON.stringify(result.rooms[0], null, 2));
+            }
+            console.log(`✅ Walls: ${result.walls.length}`);
+            if (result.walls.length > 0) {
+              console.log('First wall:', JSON.stringify(result.walls[0], null, 2));
+            }
+            console.log(`✅ Pipes: ${result.pipes.length}`);
+            if (result.pipes.length > 0) {
+              console.log('First pipe:', JSON.stringify(result.pipes[0], null, 2));
+            }
+            console.log(`✅ Ducts: ${result.ducts.length}`);
+            if (result.ducts.length > 0) {
+              console.log('First duct:', JSON.stringify(result.ducts[0], null, 2));
+            }
+            console.log(`✅ Fixtures: ${result.fixtures.length}`);
+            if (result.fixtures.length > 0) {
+              console.log('First fixture:', JSON.stringify(result.fixtures[0], null, 2));
+            }
+            console.log(`✅ Scale: ${result.scale?.detected || 'N/A'} (ratio: ${result.scale?.ratio || 'N/A'})`);
+            console.log('===========================================\n');
           }
-          console.log(`✅ Walls: ${result.walls.length}`);
-          if (result.walls.length > 0) {
-            console.log('First wall:', JSON.stringify(result.walls[0], null, 2));
-          }
-          console.log(`✅ Pipes: ${result.pipes.length}`);
-          if (result.pipes.length > 0) {
-            console.log('First pipe:', JSON.stringify(result.pipes[0], null, 2));
-          }
-          console.log(`✅ Ducts: ${result.ducts.length}`);
-          if (result.ducts.length > 0) {
-            console.log('First duct:', JSON.stringify(result.ducts[0], null, 2));
-          }
-          console.log(`✅ Fixtures: ${result.fixtures.length}`);
-          if (result.fixtures.length > 0) {
-            console.log('First fixture:', JSON.stringify(result.fixtures[0], null, 2));
-          }
-          console.log(`✅ Scale: ${result.scale?.detected || 'N/A'} (ratio: ${result.scale?.ratio || 'N/A'})`);
-          console.log('===========================================\n');
           
           // Log what was extracted
           this.logger.log(
@@ -331,13 +445,15 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
       );
     } catch (error: any) {
       // 🔍 DEBUG: Log detailed error information
-      console.log('\n========== OPENAI ERROR ==========');
-      console.log('Error message:', error.message);
-      console.log('Error status:', error.status);
-      console.log('Error code:', error.code);
-      console.log('Error type:', error.type);
-      console.log('Full error:', JSON.stringify(error, null, 2));
-      console.log('==================================\n');
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('\n========== OPENAI ERROR ==========');
+        console.log('Error message:', error.message);
+        console.log('Error status:', error.status);
+        console.log('Error code:', error.code);
+        console.log('Error type:', error.type);
+        console.log('Full error:', JSON.stringify(error, null, 2));
+        console.log('==================================\n');
+      }
       
       const errorDetails = {
         message: error.message,

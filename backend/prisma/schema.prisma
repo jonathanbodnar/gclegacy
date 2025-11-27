@@ -120,11 +120,12 @@ model Feature {
 }
 
 model Material {
-  id    String @id @default(cuid())
-  jobId String
-  sku   String
-  qty   Float
-  uom   String // Unit of measure: "ea", "ft", "ft2", etc.
+  id          String @id @default(cuid())
+  jobId       String
+  sku         String
+  description String? // Product description from rules
+  qty         Float
+  uom         String // Unit of measure: "ea", "ft", "ft2", etc.
 
   // Traceability
   ruleId  String?

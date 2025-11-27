@@ -38,6 +38,7 @@ export class MaterialsService {
       where: { id: jobId },
       include: {
         materials: true,
+        features: true,
       },
     });
 
@@ -52,13 +53,13 @@ export class MaterialsService {
       uom: material.uom,
       source: {
         rule: this.getRuleDescription(material.ruleId),
-        features: this.extractFeatureIds(material.sources),
+        features: this.getFeatureCounts(material.sources, job.features),
         ruleId: material.ruleId,
       },
       // In production, you would look up pricing from a materials database
       unitPrice: this.getMockUnitPrice(material.sku),
       totalPrice: this.getMockUnitPrice(material.sku) * material.qty,
-      description: this.getMockDescription(material.sku),
+      description: material.description || this.getMockDescription(material.sku), // Use DB description first
       category: this.getMockCategory(material.sku),
     }));
 
@@ -93,14 +94,32 @@ export class MaterialsService {
     return ruleId ? (ruleDescriptions[ruleId] || `Rule ${ruleId}`) : 'Unknown Rule';
   }
 
-  private extractFeatureIds(sources: any): string[] {
-    if (!sources) return [];
+  private getFeatureCounts(sources: any, features: any[]): string[] {
+    if (!sources || !features) return [];
     
+    // Get feature IDs from sources
+    let featureIds: string[] = [];
     if (typeof sources === 'object' && sources.features) {
-      return Array.isArray(sources.features) ? sources.features : [sources.features];
+      featureIds = Array.isArray(sources.features) ? sources.features : [sources.features];
     }
     
-    return [];
+    if (featureIds.length === 0) return [];
+    
+    // Count features by type
+    const counts = new Map<string, number>();
+    
+    for (const id of featureIds) {
+      const feature = features.find(f => f.id === id);
+      if (feature) {
+        const type = feature.type.toLowerCase();
+        counts.set(type, (counts.get(type) || 0) + 1);
+      }
+    }
+    
+    // Format as ["17 rooms", "5 walls"]
+    return Array.from(counts.entries()).map(
+      ([type, count]) => `${count} ${type}${count > 1 ? 's' : ''}`
+    );
   }
 
   // Mock pricing data - in production, this would come from a materials database

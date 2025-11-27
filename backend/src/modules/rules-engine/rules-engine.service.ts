@@ -338,6 +338,7 @@ export class RulesEngineService {
         data: {
           jobId,
           sku: material.sku,
+          description: material.description, // Save description from rules
           qty: material.qty,
           uom: material.uom,
           ruleId: material.source.ruleId,
