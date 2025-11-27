@@ -86,12 +86,12 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
 
   const tabs = [
     { id: 'summary', label: 'Summary', count: null },
-    { id: 'rooms', label: 'Rooms', count: data.rooms.length },
-    { id: 'walls', label: 'Walls', count: data.walls.length },
-    { id: 'openings', label: 'Openings', count: data.openings.length },
-    { id: 'pipes', label: 'Pipes', count: data.pipes.length },
-    { id: 'ducts', label: 'Ducts', count: data.ducts.length },
-    { id: 'fixtures', label: 'Fixtures', count: data.fixtures.length },
+    { id: 'rooms', label: 'Rooms', count: data.rooms?.length },
+    { id: 'walls', label: 'Walls', count: data.walls?.length },
+    { id: 'openings', label: 'Openings', count: data.openings?.length },
+    { id: 'pipes', label: 'Pipes', count: data.pipes?.length },
+    { id: 'ducts', label: 'Ducts', count: data.ducts?.length },
+    { id: 'fixtures', label: 'Fixtures', count: data.fixtures?.length },
     { id: 'materials', label: 'Materials', count: null },
   ];
 
@@ -102,37 +102,37 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
     }).format(num);
   };
 
-  const getTotalArea = () => data.rooms.reduce((sum, room) => sum + room.area, 0);
-  const getTotalWallLength = () => data.walls.reduce((sum, wall) => sum + wall.length, 0);
-  const getTotalPipeLength = () => data.pipes.reduce((sum, pipe) => sum + pipe.length, 0);
-  const getTotalDuctLength = () => data.ducts.reduce((sum, duct) => sum + duct.length, 0);
+  const getTotalArea = () => data.rooms?.reduce((sum, room) => sum + room.area, 0);
+  const getTotalWallLength = () => data.walls?.reduce((sum, wall) => sum + wall.length, 0);
+  const getTotalPipeLength = () => data.pipes?.reduce((sum, pipe) => sum + pipe.length, 0);
+  const getTotalDuctLength = () => data.ducts?.reduce((sum, duct) => sum + duct.length, 0);
 
   const renderSummary = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-        <div className="text-2xl font-bold text-blue-900">{data.rooms.length}</div>
+        <div className="text-2xl font-bold text-blue-900">{data.rooms?.length}</div>
         <div className="text-sm text-blue-700">Total Rooms</div>
         <div className="text-xs text-blue-600 mt-1">
-          {formatNumber(getTotalArea())} {data.units.area}
+          {formatNumber(getTotalArea())} {data.units?.area}
         </div>
       </div>
 
       <div className="bg-green-50 border border-green-200 rounded-lg p-6">
         <div className="text-2xl font-bold text-green-900">{formatNumber(getTotalWallLength())}</div>
-        <div className="text-sm text-green-700">Wall Length ({data.units.linear})</div>
-        <div className="text-xs text-green-600 mt-1">{data.walls.length} wall segments</div>
+        <div className="text-sm text-green-700">Wall Length ({data.units?.linear})</div>
+        <div className="text-xs text-green-600 mt-1">{data.walls?.length} wall segments</div>
       </div>
 
       <div className="bg-purple-50 border border-purple-200 rounded-lg p-6">
         <div className="text-2xl font-bold text-purple-900">{formatNumber(getTotalPipeLength())}</div>
-        <div className="text-sm text-purple-700">Pipe Length ({data.units.linear})</div>
-        <div className="text-xs text-purple-600 mt-1">{data.pipes.length} pipe runs</div>
+        <div className="text-sm text-purple-700">Pipe Length ({data.units?.linear})</div>
+        <div className="text-xs text-purple-600 mt-1">{data.pipes?.length} pipe runs</div>
       </div>
 
       <div className="bg-orange-50 border border-orange-200 rounded-lg p-6">
         <div className="text-2xl font-bold text-orange-900">{formatNumber(getTotalDuctLength())}</div>
-        <div className="text-sm text-orange-700">Duct Length ({data.units.linear})</div>
-        <div className="text-xs text-orange-600 mt-1">{data.ducts.length} duct runs</div>
+        <div className="text-sm text-orange-700">Duct Length ({data.units?.linear})</div>
+        <div className="text-xs text-orange-600 mt-1">{data.ducts?.length} duct runs</div>
       </div>
     </div>
   );
@@ -172,7 +172,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
       case 'rooms':
         return (
           <div className="space-y-6">
-            {data.rooms.map((room, index) => (
+            {data.rooms?.map((room, index) => (
               <div key={room.id || index} className="bg-white rounded-lg border border-gray-200 p-6">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Basic Info */}
@@ -180,7 +180,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
                     <h4 className="font-semibold text-gray-900 mb-2">{room.name}</h4>
                     <div className="space-y-1 text-sm text-gray-600">
                       <div><span className="font-medium">ID:</span> {room.id}</div>
-                      <div><span className="font-medium">Area:</span> {formatNumber(room.area)} {data.units.area}</div>
+                      <div><span className="font-medium">Area:</span> {formatNumber(room.area)} {data.units?.area}</div>
                       <div><span className="font-medium">Program:</span> {room.program}</div>
                       {room.dimensions && (
                         <div><span className="font-medium">Dimensions:</span> {room.dimensions.width}' × {room.dimensions.length}'</div>
@@ -208,7 +208,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
                     <div>
                       <h5 className="font-medium text-gray-700 mb-2">Specifications</h5>
                       <div className="space-y-1 text-xs text-gray-600">
-                        {Object.entries(room.specifications).map(([key, value]) => (
+                        {Object.entries(room.specifications)?.map(([key, value]) => (
                           <div key={key}>
                             <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
                             <span className="ml-1">{String(value)}</span>
@@ -252,7 +252,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
                       <div><span className="font-medium">ID:</span> {pipe.id}</div>
                       <div><span className="font-medium">Service:</span> {pipe.service}</div>
                       <div><span className="font-medium">Diameter:</span> {formatNumber(pipe.diameterIn, 2)}"</div>
-                      <div><span className="font-medium">Length:</span> {formatNumber(pipe.length)} {data.units.linear}</div>
+                      <div><span className="font-medium">Length:</span> {formatNumber(pipe?.length)} {data.units.linear}</div>
                       {pipe.material && (
                         <div><span className="font-medium">Material:</span> {pipe.material}</div>
                       )}
@@ -366,7 +366,7 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
             <div>
               <h3 className="text-lg font-semibold text-gray-900">Takeoff Results</h3>
               <p className="text-sm text-gray-500 mt-1">
-                Analysis complete • Units: {data.units.linear}, {data.units.area}
+                Analysis complete • Units: {data.units?.linear}, {data.units?.area}
               </p>
             </div>
             

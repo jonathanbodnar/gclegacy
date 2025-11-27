@@ -107,6 +107,9 @@ class ApiService {
     if (projectId) {
       formData.append('projectId', projectId);
     }
+    else {
+      formData.append('projectId', "project_1");
+    }
 
     const response = await fetch(`${this.baseUrl}/files`, {
       method: 'POST',
@@ -169,7 +172,7 @@ class ApiService {
       }
       
       console.log('🔍 Checking health at:', healthUrl);
-      const response = await fetch(healthUrl);
+      const response = await fetch("http://localhost:4000/v1/health");
       const data = await response.json();
       console.log('✅ Health response:', data);
       return data;

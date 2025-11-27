@@ -238,7 +238,7 @@ function App() {
         "Wall",
         wall.id,
         wall.partitionType || "",
-        wall.length.toString(),
+        wall?.length?.toString(),
         data.units.linear,
       ]);
     });
@@ -287,7 +287,7 @@ function App() {
                 <span>{step.icon}</span>
                 <span className="text-sm font-medium">{step.label}</span>
               </div>
-              {index < steps.length - 1 && (
+              {index < steps?.length - 1 && (
                 <div className="w-8 h-0.5 bg-gray-300"></div>
               )}
             </React.Fragment>
