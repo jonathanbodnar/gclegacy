@@ -172,7 +172,7 @@ class ApiService {
       }
       
       console.log('🔍 Checking health at:', healthUrl);
-      const response = await fetch("http://localhost:4000/v1/health");
+      const response = await fetch("https://gclegacy-backend-nodejs.onrender.com/v1/health");
       const data = await response.json();
       console.log('✅ Health response:', data);
       return data;
