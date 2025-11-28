@@ -3,6 +3,8 @@ import { JobDocument } from '../models/job.model';
 import { SheetDocument, SheetModel } from '../models/sheet.model';
 import { FeatureModel, FeatureType } from '../models/feature.model';
 import { PageFeatureSet } from './openai-plan.service';
+import { ValidationService } from './vision/validation.service';
+import { ConsistencyCheckerService } from './vision/consistency-checker.service';
 
 const normalizeNumber = (value?: number): number | undefined => {
   if (value === null || value === undefined) {
@@ -15,6 +17,9 @@ const normalizeNumber = (value?: number): number | undefined => {
 };
 
 export class FeatureExtractionService {
+  private readonly validationService = new ValidationService();
+  private readonly consistencyChecker = new ConsistencyCheckerService();
+
   async persist(job: JobDocument, pages: PageFeatureSet[]) {
     const sheetDocs: SheetDocument[] = [];
     const featureDocs: Array<{
@@ -30,17 +35,21 @@ export class FeatureExtractionService {
     const sheetMap: Record<number, SheetDocument> = {};
 
     for (const page of pages) {
-      const sheet = await SheetModel.create({
-        job: job._id,
-        index: page.pageIndex,
-        name: page.sheetTitle || `Sheet ${page.pageIndex + 1}`,
-        discipline: page.discipline,
-        scale: page.scale,
-        units: page.units,
-        metadata: {
-          notes: page.notes,
+      const sheet = await SheetModel.findOneAndUpdate(
+        { job: job._id, index: page.pageIndex },
+        {
+          $set: {
+            name: page.sheetTitle || `Sheet ${page.pageIndex + 1}`,
+            discipline: page.discipline,
+            scale: page.scale,
+            units: page.units,
+            metadata: {
+              notes: page.notes,
+            },
+          },
         },
-      });
+        { new: true, upsert: true, setDefaultsOnInsert: true },
+      ).exec();
       sheetDocs.push(sheet);
       sheetMap[page.pageIndex] = sheet;
 
@@ -131,14 +140,39 @@ export class FeatureExtractionService {
       );
     }
 
-    const createdFeatures =
+    const validatedDocs =
       featureDocs.length > 0
-        ? await FeatureModel.insertMany(featureDocs, { ordered: false })
+        ? featureDocs.filter((doc) => this.validationService.validateFeature(this.buildValidationPayload(doc)).isValid)
         : [];
+
+    const createdFeatures =
+      validatedDocs.length > 0
+        ? await FeatureModel.insertMany(validatedDocs, { ordered: false })
+        : [];
+
+    if (createdFeatures.length > 0) {
+      await this.consistencyChecker.checkConsistency(job._id.toString());
+    }
 
     return {
       sheets: sheetDocs,
       features: createdFeatures,
+    };
+  }
+
+  private buildValidationPayload(doc: {
+    type: FeatureType;
+    area?: number;
+    length?: number;
+    count?: number;
+    props?: Record<string, unknown>;
+  }) {
+    return {
+      type: doc.type,
+      area: doc.area,
+      length: doc.length,
+      count: doc.count,
+      props: doc.props,
     };
   }
 }

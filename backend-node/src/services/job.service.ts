@@ -89,6 +89,17 @@ export const updateJobMetadata = async (
   await JobModel.findByIdAndUpdate(jobId, { $set: metadata });
 };
 
+export const mergeJobOptions = async (jobId: string, patch: Record<string, unknown>): Promise<void> => {
+  const job = await JobModel.findById(jobId).select('options');
+  if (!job) {
+    return;
+  }
+  const baseOptions =
+    job.options && typeof job.options === 'object' && !Array.isArray(job.options) ? (job.options as Record<string, unknown>) : {};
+  job.options = { ...baseOptions, ...patch };
+  await job.save();
+};
+
 export const clearJobData = async (jobId: string): Promise<void> => {
   await Promise.all([
     SheetModel.deleteMany({ job: jobId }),

@@ -10,20 +10,21 @@ export const standardCommercialRuleSet = {
     waste_pct: 0.07,
   },
   rules: [
+    // Architectural
     {
-      when: { feature: 'wall', partitionType: 'Interior' },
+      when: { feature: 'wall', partitionType: 'PT-1' },
       materials: [
         {
           sku: 'STUD-362-20GA',
           qty: 'length * 0.75',
           uom: 'ea',
-          description: '3-5/8" Interior Stud, 20 GA',
+          description: '3-5/8" Metal Stud, 20 GA',
         },
         {
           sku: 'GWB-58X-TypeX',
           qty: 'length * height_ft * 2 / 32',
           uom: 'ea',
-          description: '5/8" Gypsum Board, Type X (both sides)',
+          description: '5/8" Gypsum Board, Type X',
         },
         {
           sku: 'INSUL-ACOUSTIC',
@@ -34,59 +35,90 @@ export const standardCommercialRuleSet = {
       ],
     },
     {
-      when: { feature: 'wall', partitionType: 'Exterior' },
+      when: { feature: 'wall', partitionType: 'PT-2' },
       materials: [
         {
-          sku: 'STUD-600-18GA',
-          qty: 'length * 0.6',
+          sku: 'STUD-600-20GA',
+          qty: 'length * 0.75',
           uom: 'ea',
-          description: '6" Exterior Stud, 18 GA',
+          description: '6" Metal Stud, 20 GA',
         },
         {
-          sku: 'SHEATH-OSB-716',
-          qty: 'length * height_ft / 32',
+          sku: 'GWB-58X-TypeX',
+          qty: 'length * height_ft * 2 / 32',
           uom: 'ea',
-          description: '7/16" OSB Sheathing',
+          description: '5/8" Gypsum Board, Type X',
+        },
+      ],
+    },
+    // Plumbing
+    {
+      when: { feature: 'pipe', service: 'CW', diameterIn: 1 },
+      materials: [
+        {
+          sku: 'PVC-1IN',
+          qty: 'length * (1 + waste_pct)',
+          uom: 'ft',
+          description: '1" PVC Pipe, Schedule 40',
         },
         {
-          sku: 'AIR-BARRIER',
-          qty: 'length * height_ft',
-          uom: 'ft2',
-          description: 'Exterior Air/Vapor Barrier',
+          sku: 'COUPLING-1IN',
+          qty: 'length / 10',
+          uom: 'ea',
+          description: '1" PVC Coupling',
         },
       ],
     },
     {
-      when: { feature: 'pipe', service: 'Water' },
+      when: { feature: 'pipe', service: 'HW', diameterIn: 0.75 },
       materials: [
         {
-          sku: 'PVC-2IN',
+          sku: 'COPPER-3/4IN',
           qty: 'length * (1 + waste_pct)',
           uom: 'ft',
-          description: '2" Domestic Water Pipe',
+          description: '3/4" Copper Pipe, Type L',
         },
         {
-          sku: 'PIPE-HANGER',
-          qty: 'length / 8',
+          sku: 'ELBOW-3/4IN',
+          qty: 'length / 20',
           uom: 'ea',
-          description: 'Pipe Hangers & Supports',
+          description: '3/4" Copper 90° Elbow',
         },
       ],
     },
+    // HVAC
     {
-      when: { feature: 'duct', service: 'HVAC' },
+      when: { feature: 'duct', size: '12x10' },
       materials: [
         {
-          sku: 'DUCT-12X12',
+          sku: 'DUCT-12X10',
           qty: 'length * (1 + waste_pct)',
           uom: 'ft',
-          description: '12" x 12" Galvanized Duct',
+          description: '12" x 10" Galvanized Duct',
         },
         {
-          sku: 'REGISTER-12X12',
-          qty: 'length / 40',
+          sku: 'REGISTER-12X10',
+          qty: 'length / 50',
           uom: 'ea',
-          description: '12" x 12" Supply Register',
+          description: '12" x 10" Supply Register',
+        },
+      ],
+    },
+    // Electrical / Fixtures
+    {
+      when: { feature: 'fixture', fixtureType: 'FD2' },
+      materials: [
+        {
+          sku: 'LED-2X4-40W',
+          qty: 'count',
+          uom: 'ea',
+          description: '2x4 LED Troffer, 40W',
+        },
+        {
+          sku: 'SWITCH-SINGLE',
+          qty: 'count / 4',
+          uom: 'ea',
+          description: 'Single Pole Switch, 15A',
         },
       ],
     },
@@ -134,5 +166,4 @@ export const residentialRuleSet = {
     waste_pct: 0.05,
   },
 } as const;
-
 

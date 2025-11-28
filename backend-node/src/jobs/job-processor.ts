@@ -1,22 +1,53 @@
 import fs from 'fs/promises';
 import { Types } from 'mongoose';
 import { JobModel, JobDocument } from '../models/job.model';
+import { FileDocument } from '../models/file.model';
 import { SheetDocument } from '../models/sheet.model';
 import { FeatureDocument } from '../models/feature.model';
 import { sleep } from '../utils/time';
 import { logger } from '../utils/logger';
 import { sendJobUpdateWebhook } from '../services/webhook.service';
-import { updateJobStatus, updateJobMetadata, clearJobData, listQueuedJobs } from '../services/job.service';
-import { OpenAIPlanService } from '../services/openai-plan.service';
+import {
+  updateJobStatus,
+  updateJobMetadata,
+  clearJobData,
+  listQueuedJobs,
+  mergeJobOptions,
+} from '../services/job.service';
+import { OpenAIPlanService, PageFeatureSet } from '../services/openai-plan.service';
 import { FeatureExtractionService } from '../services/feature-extraction.service';
 import { rulesEngineService } from '../services/rules-engine.service';
-type PopulatedJob = JobDocument & { file: any };
+import { IngestService } from '../services/ingest/ingest.service';
+import { SheetClassificationService } from '../services/vision/sheet-classification.service';
+import { ScaleExtractionService } from '../services/vision/scale-extraction.service';
+import { SpaceExtractionService } from '../services/vision/space-extraction.service';
+import { MaterialsExtractionService } from '../services/vision/materials-extraction.service';
+import { RoomScheduleExtractionService } from '../services/vision/room-schedule-extraction.service';
+import { RoomSpatialMappingService } from '../services/vision/room-spatial-mapping.service';
+import { PartitionTypeExtractionService } from '../services/vision/partition-type-extraction.service';
+import { WallRunExtractionService } from '../services/vision/wall-run-extraction.service';
+import { CeilingHeightExtractionService } from '../services/vision/ceiling-height-extraction.service';
+import { FinalDataFusionService } from '../services/vision/final-data-fusion.service';
+import { TakeoffAggregatorService } from '../services/vision/takeoff-aggregator.service';
+type PopulatedJob = JobDocument & { file: FileDocument };
 
 class JobProcessor {
   private queue: string[] = [];
   private processing = false;
   private openAiPlanService = new OpenAIPlanService();
   private featureExtractionService = new FeatureExtractionService();
+  private ingestService = new IngestService();
+  private sheetClassificationService = new SheetClassificationService();
+  private scaleExtractionService = new ScaleExtractionService();
+  private spaceExtractionService = new SpaceExtractionService();
+  private materialsExtractionService = new MaterialsExtractionService();
+  private roomScheduleExtractionService = new RoomScheduleExtractionService();
+  private roomSpatialMappingService = new RoomSpatialMappingService();
+  private partitionTypeExtractionService = new PartitionTypeExtractionService();
+  private wallRunExtractionService = new WallRunExtractionService();
+  private ceilingHeightExtractionService = new CeilingHeightExtractionService();
+  private finalDataFusionService = new FinalDataFusionService();
+  private takeoffAggregator = new TakeoffAggregatorService();
 
   enqueue(jobId: string) {
     if (this.queue.includes(jobId)) {
@@ -92,11 +123,130 @@ class JobProcessor {
       const localFilePath = job.file.storagePath;
       const fileBuffer = await fs.readFile(localFilePath);
 
+      const ingestResult = await this.ingestService.ingestFile(
+        job,
+        fileBuffer,
+        job.disciplines,
+        job.options as Record<string, unknown> | undefined,
+      );
+
+      await mergeJobOptions(jobId, {
+        ingestMetadata: ingestResult.metadata,
+      });
+
+      const sheetClassifications = await this.sheetClassificationService.classifySheets(
+        ingestResult.sheets,
+      );
+      if (sheetClassifications.length > 0) {
+        await mergeJobOptions(jobId, { sheetClassifications });
+      }
+
+      const scaleAnnotations = await this.scaleExtractionService.extractScales(
+        ingestResult.sheets,
+      );
+      if (scaleAnnotations.length > 0) {
+        await mergeJobOptions(jobId, { scaleAnnotations });
+      }
+
+      const spaces = await this.spaceExtractionService.extractSpaces(ingestResult.sheets);
+      if (spaces.length > 0) {
+        await mergeJobOptions(jobId, { spaces });
+      }
+
+      const spaceFinishes = await this.materialsExtractionService.extractFinishes(
+        ingestResult.sheets,
+      );
+      if (spaceFinishes.length > 0) {
+        await mergeJobOptions(jobId, { spaceFinishes });
+      }
+
+      const roomSchedules = await this.roomScheduleExtractionService.extractRoomSchedules(
+        ingestResult.sheets,
+      );
+      if (roomSchedules.length > 0) {
+        await mergeJobOptions(jobId, { roomSchedules });
+      }
+
+      const roomSpatialMappings = await this.roomSpatialMappingService.mapRooms(
+        roomSchedules,
+        ingestResult.sheets,
+      );
+      if (roomSpatialMappings.length > 0) {
+        await mergeJobOptions(jobId, { roomSpatialMappings });
+      }
+
+      await updateJobStatus(jobId, 'PROCESSING', {
+        progress: 50,
+        message: 'Room schedules and spatial mapping completed',
+      });
+
+      const partitionTypes = await this.partitionTypeExtractionService.extractPartitionTypes(
+        ingestResult.sheets,
+      );
+      if (partitionTypes.length > 0) {
+        await mergeJobOptions(jobId, { partitionTypes });
+      }
+
+      const wallRuns = await this.wallRunExtractionService.extractWallRuns(
+        ingestResult.sheets,
+        partitionTypes,
+        spaces,
+      );
+      if (wallRuns.length > 0) {
+        await mergeJobOptions(jobId, { wallRuns });
+      }
+
+      const ceilingHeights = await this.ceilingHeightExtractionService.extractHeights(
+        ingestResult.sheets,
+        roomSpatialMappings,
+        spaces,
+      );
+      if (ceilingHeights.length > 0) {
+        await mergeJobOptions(jobId, { ceilingHeights });
+      }
+
+      let fusionData: any;
+      try {
+        fusionData = this.finalDataFusionService.fuse({
+          sheets: ingestResult.sheets || [],
+          roomSchedules,
+          roomSpatialMappings,
+          ceilingHeights,
+          wallRuns,
+          partitionTypes,
+          scaleAnnotations,
+          spaces,
+          spaceFinishes,
+        });
+        if (fusionData) {
+          await mergeJobOptions(jobId, { fusionData });
+        }
+      } catch (fusionError) {
+        logger.warn(
+          `Final data fusion failed for job ${jobId}: ${
+            fusionError instanceof Error ? fusionError.message : fusionError
+          }`,
+        );
+      }
+
+      await updateJobStatus(jobId, 'PROCESSING', {
+        progress: 60,
+        message: 'Partition, wall, and ceiling extraction completed',
+      });
+
       const pipelineResult = await this.processWithOpenAI(job, fileBuffer);
       await updateJobStatus(jobId, 'PROCESSING', {
-        progress: 65,
+        progress: 75,
         message: 'OpenAI analysis completed',
       });
+
+      await this.generateSchemaTakeoff(
+        jobId,
+        pipelineResult.analysisPages,
+        pipelineResult.targetSummary,
+        pipelineResult.features,
+        fusionData,
+      );
 
       await sleep(250);
       const ruleSetId = job.materialsRuleSetId?.toString();
@@ -155,6 +305,7 @@ class JobProcessor {
     sheets: SheetDocument[];
     features: FeatureDocument[];
     targetSummary: Record<string, number>;
+    analysisPages: PageFeatureSet[];
   }> {
     const analysis = await this.openAiPlanService.analyze(
       fileBuffer,
@@ -168,7 +319,7 @@ class JobProcessor {
     );
 
     const targetSummary = this.summarizeFeatures(features);
-    return { sheets, features, targetSummary };
+    return { sheets, features, targetSummary, analysisPages: analysis.pages };
   }
 
   private summarizeFeatures(features: FeatureDocument[]) {
@@ -204,6 +355,66 @@ class JobProcessor {
       label: `${sheet.name ?? `Sheet ${sheet.index + 1}`} overlay`,
       kind: 'overlay' as const,
       url: `https://storage.local/jobs/${jobId}/sheet-${sheet.index + 1}.png`,
+    }));
+  }
+
+  private async generateSchemaTakeoff(
+    jobId: string,
+    pages: PageFeatureSet[],
+    summary: Record<string, number>,
+    features: FeatureDocument[],
+    fusionData?: any,
+  ): Promise<void> {
+    if (!this.takeoffAggregator.isEnabled()) {
+      return;
+    }
+
+    try {
+      const transformedPages = this.transformPagesForAggregator(pages);
+      const result = await this.takeoffAggregator.aggregate({
+        jobId,
+        pages: transformedPages,
+        summary,
+        features,
+        fusion: fusionData,
+      });
+      if (result) {
+        await mergeJobOptions(jobId, { takeoff: result });
+      }
+    } catch (error) {
+      logger.warn(
+        `Schema takeoff aggregation failed for job ${jobId}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+  }
+
+  private transformPagesForAggregator(pages: PageFeatureSet[]) {
+    return (pages || []).map((page) => ({
+      fileName: page.sheetTitle,
+      pageIndex: page.pageIndex,
+      discipline: page.discipline,
+      scale:
+        typeof page.scale === 'object'
+          ? page.scale
+          : {
+              detected: page.scale ?? 'Unknown',
+              units: page.units === 'm' ? 'm' : 'ft',
+              ratio: undefined,
+            },
+      metadata: {
+        units: page.units,
+        notes: page.notes,
+      },
+      features: {
+        rooms: page.rooms,
+        walls: page.walls,
+        openings: page.openings,
+        pipes: page.pipes,
+        ducts: page.ducts,
+        fixtures: page.fixtures,
+      },
     }));
   }
 

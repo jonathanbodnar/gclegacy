@@ -1,134 +1,11 @@
-import OpenAI from 'openai';
 import { config } from '../config/env';
-import { renderPdfToImages, RenderedPage } from './pdf-renderer';
-
-const SYSTEM_PROMPT = `You are an AI assistant that extracts structured takeoff data from architectural plan images.
-Return high-confidence measurements only. Prefer imperial units (feet) when possible.
-
-Targets you may need to extract:
-- rooms (area, name, program)
-- walls (length, partition type, level)
-- doors/windows (width/height)
-- pipes/ducts (length, service, diameter or size)
-- fixtures (type, count)
-
-Always respond using the requested JSON schema and omit commentary.`;
-
-const pageSchema = {
-  name: 'PlanAnalysisPage',
-  schema: {
-    type: 'object',
-    properties: {
-      sheetTitle: { type: 'string', description: 'Sheet name or identifier', default: '' },
-      discipline: {
-        type: 'string',
-        description: 'Likely discipline for this sheet (A, P, M, E, or combo)',
-        default: 'A',
-      },
-      scale: { type: 'string', description: 'Plan scale annotation if visible', default: '' },
-      units: {
-        type: 'string',
-        enum: ['ft', 'm'],
-        description: 'Units observed on the sheet',
-        default: 'ft',
-      },
-      rooms: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            name: { type: 'string' },
-            program: { type: 'string' },
-            level: { type: 'string' },
-            areaSqFt: { type: 'number' },
-          },
-          required: ['areaSqFt'],
-        },
-        default: [],
-      },
-      walls: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            partitionType: { type: 'string' },
-            level: { type: 'string' },
-            lengthFt: { type: 'number' },
-            heightFt: { type: 'number' },
-          },
-          required: ['lengthFt'],
-        },
-        default: [],
-      },
-      openings: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            openingType: { type: 'string', enum: ['door', 'window'] },
-            widthFt: { type: 'number' },
-            heightFt: { type: 'number' },
-          },
-          required: ['openingType'],
-        },
-        default: [],
-      },
-      pipes: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            service: { type: 'string' },
-            diameterIn: { type: 'number' },
-            lengthFt: { type: 'number' },
-          },
-          required: ['lengthFt'],
-        },
-        default: [],
-      },
-      ducts: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            size: { type: 'string' },
-            service: { type: 'string' },
-            lengthFt: { type: 'number' },
-          },
-          required: ['lengthFt'],
-        },
-        default: [],
-      },
-      fixtures: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            fixtureType: { type: 'string' },
-            service: { type: 'string' },
-            count: { type: 'number' },
-          },
-          required: ['fixtureType'],
-        },
-        default: [],
-      },
-      notes: {
-        type: 'array',
-        items: { type: 'string' },
-        default: [],
-      },
-    },
-    required: ['rooms', 'walls', 'openings', 'pipes', 'ducts', 'fixtures'],
-    additionalProperties: false,
-  },
-  strict: true,
-};
+import { logger } from '../utils/logger';
+import {
+  PlanAnalysisPageResult,
+  PlanAnalysisResult as VisionPlanResult,
+  PlanAnalysisService,
+} from './vision/plan-analysis.service';
+import { OpenAIVisionService } from './vision/openai-vision.service';
 
 export interface PageFeatureSet {
   pageIndex: number;
@@ -141,7 +18,7 @@ export interface PageFeatureSet {
     name?: string;
     program?: string;
     level?: string;
-    areaSqFt: number;
+    areaSqFt?: number;
   }>;
   walls: Array<{
     id?: string;
@@ -181,25 +58,32 @@ export interface PlanAnalysisResult {
   pages: PageFeatureSet[];
 }
 
-type ResponseContentBlock = {
-  type?: string;
-  text?: string;
-  content?: ResponseContentBlock[];
-};
-
 export class OpenAIPlanService {
-  private client?: OpenAI;
+  private readonly planAnalyzer?: PlanAnalysisService;
 
   constructor() {
     if (config.openAiApiKey) {
-      this.client = new OpenAI({
+      const visionService = new OpenAIVisionService({
         apiKey: config.openAiApiKey,
+        allowMockFallback: config.vision.allowMock,
+        nodeEnv: config.nodeEnv,
+        maxRetries: config.openAiMaxRetries,
+        retryDelayMs: config.openAiRetryDelayMs,
       });
+
+      this.planAnalyzer = new PlanAnalysisService(visionService, {
+        batchSize: config.vision.batchSize,
+        pdfConversionTimeoutMs: config.vision.pdfConversionTimeoutMs,
+        pdfRenderDpi: config.vision.pdfRenderDpi,
+        pdfRenderMaxPages: config.vision.pdfRenderMaxPages,
+      });
+    } else {
+      logger.warn('OpenAI API key not configured - plan analysis disabled');
     }
   }
 
   isEnabled(): boolean {
-    return Boolean(this.client);
+    return Boolean(this.planAnalyzer);
   }
 
   async analyze(
@@ -208,133 +92,113 @@ export class OpenAIPlanService {
     disciplines: string[],
     targets: string[],
   ): Promise<PlanAnalysisResult> {
-    if (!this.client) {
+    if (!this.planAnalyzer) {
       throw new Error('OpenAI API key not configured');
     }
 
-    const renderedPages = await renderPdfToImages(pdfBuffer, config.openAiMaxPages);
-    const pages: PageFeatureSet[] = [];
+    const analysis: VisionPlanResult = await this.planAnalyzer.analyzePlanFile(
+      pdfBuffer,
+      fileName,
+      disciplines,
+      targets,
+    );
 
-    for (const page of renderedPages) {
-      const analysis = await this.analyzePage(page, fileName, disciplines, targets);
-      pages.push(analysis);
-    }
-
+    const pages = analysis.pages.map((page) => this.mapPageToFeatureSet(page));
     return { pages };
   }
 
-  private async analyzePage(
-    rendered: RenderedPage,
-    fileName: string,
-    disciplines: string[],
-    targets: string[],
-  ): Promise<PageFeatureSet> {
-    if (!this.client) {
-      throw new Error('OpenAI client is unavailable');
+  private mapPageToFeatureSet(page: PlanAnalysisPageResult): PageFeatureSet {
+    const units = page.scale?.units || 'ft';
+    const features = page.features || {};
+    const notes: string[] = [];
+    if (page.metadata?.viewType) {
+      notes.push(`View type: ${page.metadata.viewType}`);
+    }
+    if (page.metadata?.error) {
+      notes.push(`Vision error: ${page.metadata.error}`);
+    }
+    if (page.metadata?.sheetTitle && page.metadata.sheetTitle !== page.fileName) {
+      notes.push(`Detected title: ${page.metadata.sheetTitle}`);
     }
 
-    const base64 = rendered.buffer.toString('base64');
-    const response = await this.client.responses.create({
-      model: config.openAiModel,
-      temperature: config.openAiTemperature,
-      max_output_tokens: 1200,
-      input: [
-        {
-          role: 'system',
-          content: [
-            {
-              type: 'input_text',
-              text: SYSTEM_PROMPT,
-            },
-          ],
-        },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'input_text',
-              text: [
-                `File: ${fileName}`,
-                `Page index: ${rendered.pageIndex}`,
-                `Disciplines to prioritize: ${disciplines.join(', ') || 'ALL'}`,
-                `Targets requested: ${targets.join(', ')}`,
-                'Extract only measurable geometry (no guesses).',
-                'Return a JSON object that matches this schema exactly:',
-                JSON.stringify(pageSchema.schema),
-              ].join('\n'),
-            },
-            {
-              type: 'input_image',
-              image_url: `data:image/png;base64,${base64}`,
-              detail: 'high',
-            },
-          ],
-        },
-      ],
-    });
-
-    const jsonText = this.extractOutputText(response);
-    const sanitized = this.sanitizeJsonOutput(jsonText);
-    const parsed = JSON.parse(sanitized);
     return {
-      pageIndex: rendered.pageIndex,
-      sheetTitle: parsed.sheetTitle || `Sheet ${rendered.pageIndex + 1}`,
-      discipline: parsed.discipline,
-      scale: parsed.scale,
-      units: parsed.units,
-      rooms: parsed.rooms ?? [],
-      walls: parsed.walls ?? [],
-      openings: parsed.openings ?? [],
-      pipes: parsed.pipes ?? [],
-      ducts: parsed.ducts ?? [],
-      fixtures: parsed.fixtures ?? [],
-      notes: parsed.notes ?? [],
+      pageIndex: page.pageIndex,
+      sheetTitle: page.fileName || `Sheet ${page.pageIndex + 1}`,
+      discipline: page.discipline,
+      scale: page.scale?.detected,
+      units,
+      rooms: (features.rooms || []).map((room, idx) => ({
+        id: room.id || `room_${idx + 1}`,
+        name: room.name,
+        program: room.program ?? undefined,
+        level: room.level,
+        areaSqFt: this.convertArea(room.area, units),
+      })),
+      walls: (features.walls || []).map((wall, idx) => ({
+        id: wall.id || `wall_${idx + 1}`,
+        partitionType: wall.partitionType,
+        level: wall.level,
+        lengthFt: this.convertLength(wall.length, units),
+        heightFt: this.toNumber(wall.heightFt),
+      })),
+      openings: (features.openings || []).map((opening, idx) => ({
+        id: opening.id || `opening_${idx + 1}`,
+        openingType: opening.type === 'door' ? 'door' : 'window',
+        widthFt: this.toNumber(opening.width),
+        heightFt: this.toNumber(opening.height),
+      })),
+      pipes: (features.pipes || []).map((pipe, idx) => ({
+        id: pipe.id || `pipe_${idx + 1}`,
+        service: pipe.service,
+        diameterIn: this.toNumber(pipe.diameter),
+        lengthFt: this.convertLength(pipe.length, units),
+      })),
+      ducts: (features.ducts || []).map((duct, idx) => ({
+        id: duct.id || `duct_${idx + 1}`,
+        size: duct.size,
+        lengthFt: this.convertLength(duct.length, units),
+      })),
+      fixtures: (features.fixtures || []).map((fixture, idx) => ({
+        id: fixture.id || `fixture_${idx + 1}`,
+        fixtureType: fixture.type,
+        service: undefined,
+        count: this.toNumber(fixture.count) ?? 1,
+      })),
+      notes,
     };
   }
 
-  private extractOutputText(response: OpenAI.Responses.Response): string {
-    const outputs = (response.output ?? []) as Array<{ content?: ResponseContentBlock[] }>;
-    for (const output of outputs) {
-      for (const block of output.content ?? []) {
-        if (typeof block.text === 'string' && block.text.trim().length > 0) {
-          return block.text;
-        }
-        const nested = block.content?.find(
-          (child) => typeof child.text === 'string' && child.text.trim().length > 0,
-        );
-        if (nested && nested.text) {
-          return nested.text;
-        }
-      }
+  private toNumber(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
     }
-    return '{}';
+    if (typeof value === 'string') {
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
   }
 
-  private sanitizeJsonOutput(raw: string): string {
-    let text = raw.trim();
-
-    // Remove markdown fences like ```json ... ```
-    if (text.startsWith('```')) {
-      const firstNewline = text.indexOf('\n');
-      if (firstNewline !== -1) {
-        text = text.slice(firstNewline + 1);
-      }
-      if (text.endsWith('```')) {
-        text = text.slice(0, -3);
-      }
+  private convertLength(value: unknown, units: string): number | undefined {
+    const numeric = this.toNumber(value);
+    if (numeric === undefined) {
+      return undefined;
     }
-
-    // If stray fences remain, strip all ``` occurrences
-    text = text.replace(/```/g, '').trim();
-
-    // Attempt to extract the JSON object if extra commentary exists
-    const firstBrace = text.indexOf('{');
-    const lastBrace = text.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
-      text = text.slice(firstBrace, lastBrace + 1);
+    if (units === 'm') {
+      return numeric * 3.28084;
     }
+    return numeric;
+  }
 
-    return text;
+  private convertArea(value: unknown, units: string): number | undefined {
+    const numeric = this.toNumber(value);
+    if (numeric === undefined) {
+      return undefined;
+    }
+    if (units === 'm') {
+      return numeric * 10.7639;
+    }
+    return numeric;
   }
 }
 
