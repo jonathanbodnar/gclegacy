@@ -8,6 +8,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from "@nestjs/common";
 import {
   ApiTags,
@@ -92,6 +93,47 @@ class CreateJobResponse {
 export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
 
+  // Mapping of disciplines to their valid targets
+  private readonly disciplineTargetMap: Record<string, string[]> = {
+    A: ['rooms', 'walls', 'doors', 'windows'],
+    P: ['pipes', 'fixtures'],
+    M: ['ducts'],
+    E: ['fixtures']
+  };
+
+  /**
+   * Validate that all targets are valid for the selected disciplines
+   */
+  private validateDisciplinesAndTargets(disciplines: string[], targets: string[]): void {
+    // Get all valid targets for selected disciplines
+    const validTargets = new Set<string>();
+    for (const discipline of disciplines) {
+      const targetsForDiscipline = this.disciplineTargetMap[discipline] || [];
+      targetsForDiscipline.forEach(t => validTargets.add(t));
+    }
+
+    // Check if any target is invalid
+    const invalidTargets = targets.filter(t => !validTargets.has(t));
+    
+    if (invalidTargets.length > 0) {
+      const disciplineNames = {
+        A: 'Architectural',
+        P: 'Plumbing',
+        M: 'Mechanical',
+        E: 'Electrical'
+      };
+      
+      const selectedNames = disciplines.map(d => disciplineNames[d] || d).join(', ');
+      
+      throw new BadRequestException(
+        `Invalid targets for selected disciplines. ` +
+        `Selected disciplines: [${selectedNames}]. ` +
+        `Invalid targets: [${invalidTargets.join(', ')}]. ` +
+        `Valid targets for your disciplines: [${Array.from(validTargets).join(', ')}].`
+      );
+    }
+  }
+
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth("JWT-auth")
@@ -112,6 +154,12 @@ export class JobsController {
   async createJob(
     @Body() createJobDto: CreateJobRequest
   ): Promise<CreateJobResponse> {
+    // Validate disciplines and targets mapping
+    this.validateDisciplinesAndTargets(
+      createJobDto.disciplines, 
+      createJobDto.targets
+    );
+    
     return this.jobsService.createJob(createJobDto);
   }
 
