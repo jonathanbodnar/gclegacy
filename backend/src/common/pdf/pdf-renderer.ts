@@ -179,6 +179,12 @@ export async function renderPdfToImages(
       try {
         const page = await pdfDoc.getPage(pageNum);
         results.push(await renderPageWithDpi(page, dpi));
+        
+        // Yield back to event loop every 3 pages to prevent blocking
+        // This allows health checks and other requests to be processed
+        if (pageNum % 3 === 0) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
       } catch (pageError: any) {
         // Log but continue processing other pages
         console.warn(`Failed to render page ${pageNum}: ${pageError?.message || String(pageError)}. Skipping this page.`);
