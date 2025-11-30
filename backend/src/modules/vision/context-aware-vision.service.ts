@@ -1402,6 +1402,9 @@ If area truly cannot be determined, use null (not 0).`;
 
   /**
    * Filter extraction targets based on sheet classification
+   * 
+   * IMPORTANT: For MEP disciplines, we should always try to extract relevant elements
+   * even if the category is "other" - the discipline matters more for MEP extraction
    */
   private filterTargetsBySheetType(
     targets: string[],
@@ -1412,6 +1415,16 @@ If area truly cannot be determined, use null (not 0).`;
     }
 
     const category = classification.category;
+    const disciplines = classification.discipline || [];
+    const disciplineLower = disciplines.map(d => d.toLowerCase());
+    
+    // Check for MEP disciplines
+    const hasPlumbing = disciplineLower.some(d => d.includes('plumbing'));
+    const hasMechanical = disciplineLower.some(d => d.includes('mechanical'));
+    const hasElectrical = disciplineLower.some(d => d.includes('electrical'));
+    const hasFireProtection = disciplineLower.some(d => d.includes('fire'));
+    const hasMEPDiscipline = hasPlumbing || hasMechanical || hasElectrical || hasFireProtection;
+    
     const filteredTargets: string[] = [];
 
     for (const target of targets) {
@@ -1419,32 +1432,40 @@ If area truly cannot be determined, use null (not 0).`;
 
       switch (target) {
         case 'rooms':
+          // Rooms from architectural floor plans only
           shouldInclude = ROOM_EXTRACTION_CATEGORIES.includes(category) && 
                          (classification.isPrimaryPlan !== false);
           break;
+          
         case 'walls':
+          // Walls from architectural floor plans
           shouldInclude = WALL_EXTRACTION_CATEGORIES.includes(category);
           break;
+          
         case 'pipes':
+          // Pipes from plumbing/fire protection sheets OR fixture plans
           shouldInclude = PIPE_EXTRACTION_CATEGORIES.includes(category) ||
-                         classification.discipline?.some(d => 
-                           d.toLowerCase().includes('plumbing'));
+                         hasPlumbing || hasFireProtection;
           break;
+          
         case 'ducts':
+          // Ducts from mechanical sheets OR RCP
           shouldInclude = DUCT_EXTRACTION_CATEGORIES.includes(category) ||
-                         classification.discipline?.some(d => 
-                           d.toLowerCase().includes('mechanical'));
+                         hasMechanical;
           break;
+          
         case 'fixtures':
+          // Fixtures from electrical (lights/devices), plumbing (fixtures), or RCP
+          // This is broad because fixtures appear on many sheet types
           shouldInclude = FIXTURE_EXTRACTION_CATEGORIES.includes(category) ||
-                         classification.discipline?.some(d => 
-                           d.toLowerCase().includes('electrical') || 
-                           d.toLowerCase().includes('plumbing'));
+                         hasElectrical || hasPlumbing || hasMechanical;
           break;
+          
         case 'doors':
         case 'windows':
           shouldInclude = ROOM_EXTRACTION_CATEGORIES.includes(category);
           break;
+          
         default:
           shouldInclude = true;
       }
@@ -1454,7 +1475,17 @@ If area truly cannot be determined, use null (not 0).`;
       }
     }
 
-    return filteredTargets;
+    // If we have MEP disciplines but filtered out everything, include MEP targets
+    // This handles the case where category is "other" but discipline is MEP
+    if (filteredTargets.length === 0 && hasMEPDiscipline) {
+      if (hasPlumbing && targets.includes('pipes')) filteredTargets.push('pipes');
+      if (hasPlumbing && targets.includes('fixtures')) filteredTargets.push('fixtures');
+      if (hasMechanical && targets.includes('ducts')) filteredTargets.push('ducts');
+      if (hasElectrical && targets.includes('fixtures')) filteredTargets.push('fixtures');
+      if (hasFireProtection && targets.includes('pipes')) filteredTargets.push('pipes');
+    }
+
+    return [...new Set(filteredTargets)]; // Remove duplicates
   }
 
   private parseResponse(content: string, targets: string[]): VisionAnalysisResult {

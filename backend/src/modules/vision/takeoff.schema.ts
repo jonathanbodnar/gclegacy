@@ -1,6 +1,6 @@
 export const TAKEOFF_JSON_SCHEMA = {
   type: 'object',
-  required: ['project', 'sheets', 'levels', 'rooms', 'walls', 'meta'],
+  required: ['project', 'sheets', 'levels', 'rooms', 'walls', 'electrical', 'meta'],
   properties: {
     project: {
       type: 'object',
@@ -42,14 +42,14 @@ export const TAKEOFF_JSON_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['name', 'elevation_ft', 'height_ft', 'reference_sheet'],
+        required: ['name', 'elevation_ft', 'height_ft', 'reference_sheet', 'ceiling_heights'],
         properties: {
           name: { type: 'string' },
           elevation_ft: { type: ['number', 'null'] },
           height_ft: { type: ['number', 'null'] },
           reference_sheet: { type: ['string', 'null'] },
           ceiling_heights: {
-            type: 'array',
+            type: ['array', 'null'],
             items: {
               type: 'object',
               required: ['room_number', 'height_ft', 'heightSource'],
@@ -72,13 +72,13 @@ export const TAKEOFF_JSON_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['number', 'name'],
+        required: ['number', 'name', 'level', 'sheet_refs', 'approx_area_sqft', 'area_source', 'finish', 'bounding_box_px', 'centroid_px', 'confidence', 'notes'],
         properties: {
           number: { type: 'string' },
           name: { type: 'string' },
           level: { type: ['string', 'null'] },
           sheet_refs: {
-            type: 'array',
+            type: ['array', 'null'],
             items: { type: 'string' },
           },
           approx_area_sqft: { type: ['number', 'null'] },
@@ -88,10 +88,11 @@ export const TAKEOFF_JSON_SCHEMA = {
           },
           finish: {
             type: ['object', 'null'],
+            required: ['floor', 'walls', 'ceiling', 'base'],
             properties: {
               floor: { type: ['string', 'null'] },
               walls: {
-                type: 'array',
+                type: ['array', 'null'],
                 items: { type: 'string' },
               },
               ceiling: { type: ['string', 'null'] },
@@ -121,7 +122,7 @@ export const TAKEOFF_JSON_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['id'],
+        required: ['id', 'partition_type', 'new_or_existing', 'from_room', 'to_room', 'length_ft', 'height_ft', 'heightSource', 'polyline_px', 'notes'],
         properties: {
           id: { type: 'string' },
           partition_type: { type: ['string', 'null'] },
@@ -145,11 +146,12 @@ export const TAKEOFF_JSON_SCHEMA = {
       },
     },
     electrical: {
-      type: 'object',
+      type: ['object', 'null'],
       required: ['panel', 'circuits'],
       properties: {
         panel: {
           type: ['object', 'null'],
+          required: ['x', 'y', 'sheet'],
           properties: {
             x: { type: ['number', 'null'] },
             y: { type: ['number', 'null'] },
@@ -158,10 +160,10 @@ export const TAKEOFF_JSON_SCHEMA = {
           additionalProperties: false,
         },
         circuits: {
-          type: 'array',
+          type: ['array', 'null'],
           items: {
             type: 'object',
-            required: ['type', 'count', 'runFt', 'wire', 'conduit', 'confidence'],
+            required: ['type', 'count', 'runFt', 'wire', 'conduit', 'confidence', 'notes'],
             properties: {
               type: { type: 'string' },
               count: { type: 'number' },
@@ -179,10 +181,11 @@ export const TAKEOFF_JSON_SCHEMA = {
     },
     meta: {
       type: 'object',
-      required: ['units', 'version'],
+      required: ['units', 'version', 'generatedAt'],
       properties: {
         units: {
           type: 'object',
+          required: ['linear', 'area'],
           properties: {
             linear: { type: 'string' },
             area: { type: 'string' },
@@ -190,7 +193,7 @@ export const TAKEOFF_JSON_SCHEMA = {
           additionalProperties: false,
         },
         version: { type: 'string' },
-        generatedAt: { type: ['string', 'null'], format: 'date-time' },
+        generatedAt: { type: ['string', 'null'] },
       },
       additionalProperties: false,
     },
