@@ -325,6 +325,14 @@ export class PdfIngestService {
             const scaleInfo = this.detectScaleFromText(pageText);
 
             // Create sheet data
+            const rasterBuffer = renderedImage?.buffer;
+            
+            // DIAGNOSTIC: Log rasterData population status
+            this.logger.log(
+              `📸 Page ${pageNumber} rasterData: ${rasterBuffer ? `✅ ${Math.round(rasterBuffer.length / 1024)}KB` : '❌ NULL'}, ` +
+              `imagePath: ${imagePath ? '✅' : '❌'}, skipRendering: ${skipRendering}`
+            );
+            
             const sheet: SheetData = {
               index: i,
               name: sheetIdGuess || `Page ${pageNumber}`,
@@ -340,7 +348,7 @@ export class PdfIngestService {
               renderDpi,
               content: {
                 textData: pageText,
-                rasterData: renderedImage?.buffer,
+                rasterData: rasterBuffer,
                 metadata: {
                   widthPx,
                   heightPx,

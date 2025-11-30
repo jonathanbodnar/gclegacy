@@ -171,8 +171,17 @@ export class SheetClassificationService {
     const rasterBuffer: Buffer | undefined = sheet.content?.rasterData;
     const imageParts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = [];
 
+    // DIAGNOSTIC: Log what data we're receiving for this sheet
+    this.logger.log(
+      `    📊 Sheet ${sheet.index} data check: ` +
+      `rasterData=${rasterBuffer ? `✅ ${Math.round(rasterBuffer.length / 1024)}KB` : '❌ NULL/undefined'}, ` +
+      `textData=${rawText.length}chars, ` +
+      `imagePath=${sheet.imagePath ? '✅' : '❌'}`
+    );
+
     if (rasterBuffer && rasterBuffer.length > 0) {
       const base64 = rasterBuffer.toString("base64");
+      this.logger.log(`    🖼️ Sheet ${sheet.index}: Sending image to OpenAI (base64 length: ${base64.length} chars)`);
       imageParts.push({
         type: "image_url",
         image_url: {
@@ -180,6 +189,8 @@ export class SheetClassificationService {
           detail: "low",
         },
       });
+    } else {
+      this.logger.warn(`    ⚠️ Sheet ${sheet.index}: NO IMAGE DATA - OpenAI will only see text!`);
     }
 
     const instructions =
