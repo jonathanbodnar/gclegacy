@@ -573,7 +573,7 @@ For each duct run:
     }
 
     prompt += `
-RETURN ONLY:
+REQUIRED JSON OUTPUT FORMAT (return ONLY this JSON, no other text):
 {
   "fixtures": [
     {"type": "Toilet", "count": 4},
@@ -591,15 +591,21 @@ RETURN ONLY:
   ]
 }
 
-Count carefully - commercial spaces have many MEP elements.`;
+IMPORTANT: Even if elements are hard to see, make your best estimate. Return empty arrays [] only if truly no elements exist. Do NOT say you cannot analyze the image.`;
 
     try {
+      // DIAGNOSTIC: Log what we're sending to OpenAI
+      this.logger.log(`🔧 MEP EXTRACTION Page ${pageIndex + 1}:`);
+      this.logger.log(`   Sheet type: ${sheetType}, Disciplines: ${disciplines.join(', ')}`);
+      this.logger.log(`   isPlumbing=${isPlumbing}, isMechanical=${isMechanical}, isElectrical=${isElectrical}`);
+      this.logger.log(`   Image URL type: ${imageUrl.startsWith('data:') ? 'base64' : 'URL'}, length: ${imageUrl.length}`);
+      
       const response = await this.openai.chat.completions.create({
         model: "gpt-4o",
         messages: [
           {
             role: "system",
-            content: "You are extracting MEP (mechanical, electrical, plumbing) elements from a construction drawing. Count fixtures and measure pipe/duct runs. Return ONLY valid JSON."
+            content: "You are an expert MEP (mechanical, electrical, plumbing) quantity surveyor analyzing construction drawings. You MUST respond with ONLY valid JSON - no explanations, no apologies, no 'I cannot'. Extract what you see and estimate when uncertain. Return empty arrays only if truly no elements exist."
           },
           {
             role: "user",
@@ -614,16 +620,39 @@ Count carefully - commercial spaces have many MEP elements.`;
       });
 
       const content = response.choices[0]?.message?.content;
-      if (!content) return { pipes: [], ducts: [], fixtures: [] };
+      
+      // DIAGNOSTIC: Log raw OpenAI response
+      this.logger.log(`🔧 MEP RAW RESPONSE Page ${pageIndex + 1}:`);
+      this.logger.log(`   Content length: ${content?.length || 0}`);
+      this.logger.log(`   First 500 chars: ${content?.substring(0, 500) || 'EMPTY'}`);
+      
+      if (!content) {
+        this.logger.warn(`🔧 MEP Page ${pageIndex + 1}: No content returned from OpenAI`);
+        return { pipes: [], ducts: [], fixtures: [] };
+      }
 
-      const parsed = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || '{}');
+      const jsonMatch = content.match(/\{[\s\S]*\}/)?.[0];
+      this.logger.log(`🔧 MEP JSON MATCH Page ${pageIndex + 1}: ${jsonMatch ? 'Found' : 'NOT FOUND'}`);
+      if (!jsonMatch) {
+        this.logger.warn(`🔧 MEP Page ${pageIndex + 1}: No JSON found in response. Full content: ${content.substring(0, 1000)}`);
+      }
+      
+      const parsed = JSON.parse(jsonMatch || '{}');
+      
+      // DIAGNOSTIC: Log parsed results
+      this.logger.log(`🔧 MEP PARSED Page ${pageIndex + 1}:`);
+      this.logger.log(`   pipes: ${JSON.stringify(parsed.pipes || [])}`);
+      this.logger.log(`   ducts: ${JSON.stringify(parsed.ducts || [])}`);
+      this.logger.log(`   fixtures: ${JSON.stringify(parsed.fixtures || [])}`);
+      
       return {
         pipes: Array.isArray(parsed.pipes) ? parsed.pipes : [],
         ducts: Array.isArray(parsed.ducts) ? parsed.ducts : [],
         fixtures: Array.isArray(parsed.fixtures) ? parsed.fixtures : []
       };
     } catch (error: any) {
-      this.logger.warn(`MEP extraction failed: ${error.message}`);
+      this.logger.warn(`🔧 MEP extraction FAILED Page ${pageIndex + 1}: ${error.message}`);
+      this.logger.warn(`   Stack: ${error.stack?.substring(0, 300)}`);
       return { pipes: [], ducts: [], fixtures: [] };
     }
   }
