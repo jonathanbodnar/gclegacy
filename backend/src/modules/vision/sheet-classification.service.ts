@@ -22,6 +22,22 @@ const SHEET_CATEGORIES = [
   "other",
 ] as const;
 
+// Categories that need rasterData preserved for downstream extraction
+const CATEGORIES_NEEDING_RASTER = [
+  "floor",
+  "demo_floor",
+  "fixture",
+  "rcp",
+];
+
+// Disciplines that need rasterData preserved for MEP extraction
+const DISCIPLINES_NEEDING_RASTER = [
+  "Mechanical",
+  "Electrical", 
+  "Plumbing",
+  "Fire Protection",
+];
+
 const SHEET_CLASSIFICATION_SCHEMA = {
   type: "object",
   required: [
@@ -110,9 +126,15 @@ export class SheetClassificationService {
         results.push(classification);
         this.logger.log(`  ✅ Sheet ${i + 1} classified as: ${classification.category} (${classification.discipline.join(', ') || 'no discipline'})`);
 
-        // CRITICAL: Clear raster buffer after classification to free memory
+        // Selectively clear raster buffer - KEEP for sheets that need it for extraction
+        const shouldKeepRaster = this.shouldPreserveRasterData(classification);
         if (sheet.content?.rasterData) {
-          sheet.content.rasterData = undefined;
+          if (shouldKeepRaster) {
+            this.logger.log(`  💾 Sheet ${i + 1}: PRESERVING rasterData for downstream extraction (category: ${classification.category}, disciplines: ${classification.discipline.join(', ')})`);
+          } else {
+            sheet.content.rasterData = undefined;
+            this.logger.debug(`  🗑️ Sheet ${i + 1}: Cleared rasterData (not needed for extraction)`);
+          }
         }
 
         // Force GC every 5 sheets if memory is high and GC is available
@@ -148,15 +170,48 @@ export class SheetClassificationService {
         sheet.classification = fallback;
         results.push(fallback);
 
-        // Clear buffer even on error
+        // Clear buffer even on error (but check if it should be preserved)
         if (sheet.content?.rasterData) {
-          sheet.content.rasterData = undefined;
+          const shouldKeepOnError = sheet.classification && this.shouldPreserveRasterData(sheet.classification);
+          if (!shouldKeepOnError) {
+            sheet.content.rasterData = undefined;
+          }
         }
       }
     }
 
     this.logger.log(`✅ Sheet classification complete: ${results.length} sheets processed`);
     return results;
+  }
+
+  /**
+   * Determine if rasterData should be preserved for downstream extraction
+   * Keep rasterData for:
+   * - Floor plans, fixture plans, RCP (need images for room/MEP extraction)
+   * - Sheets with MEP disciplines (Mechanical, Electrical, Plumbing, Fire Protection)
+   */
+  private shouldPreserveRasterData(classification: SheetClassificationMetadata): boolean {
+    // Check if category needs raster for extraction
+    if (CATEGORIES_NEEDING_RASTER.includes(classification.category as any)) {
+      return true;
+    }
+    
+    // Check if any discipline needs raster for MEP extraction
+    if (classification.discipline && classification.discipline.length > 0) {
+      const hasMEPDiscipline = classification.discipline.some(d => 
+        DISCIPLINES_NEEDING_RASTER.includes(d)
+      );
+      if (hasMEPDiscipline) {
+        return true;
+      }
+    }
+    
+    // Check if it's a primary plan (always keep)
+    if (classification.isPrimaryPlan === true) {
+      return true;
+    }
+    
+    return false;
   }
 
   private async classifySingleSheet(
