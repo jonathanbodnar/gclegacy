@@ -219,6 +219,100 @@ export async function renderPdfPage(
   return renderPageWithDpi(page, dpi);
 }
 
+/**
+ * Get the total page count of a PDF without rendering it.
+ * This is useful for planning batch processing.
+ */
+export async function getPdfPageCount(pdfBuffer: Buffer): Promise<number> {
+  const pdfjsLib = await loadPdfJs();
+  const loadingTask = pdfjsLib.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    standardFontDataUrl: getStandardFontPath(),
+  });
+  const pdfDoc = await loadingTask.promise;
+  return pdfDoc.numPages;
+}
+
+/**
+ * Render a specific range of pages from a PDF.
+ * This is useful for batch processing to reduce memory usage.
+ * 
+ * @param pdfBuffer - The PDF file buffer
+ * @param startPage - 1-based start page number (inclusive)
+ * @param endPage - 1-based end page number (inclusive)
+ * @param options - Render options (dpi)
+ * @returns Array of rendered page images
+ */
+export async function renderPdfPageRange(
+  pdfBuffer: Buffer,
+  startPage: number,
+  endPage: number,
+  options: PdfRenderOptions = {}
+): Promise<PdfPageImage[]> {
+  // Suppress warnings during rendering
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  
+  console.warn = (...args: any[]) => {
+    const message = args.join(' ');
+    if (message.toLowerCase().includes('xfa') || 
+        message.includes('Cannot destructure') ||
+        message.includes('rich text')) {
+      return;
+    }
+    originalWarn.apply(console, args);
+  };
+  
+  console.error = (...args: any[]) => {
+    const message = args.join(' ');
+    if (message.includes('Failed to unwrap') || 
+        message.includes('CanvasElement') ||
+        message.includes('XFA')) {
+      return;
+    }
+    originalError.apply(console, args);
+  };
+
+  try {
+    ensureCanvasPolyfills();
+    const pdfjsLib = await loadPdfJs();
+    
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(pdfBuffer),
+      standardFontDataUrl: getStandardFontPath(),
+      stopAtErrors: true,
+    });
+    const pdfDoc = await loadingTask.promise;
+    
+    const dpi = normalizeDpi(options.dpi);
+    const totalPages = pdfDoc.numPages;
+    
+    // Clamp page range to valid values
+    const actualStart = Math.max(1, startPage);
+    const actualEnd = Math.min(endPage, totalPages);
+    
+    const results: PdfPageImage[] = [];
+    
+    for (let pageNum = actualStart; pageNum <= actualEnd; pageNum++) {
+      try {
+        const page = await pdfDoc.getPage(pageNum);
+        results.push(await renderPageWithDpi(page, dpi));
+        
+        // Yield back to event loop every page to prevent blocking
+        await new Promise(resolve => setImmediate(resolve));
+      } catch (pageError: any) {
+        console.warn(`Failed to render page ${pageNum}: ${pageError?.message || String(pageError)}. Skipping.`);
+        continue;
+      }
+    }
+    
+    return results;
+  } finally {
+    console.warn = originalWarn;
+    console.error = originalError;
+  }
+}
+
 async function loadPdfJs(): Promise<any> {
   const errors: string[] = [];
   const nodeRequire = createRequire(__filename);

@@ -4,7 +4,7 @@ import {
   OpenAIVisionService,
   VisionAnalysisResult,
 } from "./openai-vision.service";
-import { renderPdfToImages } from "../../common/pdf/pdf-renderer";
+import { renderPdfToImages, renderPdfPageRange, getPdfPageCount } from "../../common/pdf/pdf-renderer";
 import { DocumentContextService, DocumentContext } from "./document-context.service";
 import { ContextAwareVisionService } from "./context-aware-vision.service";
 import { ConsistencyCheckerService } from "./consistency-checker.service";
@@ -66,48 +66,62 @@ export class PlanAnalysisService {
     }
 
     try {
-      // Convert PDF pages or plan sheets to images for vision analysis
-      this.logger.log(`Converting PDF to images for analysis: ${fileName}`);
-      // Default to 60 minutes for large PDFs, but allow configuration via environment variable
-      // Format: PDF_CONVERSION_TIMEOUT_MS (in milliseconds) or PDF_CONVERSION_TIMEOUT_MIN (in minutes)
-      const timeoutMs = process.env.PDF_CONVERSION_TIMEOUT_MS
-        ? parseInt(process.env.PDF_CONVERSION_TIMEOUT_MS, 10)
-        : process.env.PDF_CONVERSION_TIMEOUT_MIN
-        ? parseInt(process.env.PDF_CONVERSION_TIMEOUT_MIN, 10) * 60 * 1000
-        : 3600000; // 60 minutes default (increased from 30 minutes for large PDFs)
-      const timeoutMinutes = Math.round(timeoutMs / 60000);
+      const extension = fileName.split(".").pop()?.toLowerCase();
+      const isPdf = extension === "pdf";
       
-      // Log timeout configuration for debugging
-      this.logger.log(
-        `PDF conversion timeout set to ${timeoutMinutes} minutes for ${fileName}`
-      );
+      // =========================================================================
+      // MEMORY-EFFICIENT BATCH PROCESSING
+      // Instead of converting all pages at once, we process in small batches
+      // to avoid memory exhaustion on large PDFs
+      // =========================================================================
       
-      const images = await this.withTimeout(
-        this.convertToImages(fileBuffer, fileName),
-        timeoutMs,
-        `PDF to images conversion timeout after ${timeoutMinutes} minutes for ${fileName}. Consider increasing PDF_CONVERSION_TIMEOUT_MIN or processing the PDF in smaller batches.`
-      );
-      this.logger.log(`Successfully converted ${images.length} pages to images`);
-
+      let totalPages = 0;
+      const density = parseInt(process.env.PDF_RENDER_DPI || "220", 10);
+      
+      if (isPdf) {
+        // Get page count first without rendering
+        try {
+          totalPages = await getPdfPageCount(fileBuffer);
+          this.logger.log(`PDF has ${totalPages} pages - will process in memory-efficient batches`);
+        } catch (error: any) {
+          this.logger.warn(`Failed to get PDF page count: ${error.message}. Using fallback.`);
+          totalPages = 100; // Fallback max
+        }
+      } else {
+        // Non-PDF files (images) - process directly
+        const images = await this.convertToImages(fileBuffer, fileName);
+        totalPages = images.length;
+        
+        // For non-PDFs, use the original processing flow
+        return this.processImagesDirectly(images, fileName, disciplines, targets, options, progressCallback);
+      }
+      
       // =========================================================================
       // TWO-PHASE EXTRACTION APPROACH
-      // Phase 1: Build document context from legends, schedules, cover pages
+      // Phase 1: Build document context from first few pages (legends, schedules)
       // Phase 2: Per-page extraction with context for consistency
       // =========================================================================
       
       let documentContext: DocumentContext | undefined;
       
-      if (this.useContextAwareMode && images.length > 1) {
-        this.logger.log(`Phase 1: Building document context from ${Math.min(5, images.length)} pages`);
+      // Batch size for rendering pages - keep small to limit memory usage
+      const renderBatchSize = parseInt(process.env.PDF_RENDER_BATCH_SIZE || "5", 10);
+      
+      if (this.useContextAwareMode && totalPages > 1) {
+        this.logger.log(`Phase 1: Building document context from first ${Math.min(5, totalPages)} pages`);
         
         if (progressCallback) {
-          await progressCallback(0, images.length, "Phase 1: Extracting document context (legends, schedules)...");
+          await progressCallback(0, totalPages, "Phase 1: Extracting document context (legends, schedules)...");
         }
         
         try {
+          // Only render first 5 pages for context building
+          const contextPages = await renderPdfPageRange(fileBuffer, 1, Math.min(5, totalPages), { dpi: density });
+          const contextImages = contextPages.map(p => p.buffer);
+          
           documentContext = await this.documentContextService.buildDocumentContext(
-            images,
-            async (msg) => progressCallback?.(0, images.length, msg)
+            contextImages,
+            async (msg) => progressCallback?.(0, totalPages, msg)
           );
           
           this.logger.log(
@@ -115,34 +129,51 @@ export class PlanAnalysisService {
             `${documentContext.roomSchedule.length} scheduled rooms, ` +
             `${documentContext.fixtureSchedule.length} fixture types`
           );
+          
+          // Clear context images from memory
+          contextImages.forEach((_, idx) => { contextImages[idx] = Buffer.alloc(0); });
+          
+          // Force GC after context building
+          if (global.gc) {
+            global.gc();
+            this.logger.log(`🧹 GC after context building`);
+          }
         } catch (error: any) {
           this.logger.warn(`Failed to build document context: ${error.message}. Proceeding without context.`);
           documentContext = undefined;
         }
       }
 
-      this.logger.log(`Phase 2: Analyzing ${images.length} pages with ${documentContext ? 'context' : 'no context'}`);
+      this.logger.log(`Phase 2: Analyzing ${totalPages} pages with ${documentContext ? 'context' : 'no context'} (batch size: ${renderBatchSize})`);
 
-      // Process pages in parallel batches with increased concurrency
-      // Increased default batch size from 5 to 10 for better throughput
-      const batchSize = parseInt(process.env.VISION_BATCH_SIZE || "10", 10);
+      // Process pages in batches - render and analyze each batch before moving to next
+      const visionBatchSize = parseInt(process.env.VISION_BATCH_SIZE || "5", 10);
       const results: any[] = [];
       let completedCount = 0;
 
-      // Process all pages in batches with controlled concurrency
-      for (let i = 0; i < images.length; i += batchSize) {
-        const batch = images.slice(i, i + batchSize);
-        const batchNumber = Math.floor(i / batchSize) + 1;
-        const totalBatches = Math.ceil(images.length / batchSize);
-
-        // Force logging for debugging
+      for (let startPage = 1; startPage <= totalPages; startPage += renderBatchSize) {
+        const endPage = Math.min(startPage + renderBatchSize - 1, totalPages);
+        const batchNumber = Math.ceil(startPage / renderBatchSize);
+        const totalBatches = Math.ceil(totalPages / renderBatchSize);
+        
         this.logger.log(
-          `Processing batch ${batchNumber}/${totalBatches} (pages ${i + 1}-${Math.min(i + batchSize, images.length)})`
+          `📄 Rendering batch ${batchNumber}/${totalBatches} (pages ${startPage}-${endPage})`
         );
-
-        // Process this batch in parallel
-        const batchPromises = batch.map(async (imageBuffer, batchIndex) => {
-          const pageIndex = i + batchIndex;
+        
+        // Render this batch of pages
+        let batchImages: Buffer[];
+        try {
+          const rendered = await renderPdfPageRange(fileBuffer, startPage, endPage, { dpi: density });
+          batchImages = rendered.map(p => p.buffer);
+          this.logger.log(`✅ Rendered ${batchImages.length} pages (${startPage}-${endPage})`);
+        } catch (renderError: any) {
+          this.logger.error(`Failed to render pages ${startPage}-${endPage}: ${renderError.message}`);
+          continue;
+        }
+        
+        // Process this batch with vision API
+        const batchPromises = batchImages.map(async (imageBuffer, batchIndex) => {
+          const pageIndex = startPage - 1 + batchIndex; // 0-based index
           
           // Get sheet classification for this page if available
           const sheetClassification = options?.sheetClassifications?.find(
@@ -150,7 +181,6 @@ export class PlanAnalysisService {
           );
 
           try {
-            // Use context-aware vision if we have document context, otherwise fall back to original
             let pageResult: VisionAnalysisResult;
             
             if (this.useContextAwareMode && documentContext) {
@@ -161,12 +191,11 @@ export class PlanAnalysisService {
                   disciplines,
                   targets,
                   pageIndex,
-                  totalPages: images.length,
+                  totalPages,
                   sheetClassification,
                 }
               );
             } else {
-              // Fall back to original method
               pageResult = await this.openaiVision.analyzePlanImage(
                 imageBuffer,
                 disciplines,
@@ -175,7 +204,6 @@ export class PlanAnalysisService {
               );
             }
 
-            // Use scale from the main analysis result (no need for separate API call - saves 50% of API calls!)
             const scaleInfo = pageResult.scale || {
               detected: "Unknown",
               units: "ft" as const,
@@ -184,7 +212,6 @@ export class PlanAnalysisService {
               method: "assumed" as const,
             };
 
-            // Extract sheet title from vision analysis, fallback to generated name
             const sheetTitle =
               pageResult.sheetTitle || `${fileName}_page_${pageIndex + 1}`;
 
@@ -193,10 +220,7 @@ export class PlanAnalysisService {
             return {
               pageIndex,
               fileName: sheetTitle,
-              discipline: this.detectDisciplineFromContent(
-                pageResult,
-                disciplines
-              ),
+              discipline: this.detectDisciplineFromContent(pageResult, disciplines),
               scale: scaleInfo,
               features: pageResult,
               metadata: {
@@ -208,11 +232,7 @@ export class PlanAnalysisService {
             };
           } catch (error: any) {
             completedCount++;
-            this.logger.error(
-              `Failed to analyze page ${pageIndex + 1}:`,
-              error.message
-            );
-            // Return partial result with error
+            this.logger.error(`Failed to analyze page ${pageIndex + 1}: ${error.message}`);
             return {
               pageIndex,
               fileName: `${fileName}_page_${pageIndex + 1}`,
@@ -234,17 +254,17 @@ export class PlanAnalysisService {
           }
         });
 
-        // Wait for this batch to complete
+        // Wait for vision analysis to complete
         const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
 
-        // CRITICAL: Clear image buffers from this batch to free memory
-        batch.forEach((imageBuffer, idx) => {
-          batch[idx] = Buffer.alloc(0); // Replace with empty buffer
+        // CRITICAL: Clear image buffers immediately after processing
+        batchImages.forEach((_, idx) => {
+          batchImages[idx] = Buffer.alloc(0);
         });
+        batchImages.length = 0; // Clear array reference
 
-        // CRITICAL: Force GC after EVERY batch (not just when heap > 70%)
-        // This is necessary because native canvas memory doesn't count toward heap
+        // CRITICAL: Force garbage collection after EVERY batch
         if (global.gc) {
           const beforeMem = process.memoryUsage();
           const beforeRssMB = Math.round(beforeMem.rss / 1024 / 1024);
@@ -254,32 +274,25 @@ export class PlanAnalysisService {
 
             const afterMem = process.memoryUsage();
             const afterRssMB = Math.round(afterMem.rss / 1024 / 1024);
-
-            // Only log GC stats if there was significant memory freed (>50MB) or if RSS is high (>2GB)
             const freedMB = beforeRssMB - afterRssMB;
-            if (freedMB > 50 || beforeRssMB > 2000) {
-              this.logger.log(
-                `🧹 GC after batch ${batchNumber}/${totalBatches}: RSS ${beforeRssMB}MB -> ${afterRssMB}MB (freed ${freedMB}MB)`
-              );
-            }
+
+            this.logger.log(
+              `🧹 GC after batch ${batchNumber}/${totalBatches}: RSS ${beforeRssMB}MB -> ${afterRssMB}MB (freed ${freedMB}MB)`
+            );
           } catch (e) {
             // Ignore GC errors
           }
         }
 
-        // Only log batch completion in development
-        if (process.env.NODE_ENV !== "production") {
-          this.logger.log(
-            `Completed batch ${batchNumber}/${totalBatches} - Total analyzed: ${results.length}/${images.length}`
-          );
-        }
+        // Yield to event loop
+        await new Promise(resolve => setImmediate(resolve));
 
-        // Report progress via callback if provided
+        // Report progress
         if (progressCallback) {
           await progressCallback(
             completedCount,
-            images.length,
-            `Analyzing plans: ${completedCount}/${images.length} pages completed`
+            totalPages,
+            `Analyzing plans: ${completedCount}/${totalPages} pages completed`
           );
         }
       }
@@ -291,19 +304,16 @@ export class PlanAnalysisService {
       // POST-PROCESSING: Aggregate and validate results
       // =========================================================================
       
-      // Aggregate results with deduplication
       const aggregated = this.consistencyChecker.aggregateVisionResults(
         results.map(r => ({ pageIndex: r.pageIndex, features: r.features })),
         documentContext
       );
       
-      // Validate against document context
       const validationIssues = this.consistencyChecker.validateAgainstContext(
         aggregated,
         documentContext
       );
       
-      // Generate validated summary
       const validatedSummary = this.consistencyChecker.generateValidatedSummary(aggregated);
       
       if (validationIssues.length > 0) {
@@ -312,11 +322,10 @@ export class PlanAnalysisService {
 
       return {
         fileName,
-        totalPages: images.length,
+        totalPages,
         pages: results,
         summary: {
           ...this.generateSummary(results),
-          // Add validated/deduplicated totals
           validated: validatedSummary,
         },
         documentContext: documentContext ? {
@@ -324,12 +333,135 @@ export class PlanAnalysisService {
           roomsInSchedule: documentContext.roomSchedule.length,
           fixtureTypesFound: documentContext.fixtureSchedule.length,
         } : null,
-        validationIssues: validationIssues.slice(0, 20), // Limit to 20 issues
+        validationIssues: validationIssues.slice(0, 20),
       };
     } catch (error) {
       this.logger.error(`Plan analysis failed for ${fileName}:`, error.message);
       throw error;
     }
+  }
+
+  /**
+   * Process pre-loaded images directly (for non-PDF files or when images are already in memory).
+   * This is the original processing flow, kept for backward compatibility.
+   */
+  private async processImagesDirectly(
+    images: Buffer[],
+    fileName: string,
+    disciplines: string[],
+    targets: string[],
+    options?: {
+      sheetClassifications?: Array<{
+        index: number;
+        category?: string;
+        isPrimaryPlan?: boolean;
+        discipline?: string[];
+      }>;
+      [key: string]: any;
+    },
+    progressCallback?: (current: number, total: number, message: string) => Promise<void>
+  ): Promise<any> {
+    let documentContext: DocumentContext | undefined;
+    
+    if (this.useContextAwareMode && images.length > 1) {
+      this.logger.log(`Phase 1: Building document context from ${Math.min(5, images.length)} pages`);
+      
+      if (progressCallback) {
+        await progressCallback(0, images.length, "Phase 1: Extracting document context...");
+      }
+      
+      try {
+        documentContext = await this.documentContextService.buildDocumentContext(
+          images,
+          async (msg) => progressCallback?.(0, images.length, msg)
+        );
+      } catch (error: any) {
+        this.logger.warn(`Failed to build document context: ${error.message}`);
+      }
+    }
+
+    const batchSize = parseInt(process.env.VISION_BATCH_SIZE || "10", 10);
+    const results: any[] = [];
+    let completedCount = 0;
+
+    for (let i = 0; i < images.length; i += batchSize) {
+      const batch = images.slice(i, i + batchSize);
+      
+      const batchPromises = batch.map(async (imageBuffer, batchIndex) => {
+        const pageIndex = i + batchIndex;
+        const sheetClassification = options?.sheetClassifications?.find(sc => sc.index === pageIndex);
+
+        try {
+          let pageResult: VisionAnalysisResult;
+          
+          if (this.useContextAwareMode && documentContext) {
+            pageResult = await this.contextAwareVision.analyzeWithContext(imageBuffer, {
+              documentContext,
+              disciplines,
+              targets,
+              pageIndex,
+              totalPages: images.length,
+              sheetClassification,
+            });
+          } else {
+            pageResult = await this.openaiVision.analyzePlanImage(imageBuffer, disciplines, targets, options);
+          }
+
+          completedCount++;
+          return {
+            pageIndex,
+            fileName: pageResult.sheetTitle || `${fileName}_page_${pageIndex + 1}`,
+            discipline: this.detectDisciplineFromContent(pageResult, disciplines),
+            scale: pageResult.scale || { detected: "Unknown", units: "ft" as const, ratio: 1, confidence: "low" as const, method: "assumed" as const },
+            features: pageResult,
+            metadata: { imageSize: imageBuffer.length, analysisTimestamp: new Date().toISOString(), viewType: this.detectViewType(pageResult) },
+          };
+        } catch (error: any) {
+          completedCount++;
+          return {
+            pageIndex,
+            fileName: `${fileName}_page_${pageIndex + 1}`,
+            discipline: "UNKNOWN",
+            scale: null,
+            features: { rooms: [], walls: [], openings: [], pipes: [], ducts: [], fixtures: [] },
+            metadata: { error: error.message, analysisTimestamp: new Date().toISOString() },
+          };
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+
+      if (global.gc) {
+        try { global.gc(); } catch (e) {}
+      }
+
+      if (progressCallback) {
+        await progressCallback(completedCount, images.length, `Analyzing: ${completedCount}/${images.length} pages`);
+      }
+    }
+
+    results.sort((a, b) => a.pageIndex - b.pageIndex);
+
+    const aggregated = this.consistencyChecker.aggregateVisionResults(
+      results.map(r => ({ pageIndex: r.pageIndex, features: r.features })),
+      documentContext
+    );
+    const validationIssues = this.consistencyChecker.validateAgainstContext(aggregated, documentContext);
+    const validatedSummary = this.consistencyChecker.generateValidatedSummary(aggregated);
+
+    return {
+      fileName,
+      totalPages: images.length,
+      pages: results,
+      summary: { ...this.generateSummary(results), validated: validatedSummary },
+      documentContext: documentContext ? {
+        partitionTypesFound: documentContext.partitionTypes.length,
+        roomsInSchedule: documentContext.roomSchedule.length,
+        fixtureTypesFound: documentContext.fixtureSchedule.length,
+      } : null,
+      validationIssues: validationIssues.slice(0, 20),
+    };
   }
 
   private async convertToImages(
