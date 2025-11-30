@@ -15,6 +15,8 @@ import { SpaceExtractionService } from './space-extraction.service';
 import { MaterialsExtractionService } from './materials-extraction.service';
 import { ValidationService } from './validation.service';
 import { ConsistencyCheckerService } from './consistency-checker.service';
+import { DocumentContextService } from './document-context.service';
+import { ContextAwareVisionService } from './context-aware-vision.service';
 
 @Module({
   providers: [
@@ -34,6 +36,8 @@ import { ConsistencyCheckerService } from './consistency-checker.service';
     MaterialsExtractionService,
     ValidationService,
     ConsistencyCheckerService,
+    DocumentContextService,
+    ContextAwareVisionService,
   ],
   exports: [
     OpenAIVisionService,
@@ -52,6 +56,8 @@ import { ConsistencyCheckerService } from './consistency-checker.service';
     MaterialsExtractionService,
     ValidationService,
     ConsistencyCheckerService,
+    DocumentContextService,
+    ContextAwareVisionService,
   ],
 })
 export class VisionModule {}

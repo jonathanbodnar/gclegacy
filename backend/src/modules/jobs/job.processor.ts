@@ -163,8 +163,9 @@ export class JobProcessor {
 
       // Stage 1: classify sheets using GPT (know which pages drive which prompts)
       this.logger.log(`📊 [Job ${jobId}] Step 2/10: Starting sheet classification`);
+      let sheetClassifications: any[] = [];
       try {
-        const sheetClassifications =
+        sheetClassifications =
           await this.sheetClassificationService.classifySheets(
             ingestResult.sheets || []
           );
@@ -362,13 +363,25 @@ export class JobProcessor {
         `Starting real plan analysis for ${file.filename} (${file.pages || "unknown"} pages)`
       );
 
+      // Transform sheet classifications into the format expected by plan analysis
+      // Map sheet index to classification data for filtering extraction targets
+      const classificationsByIndex = sheetClassifications.map((classification, index) => ({
+        index,
+        category: classification?.category,
+        isPrimaryPlan: classification?.isPrimaryPlan,
+        discipline: classification?.discipline,
+      }));
+      
       // Use OpenAI Vision to analyze the actual plan with progress reporting
       const analysisResult = await this.planAnalysisService.analyzePlanFile(
         fileBuffer,
         file.filename,
         disciplines,
         targets,
-        options,
+        {
+          ...options,
+          sheetClassifications: classificationsByIndex,
+        },
         // Progress callback: Map pages analyzed to 25%-60% range
         async (currentPage: number, totalPages: number, message: string) => {
           const analysisProgress = currentPage / totalPages;

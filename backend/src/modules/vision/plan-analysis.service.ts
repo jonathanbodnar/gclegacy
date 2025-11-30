@@ -5,12 +5,24 @@ import {
   VisionAnalysisResult,
 } from "./openai-vision.service";
 import { renderPdfToImages } from "../../common/pdf/pdf-renderer";
+import { DocumentContextService, DocumentContext } from "./document-context.service";
+import { ContextAwareVisionService } from "./context-aware-vision.service";
+import { ConsistencyCheckerService } from "./consistency-checker.service";
 
 @Injectable()
 export class PlanAnalysisService {
   private readonly logger = new Logger(PlanAnalysisService.name);
+  private useContextAwareMode: boolean;
 
-  constructor(private openaiVision: OpenAIVisionService) {}
+  constructor(
+    private openaiVision: OpenAIVisionService,
+    private documentContextService: DocumentContextService,
+    private contextAwareVision: ContextAwareVisionService,
+    private consistencyChecker: ConsistencyCheckerService
+  ) {
+    // Enable context-aware mode by default, can be disabled via env var
+    this.useContextAwareMode = process.env.DISABLE_CONTEXT_AWARE_VISION !== 'true';
+  }
 
   /**
    * Wraps a promise with a timeout to prevent indefinite hanging
@@ -33,7 +45,15 @@ export class PlanAnalysisService {
     fileName: string,
     disciplines: string[],
     targets: string[],
-    options?: any,
+    options?: {
+      sheetClassifications?: Array<{
+        index: number;
+        category?: string;
+        isPrimaryPlan?: boolean;
+        discipline?: string[];
+      }>;
+      [key: string]: any;
+    },
     progressCallback?: (
       current: number,
       total: number,
@@ -69,7 +89,39 @@ export class PlanAnalysisService {
       );
       this.logger.log(`Successfully converted ${images.length} pages to images`);
 
-      this.logger.log(`Starting parallel analysis of ${images.length} pages`);
+      // =========================================================================
+      // TWO-PHASE EXTRACTION APPROACH
+      // Phase 1: Build document context from legends, schedules, cover pages
+      // Phase 2: Per-page extraction with context for consistency
+      // =========================================================================
+      
+      let documentContext: DocumentContext | undefined;
+      
+      if (this.useContextAwareMode && images.length > 1) {
+        this.logger.log(`Phase 1: Building document context from ${Math.min(5, images.length)} pages`);
+        
+        if (progressCallback) {
+          await progressCallback(0, images.length, "Phase 1: Extracting document context (legends, schedules)...");
+        }
+        
+        try {
+          documentContext = await this.documentContextService.buildDocumentContext(
+            images,
+            async (msg) => progressCallback?.(0, images.length, msg)
+          );
+          
+          this.logger.log(
+            `Document context built: ${documentContext.partitionTypes.length} partition types, ` +
+            `${documentContext.roomSchedule.length} scheduled rooms, ` +
+            `${documentContext.fixtureSchedule.length} fixture types`
+          );
+        } catch (error: any) {
+          this.logger.warn(`Failed to build document context: ${error.message}. Proceeding without context.`);
+          documentContext = undefined;
+        }
+      }
+
+      this.logger.log(`Phase 2: Analyzing ${images.length} pages with ${documentContext ? 'context' : 'no context'}`);
 
       // Process pages in parallel batches with increased concurrency
       // Increased default batch size from 5 to 10 for better throughput
@@ -91,15 +143,37 @@ export class PlanAnalysisService {
         // Process this batch in parallel
         const batchPromises = batch.map(async (imageBuffer, batchIndex) => {
           const pageIndex = i + batchIndex;
+          
+          // Get sheet classification for this page if available
+          const sheetClassification = options?.sheetClassifications?.find(
+            (sc) => sc.index === pageIndex
+          );
 
           try {
-            // Use OpenAI Vision to analyze each page (scale is already included in the result)
-            const pageResult = await this.openaiVision.analyzePlanImage(
-              imageBuffer,
-              disciplines,
-              targets,
-              options
-            );
+            // Use context-aware vision if we have document context, otherwise fall back to original
+            let pageResult: VisionAnalysisResult;
+            
+            if (this.useContextAwareMode && documentContext) {
+              pageResult = await this.contextAwareVision.analyzeWithContext(
+                imageBuffer,
+                {
+                  documentContext,
+                  disciplines,
+                  targets,
+                  pageIndex,
+                  totalPages: images.length,
+                  sheetClassification,
+                }
+              );
+            } else {
+              // Fall back to original method
+              pageResult = await this.openaiVision.analyzePlanImage(
+                imageBuffer,
+                disciplines,
+                targets,
+                options
+              );
+            }
 
             // Use scale from the main analysis result (no need for separate API call - saves 50% of API calls!)
             const scaleInfo = pageResult.scale || {
@@ -213,11 +287,44 @@ export class PlanAnalysisService {
       // Ensure results are sorted by page index
       results.sort((a, b) => a.pageIndex - b.pageIndex);
 
+      // =========================================================================
+      // POST-PROCESSING: Aggregate and validate results
+      // =========================================================================
+      
+      // Aggregate results with deduplication
+      const aggregated = this.consistencyChecker.aggregateVisionResults(
+        results.map(r => ({ pageIndex: r.pageIndex, features: r.features })),
+        documentContext
+      );
+      
+      // Validate against document context
+      const validationIssues = this.consistencyChecker.validateAgainstContext(
+        aggregated,
+        documentContext
+      );
+      
+      // Generate validated summary
+      const validatedSummary = this.consistencyChecker.generateValidatedSummary(aggregated);
+      
+      if (validationIssues.length > 0) {
+        this.logger.warn(`Found ${validationIssues.length} consistency issues during analysis`);
+      }
+
       return {
         fileName,
         totalPages: images.length,
         pages: results,
-        summary: this.generateSummary(results),
+        summary: {
+          ...this.generateSummary(results),
+          // Add validated/deduplicated totals
+          validated: validatedSummary,
+        },
+        documentContext: documentContext ? {
+          partitionTypesFound: documentContext.partitionTypes.length,
+          roomsInSchedule: documentContext.roomSchedule.length,
+          fixtureTypesFound: documentContext.fixtureSchedule.length,
+        } : null,
+        validationIssues: validationIssues.slice(0, 20), // Limit to 20 issues
       };
     } catch (error) {
       this.logger.error(`Plan analysis failed for ${fileName}:`, error.message);

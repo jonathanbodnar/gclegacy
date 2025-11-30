@@ -292,7 +292,7 @@ export class OpenAIVisionService {
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
       const response = await this.openai.chat.completions.create({
-            model: "gpt-5.1-2025-11-13",
+            model: process.env.OPENAI_VISION_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -319,6 +319,7 @@ Do not add prose, markdown, or explanations beyond the JSON object.`,
           },
         ],
         max_completion_tokens: 16000,  // Increased from 4000 to allow more detailed responses
+        temperature: 0.0,  // Zero temperature for deterministic, consistent results
       });
 
           // Success - break out of retry loop
@@ -1215,119 +1216,10 @@ IMPORTANT - YOUR SUCCESS IS MEASURED BY GEOMETRY EXTRACTED:
     disciplines: string[],
     targets: string[]
   ): VisionAnalysisResult {
-    // Fallback mock data when OpenAI is not available
-    return {
-      sheetTitle: "A-101",
-      rooms: targets.includes("rooms")
-        ? [
-            { id: "R100", name: "OFFICE", area: 150, program: "Office" },
-            { id: "R101", name: "CONFERENCE", area: 200, program: "Meeting" },
-          ]
-        : [],
-      walls: targets.includes("walls")
-        ? [
-            { id: "W1", length: 20, partitionType: "PT-1" },
-            { id: "W2", length: 15, partitionType: "PT-2" },
-          ]
-        : [],
-      openings:
-        targets.includes("doors") || targets.includes("windows")
-          ? [
-              { id: "D1", type: "door", width: 3, height: 7 },
-              { id: "W1", type: "window", width: 4, height: 3 },
-            ]
-          : [],
-      pipes: targets.includes("pipes")
-        ? [
-            { id: "P1", service: "CW", diameter: 1, length: 50 },
-            { id: "P2", service: "HW", diameter: 0.75, length: 45 },
-          ]
-        : [],
-      ducts: targets.includes("ducts")
-        ? [
-            { id: "D1", size: "12x10", length: 80 },
-            { id: "D2", size: "8x8", length: 60 },
-          ]
-        : [],
-      fixtures: targets.includes("fixtures")
-        ? [
-            { id: "F1", type: "Toilet", count: 2 },
-            { id: "F2", type: "LED Light", count: 12 },
-          ]
-        : [],
-      levels: targets.includes("levels")
-        ? [
-            { id: "L1", name: "Level 1", elevationFt: 0, heightFt: 12 },
-            { id: "L2", name: "Level 2", elevationFt: 12, heightFt: 12 },
-          ]
-        : [],
-      elevations: targets.includes("elevations")
-        ? [
-            {
-              id: "ELEV-A",
-              face: "South",
-              fromLevel: "L1",
-              toLevel: "Roof",
-              heightFt: 24,
-            },
-          ]
-        : [],
-      sections: targets.includes("sections")
-        ? [
-            {
-              id: "SEC-A",
-              description: "Section through core",
-              fromLevel: "L1",
-              toLevel: "Roof",
-              heightFt: 24,
-            },
-          ]
-        : [],
-      risers: targets.includes("risers")
-        ? [
-            {
-              id: "R-CW",
-              system: "Cold Water",
-              levels: ["L1", "L2", "Roof"],
-              heightFt: 24,
-              qty: 1,
-            },
-          ]
-        : [],
-      verticalMetadata: targets.some((t) =>
-        ["levels", "elevations", "sections", "risers"].includes(t)
-      )
-        ? {
-            defaultStoryHeightFt: 12,
-            totalStories: 2,
-            referenceDatum: "Level 1 = 0'-0\"",
-          }
-        : undefined,
-      scale: {
-        detected: '1/4"=1\'-0"',
-        units: "ft",
-        ratio: 48,
-        confidence: "high",
-        method: "titleblock",
-      },
-      materials:
-        targets.includes("materials") || true
-          ? [
-              {
-                id: "M1",
-                type: "wall",
-                specification: "PT-1",
-                source: "legend",
-              },
-              {
-                id: "M2",
-                type: "pipe",
-                specification: '1" PVC',
-                source: "callout",
-              },
-            ]
-          : [],
-    };
+    // Return empty arrays instead of fake mock data
+    // This prevents polluting results with made-up rooms/fixtures
+    this.logger.warn("⚠️ generateMockAnalysis called - returning empty results (no fake data)");
+    return this.generateEmptyAnalysis(targets);
   }
 
   private generateEmptyAnalysis(targets: string[]): VisionAnalysisResult {
@@ -1359,7 +1251,7 @@ IMPORTANT - YOUR SUCCESS IS MEASURED BY GEOMETRY EXTRACTED:
   async analyzeText(text: string, context: string): Promise<any> {
     try {
       const response = await this.openai.chat.completions.create({
-        model: "gpt-5.1-2025-11-13",
+        model: process.env.OPENAI_VISION_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
@@ -1408,7 +1300,7 @@ Return as structured JSON.`,
       const imageUrl = `data:image/png;base64,${base64Image}`;
 
       const response = await this.openai.chat.completions.create({
-        model: "gpt-5.1-2025-11-13",
+        model: process.env.OPENAI_VISION_MODEL || "gpt-4o",
         messages: [
           {
             role: "user",

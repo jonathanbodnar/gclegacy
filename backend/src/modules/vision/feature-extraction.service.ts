@@ -542,12 +542,32 @@ export class FeatureExtractionService {
   }
 
   private async saveFeatures(features: any[]): Promise<any[]> {
+    // First, deduplicate features within this batch
+    const deduplicatedFeatures = this.deduplicateFeatures(features);
+    
+    if (deduplicatedFeatures.length < features.length) {
+      this.logger.log(
+        `Deduplicated ${features.length - deduplicatedFeatures.length} features within batch`
+      );
+    }
+    
     const savedFeatures = [];
-    for (const feature of features) {
+    for (const feature of deduplicatedFeatures) {
       const resolvedSheetId = await this.resolveSheetId(
         feature.jobId,
         feature.sheetId
       );
+
+      // Check for existing similar feature (cross-sheet deduplication)
+      const existingFeature = await this.findExistingFeature(feature, resolvedSheetId);
+      
+      if (existingFeature) {
+        // Feature already exists - skip or merge
+        this.logger.debug(
+          `Skipping duplicate ${feature.type} feature (existing: ${existingFeature.id})`
+        );
+        continue;
+      }
 
       const saved = await this.prisma.feature.create({
         data: {
@@ -571,6 +591,157 @@ export class FeatureExtractionService {
       });
     }
     return savedFeatures;
+  }
+
+  /**
+   * Deduplicate features within a batch (same extraction run)
+   * This handles cases where the same element is extracted multiple times
+   */
+  private deduplicateFeatures(features: any[]): any[] {
+    const seen = new Map<string, any>();
+    
+    for (const feature of features) {
+      const key = this.getFeatureDeduplicationKey(feature);
+      
+      if (seen.has(key)) {
+        const existing = seen.get(key);
+        // Keep the feature with more data (longer length, larger area, higher count)
+        const existingScore = this.getFeatureDataScore(existing);
+        const newScore = this.getFeatureDataScore(feature);
+        
+        if (newScore > existingScore) {
+          seen.set(key, feature);
+        }
+      } else {
+        seen.set(key, feature);
+      }
+    }
+    
+    return Array.from(seen.values());
+  }
+
+  /**
+   * Generate a key for deduplication based on feature type and properties
+   */
+  private getFeatureDeduplicationKey(feature: any): string {
+    const type = feature.type || 'UNKNOWN';
+    
+    switch (type) {
+      case 'ROOM':
+        // Dedupe rooms by name (normalized)
+        const roomName = (feature.props?.name || '').toLowerCase().trim();
+        return `ROOM:${roomName}`;
+        
+      case 'WALL':
+        // Dedupe walls by partition type and length (within tolerance)
+        const partitionType = feature.props?.partitionType || 'UNKNOWN';
+        const wallLength = Math.round((feature.length || 0) * 10) / 10; // Round to 0.1 LF
+        return `WALL:${partitionType}:${wallLength}`;
+        
+      case 'PIPE':
+        // Dedupe pipes by service, diameter, and length
+        const pipeService = feature.props?.service || 'UNKNOWN';
+        const diameter = feature.props?.diameterIn || 0;
+        const pipeLength = Math.round((feature.length || 0) * 10) / 10;
+        return `PIPE:${pipeService}:${diameter}:${pipeLength}`;
+        
+      case 'DUCT':
+        // Dedupe ducts by size and length
+        const ductSize = feature.props?.size || 'UNKNOWN';
+        const ductLength = Math.round((feature.length || 0) * 10) / 10;
+        return `DUCT:${ductSize}:${ductLength}`;
+        
+      case 'FIXTURE':
+        // Dedupe fixtures by type (aggregate counts)
+        const fixtureType = (feature.props?.fixtureType || 'UNKNOWN').toLowerCase().trim();
+        return `FIXTURE:${fixtureType}`;
+        
+      default:
+        // Default: use type + stringified props (less aggressive deduplication)
+        return `${type}:${JSON.stringify(feature.props)}`;
+    }
+  }
+
+  /**
+   * Calculate a "data score" for a feature - higher is better/more complete
+   */
+  private getFeatureDataScore(feature: any): number {
+    let score = 0;
+    
+    // Area contributes to score
+    if (feature.area && feature.area > 0) score += feature.area;
+    
+    // Length contributes to score  
+    if (feature.length && feature.length > 0) score += feature.length * 10;
+    
+    // Count contributes to score
+    if (feature.count && feature.count > 0) score += feature.count * 100;
+    
+    // Props completeness
+    if (feature.props) {
+      score += Object.values(feature.props).filter(v => v != null).length * 10;
+    }
+    
+    return score;
+  }
+
+  /**
+   * Find an existing feature in the database that matches (cross-sheet deduplication)
+   */
+  private async findExistingFeature(feature: any, resolvedSheetId?: string): Promise<any | null> {
+    const type = feature.type || 'UNKNOWN';
+    
+    // Only check for certain feature types that commonly get duplicated across sheets
+    if (!['ROOM', 'FIXTURE'].includes(type)) {
+      // For walls/pipes/ducts, allow same elements on different sheets
+      // (they might legitimately appear on multiple sheet types)
+      return null;
+    }
+    
+    try {
+      switch (type) {
+        case 'ROOM':
+          // Check for room with same name in same job
+          const roomName = feature.props?.name;
+          if (!roomName) return null;
+          
+          return await this.prisma.feature.findFirst({
+            where: {
+              jobId: feature.jobId,
+              type: 'ROOM',
+              props: {
+                path: ['name'],
+                equals: roomName
+              }
+            }
+          });
+          
+        case 'FIXTURE':
+          // For fixtures, we want to aggregate counts, not dedupe
+          // But we should check for exact duplicates (same type, same sheet)
+          const fixtureType = feature.props?.fixtureType;
+          if (!fixtureType || !resolvedSheetId) return null;
+          
+          return await this.prisma.feature.findFirst({
+            where: {
+              jobId: feature.jobId,
+              sheetId: resolvedSheetId,
+              type: 'FIXTURE',
+              props: {
+                path: ['fixtureType'],
+                equals: fixtureType
+              }
+            }
+          });
+          
+        default:
+          return null;
+      }
+    } catch (error) {
+      // If query fails (e.g., JSON path not supported), just allow the feature
+      this.logger.debug(`Feature lookup failed: ${error.message}`);
+      return null;
+    }
   }
 
   private async resolveSheetId(

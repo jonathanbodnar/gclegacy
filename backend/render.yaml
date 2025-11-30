@@ -37,7 +37,7 @@ services:
         value: "--max-old-space-size=3072 --expose-gc"
       # PDF Processing Configuration - Optimized for memory constraints
       - key: PDF_RENDER_DPI
-        value: "100"
+        value: "300"
       - key: PDF_PAGE_BATCH_SIZE
         value: "5"
       - key: PDF_MAX_CONCURRENT_PAGES

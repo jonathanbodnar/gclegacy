@@ -72,9 +72,15 @@ export class StorageService {
   }
 
   async downloadFile(key: string): Promise<Buffer> {
+    this.logger.log(`📥 Downloading file: ${key}`);
+    const startTime = Date.now();
+
     if (this.useLocalStorage) {
       const filePath = path.join(this.localStoragePath, key);
-      return fs.readFileSync(filePath);
+      this.logger.log(`📂 Reading from local storage: ${filePath}`);
+      const buffer = fs.readFileSync(filePath);
+      this.logger.log(`✅ Local file read complete: ${(buffer.length / 1024 / 1024).toFixed(2)} MB in ${Date.now() - startTime}ms`);
+      return buffer;
     }
 
     const params = {
@@ -82,8 +88,16 @@ export class StorageService {
       Key: key,
     };
 
-    const result = await this.s3!.getObject(params).promise();
-    return result.Body as Buffer;
+    this.logger.log(`☁️  Downloading from S3/Wasabi: bucket=${this.bucketName}, key=${key}`);
+    try {
+      const result = await this.s3!.getObject(params).promise();
+      const buffer = result.Body as Buffer;
+      this.logger.log(`✅ S3 download complete: ${(buffer.length / 1024 / 1024).toFixed(2)} MB in ${Date.now() - startTime}ms`);
+      return buffer;
+    } catch (error: any) {
+      this.logger.error(`❌ S3 download failed after ${Date.now() - startTime}ms: ${error.message}`);
+      throw error;
+    }
   }
 
   async deleteFile(key: string): Promise<void> {
