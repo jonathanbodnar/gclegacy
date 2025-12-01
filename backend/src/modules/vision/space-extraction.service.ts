@@ -62,6 +62,7 @@ export class SpaceExtractionService {
   private readonly openai?: OpenAI;
   private readonly model: string;
   private readonly textBudget: number;
+  private readonly parallelLimit: number;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>('OPENAI_API_KEY');
@@ -73,12 +74,42 @@ export class SpaceExtractionService {
       this.configService.get<string>('SPACE_TEXT_LIMIT') || '6000',
       10,
     );
+    this.parallelLimit = parseInt(
+      this.configService.get<string>('PARALLEL_EXTRACTION_LIMIT') || '3',
+      10,
+    );
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
     } else {
       this.logger.warn('OPENAI_API_KEY not configured - skipping space extraction');
     }
+  }
+
+  /**
+   * Process items in parallel with controlled concurrency
+   */
+  private async processInParallel<T, R>(
+    items: T[],
+    processor: (item: T, index: number) => Promise<R>,
+    concurrencyLimit: number
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let currentIndex = 0;
+
+    const worker = async () => {
+      while (currentIndex < items.length) {
+        const index = currentIndex++;
+        results[index] = await processor(items[index], index);
+      }
+    };
+
+    const workers = Array(Math.min(concurrencyLimit, items.length))
+      .fill(null)
+      .map(() => worker());
+
+    await Promise.all(workers);
+    return results;
   }
 
   async extractSpaces(sheets: SheetData[]): Promise<SpaceDefinition[]> {
@@ -97,48 +128,65 @@ export class SpaceExtractionService {
       return hasValidCategory && (hasRasterData || hasTextData);
     });
 
-    this.logger.log(`Found ${targetSheets.length} candidate sheets for space extraction`);
-    
-    const spaces: SpaceDefinition[] = [];
-    for (const sheet of targetSheets) {
-      try {
-        this.logger.log(
-          `Extracting spaces from sheet ${sheet.index} (${sheet.name || 'unnamed'}), ` +
-          `hasRaster=${!!(sheet.content?.rasterData?.length)}, ` +
-          `hasText=${!!(sheet.content?.textData?.length)}`
-        );
-        
-        const parsed = await this.extractFromSheet(sheet);
-        const spaceEntries = Array.isArray(parsed?.spaces) ? parsed.spaces : [];
-        
-        this.logger.log(`Sheet ${sheet.index}: OpenAI returned ${spaceEntries.length} spaces`);
-        
-        for (const entry of spaceEntries) {
-          const approxArea = this.parseArea(entry.raw_area_string);
-          spaces.push({
-            sheetIndex: sheet.index,
-            sheetName: sheet.name,
-            sheetRef: entry.sheet_ref ?? sheet.sheetIdGuess ?? sheet.name,
-            space_id: entry.space_id,
-            name: entry.name ?? null,
-            raw_label_text: entry.raw_label_text ?? null,
-            raw_area_string: entry.raw_area_string ?? null,
-            category: entry.category,
-            bbox_px: entry.bbox_px,
-            approx_area_sqft: approxArea,
-            confidence: entry.confidence ?? null,
-            notes: entry.notes ?? null,
-          });
-        }
-      } catch (error: any) {
-        this.logger.error(
-          `Space extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`,
-          error.stack
-        );
-      }
+    if (!targetSheets.length) {
+      return [];
     }
 
-    this.logger.log(`Total spaces extracted: ${spaces.length}`);
+    const effectiveLimit = Math.min(this.parallelLimit, targetSheets.length);
+    this.logger.log(
+      `🏠 Extracting spaces from ${targetSheets.length} sheets (parallel: ${effectiveLimit} concurrent)`
+    );
+    const startTime = Date.now();
+
+    // Process sheets in parallel with controlled concurrency
+    const sheetResults = await this.processInParallel(
+      targetSheets,
+      async (sheet, i) => {
+        try {
+          this.logger.log(
+            `  🔍 Space extraction sheet ${i + 1}/${targetSheets.length}: ${sheet.name || sheet.index}, ` +
+            `hasRaster=${!!(sheet.content?.rasterData?.length)}, ` +
+            `hasText=${!!(sheet.content?.textData?.length)}`
+          );
+          
+          const parsed = await this.extractFromSheet(sheet);
+          const spaceEntries = Array.isArray(parsed?.spaces) ? parsed.spaces : [];
+          
+          this.logger.log(`  ✅ Sheet ${sheet.index}: extracted ${spaceEntries.length} spaces`);
+          
+          return spaceEntries.map(entry => {
+            const approxArea = this.parseArea(entry.raw_area_string);
+            return {
+              sheetIndex: sheet.index,
+              sheetName: sheet.name,
+              sheetRef: entry.sheet_ref ?? sheet.sheetIdGuess ?? sheet.name,
+              space_id: entry.space_id,
+              name: entry.name ?? null,
+              raw_label_text: entry.raw_label_text ?? null,
+              raw_area_string: entry.raw_area_string ?? null,
+              category: entry.category,
+              bbox_px: entry.bbox_px,
+              approx_area_sqft: approxArea,
+              confidence: entry.confidence ?? null,
+              notes: entry.notes ?? null,
+            };
+          });
+        } catch (error: any) {
+          this.logger.error(
+            `Space extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`,
+            error.stack
+          );
+          return [];
+        }
+      },
+      effectiveLimit
+    );
+
+    // Flatten results
+    const spaces = sheetResults.flat();
+    const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+    this.logger.log(`✅ Space extraction complete: ${spaces.length} spaces from ${targetSheets.length} sheets in ${elapsedSec}s`);
+
     return spaces;
   }
 

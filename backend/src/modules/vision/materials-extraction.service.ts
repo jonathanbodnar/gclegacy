@@ -58,6 +58,7 @@ export class MaterialsExtractionService {
   private readonly openai?: OpenAI;
   private readonly model: string;
   private readonly textBudget: number;
+  private readonly parallelLimit: number;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>("OPENAI_API_KEY");
@@ -67,6 +68,10 @@ export class MaterialsExtractionService {
       "gpt-5.1-2025-11-13";
     this.textBudget = parseInt(
       this.configService.get<string>("MATERIALS_TEXT_LIMIT") || "7000",
+      10
+    );
+    this.parallelLimit = parseInt(
+      this.configService.get<string>("PARALLEL_EXTRACTION_LIMIT") || "5",
       10
     );
 
@@ -79,6 +84,32 @@ export class MaterialsExtractionService {
     }
   }
 
+  /**
+   * Process items in parallel with controlled concurrency
+   */
+  private async processInParallel<T, R>(
+    items: T[],
+    processor: (item: T, index: number) => Promise<R>,
+    concurrencyLimit: number
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let currentIndex = 0;
+
+    const worker = async () => {
+      while (currentIndex < items.length) {
+        const index = currentIndex++;
+        results[index] = await processor(items[index], index);
+      }
+    };
+
+    const workers = Array(Math.min(concurrencyLimit, items.length))
+      .fill(null)
+      .map(() => worker());
+
+    await Promise.all(workers);
+    return results;
+  }
+
   async extractFinishes(sheets: SheetData[]): Promise<SpaceFinishDefinition[]> {
     if (!this.openai) {
       return [];
@@ -89,23 +120,48 @@ export class MaterialsExtractionService {
       return category === "materials" || category === "rr_details";
     });
 
-    const results: SpaceFinishDefinition[] = [];
-    for (const sheet of finishSheets) {
-      const parsed = await this.extractFromSheet(sheet);
-      const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
-      for (const finish of entries) {
-        results.push({
-          sheetIndex: sheet.index,
-          sheetName: sheet.name,
-          category: finish.category as SpaceFinishCategory,
-          floor: finish.floor ?? null,
-          walls: Array.isArray(finish.walls) ? finish.walls : undefined,
-          ceiling: finish.ceiling ?? null,
-          base: finish.base ?? null,
-          notes: finish.notes ?? null,
-        });
-      }
+    if (!finishSheets.length) {
+      return [];
     }
+
+    const effectiveLimit = Math.min(this.parallelLimit, finishSheets.length);
+    this.logger.log(
+      `🎨 Extracting materials from ${finishSheets.length} sheets (parallel: ${effectiveLimit} concurrent)`
+    );
+    const startTime = Date.now();
+
+    // Process sheets in parallel with controlled concurrency
+    const sheetResults = await this.processInParallel(
+      finishSheets,
+      async (sheet, i) => {
+        try {
+          this.logger.log(`  🔍 Materials extraction sheet ${i + 1}/${finishSheets.length}: ${sheet.name || sheet.index}`);
+          const parsed = await this.extractFromSheet(sheet);
+          const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+          return entries.map(finish => ({
+            sheetIndex: sheet.index,
+            sheetName: sheet.name,
+            category: finish.category as SpaceFinishCategory,
+            floor: finish.floor ?? null,
+            walls: Array.isArray(finish.walls) ? finish.walls : undefined,
+            ceiling: finish.ceiling ?? null,
+            base: finish.base ?? null,
+            notes: finish.notes ?? null,
+          }));
+        } catch (error: any) {
+          this.logger.warn(
+            `Materials extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
+          );
+          return [];
+        }
+      },
+      effectiveLimit
+    );
+
+    // Flatten results
+    const results = sheetResults.flat();
+    const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+    this.logger.log(`✅ Materials extraction complete: ${results.length} finishes from ${finishSheets.length} sheets in ${elapsedSec}s`);
 
     return results;
   }

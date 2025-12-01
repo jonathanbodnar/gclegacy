@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface JobConfig {
   disciplines: string[];
@@ -24,6 +24,11 @@ export const JobConfiguration: React.FC<JobConfigurationProps> = ({ onConfigChan
       inferScale: true,
     }
   });
+
+  // Sync initial state to parent on mount
+  useEffect(() => {
+    onConfigChange(config);
+  }, []);
 
   const disciplineOptions = [
     { id: 'A', label: 'Architectural', description: 'Floor plans, elevations, sections' },

@@ -82,6 +82,7 @@ export class SheetClassificationService {
   private readonly openai?: OpenAI;
   private readonly model: string;
   private readonly textBudget: number;
+  private readonly parallelLimit: number;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>("OPENAI_API_KEY");
@@ -93,6 +94,12 @@ export class SheetClassificationService {
       this.configService.get<string>("SHEET_CLASSIFIER_TEXT_LIMIT") || "4000",
       10
     );
+    // Parallel classification limit - default 5 concurrent requests
+    // Set to 1 to disable parallelism, higher values = faster but more API load
+    this.parallelLimit = parseInt(
+      this.configService.get<string>("PARALLEL_CLASSIFICATION_LIMIT") || "5",
+      10
+    );
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
@@ -101,6 +108,36 @@ export class SheetClassificationService {
         "OPENAI_API_KEY not configured - sheet classification will be skipped"
       );
     }
+  }
+
+  /**
+   * Process items in parallel with controlled concurrency
+   * @param items Array of items to process
+   * @param processor Function to process each item
+   * @param concurrencyLimit Max concurrent operations
+   */
+  private async processInParallel<T, R>(
+    items: T[],
+    processor: (item: T, index: number) => Promise<R>,
+    concurrencyLimit: number
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let currentIndex = 0;
+
+    const worker = async () => {
+      while (currentIndex < items.length) {
+        const index = currentIndex++;
+        results[index] = await processor(items[index], index);
+      }
+    };
+
+    // Create workers up to the concurrency limit
+    const workers = Array(Math.min(concurrencyLimit, items.length))
+      .fill(null)
+      .map(() => worker());
+
+    await Promise.all(workers);
+    return results;
   }
 
   async classifySheets(
@@ -115,72 +152,88 @@ export class SheetClassificationService {
       }));
     }
 
-    this.logger.log(`📄 Classifying ${sheets.length} sheets using model: ${this.model}`);
-    const results: SheetClassificationMetadata[] = [];
-    for (let i = 0; i < sheets.length; i++) {
-      const sheet = sheets[i];
-      try {
-        this.logger.log(`  🔍 Classifying sheet ${i + 1}/${sheets.length} (index: ${sheet.index}, name: ${sheet.name})`);
-        const classification = await this.classifySingleSheet(sheet);
-        sheet.classification = classification;
-        results.push(classification);
-        this.logger.log(`  ✅ Sheet ${i + 1} classified as: ${classification.category} (${classification.discipline.join(', ') || 'no discipline'})`);
+    const effectiveLimit = Math.min(this.parallelLimit, sheets.length);
+    this.logger.log(
+      `📄 Classifying ${sheets.length} sheets using model: ${this.model} ` +
+      `(parallel: ${effectiveLimit} concurrent requests)`
+    );
+    
+    let completedCount = 0;
+    const startTime = Date.now();
 
-        // Selectively clear raster buffer - KEEP for sheets that need it for extraction
-        const shouldKeepRaster = this.shouldPreserveRasterData(classification);
-        if (sheet.content?.rasterData) {
-          if (shouldKeepRaster) {
-            this.logger.log(`  💾 Sheet ${i + 1}: PRESERVING rasterData for downstream extraction (category: ${classification.category}, disciplines: ${classification.discipline.join(', ')})`);
-          } else {
-            sheet.content.rasterData = undefined;
-            this.logger.debug(`  🗑️ Sheet ${i + 1}: Cleared rasterData (not needed for extraction)`);
-          }
-        }
+    // Process sheets in parallel with controlled concurrency
+    const results = await this.processInParallel(
+      sheets,
+      async (sheet, i) => {
+        try {
+          this.logger.log(`  🔍 Classifying sheet ${i + 1}/${sheets.length} (index: ${sheet.index}, name: ${sheet.name})`);
+          const classification = await this.classifySingleSheet(sheet);
+          sheet.classification = classification;
+          completedCount++;
+          this.logger.log(`  ✅ Sheet ${i + 1} classified as: ${classification.category} (${classification.discipline.join(', ') || 'no discipline'}) [${completedCount}/${sheets.length} done]`);
 
-        // Force GC every 5 sheets if memory is high and GC is available
-        if ((i + 1) % 5 === 0 && global.gc) {
-          const memUsage = process.memoryUsage();
-          const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-          const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
-
-          if (heapUsedMB > heapTotalMB * 0.75) {
-            try {
-              const before = heapUsedMB;
-              global.gc();
-              const after = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-              this.logger.debug(`  🧹 GC after sheet ${i + 1}: ${before}MB -> ${after}MB`);
-            } catch (e) {
-              // Ignore GC errors
+          // Selectively clear raster buffer - KEEP for sheets that need it for extraction
+          const shouldKeepRaster = this.shouldPreserveRasterData(classification);
+          if (sheet.content?.rasterData) {
+            if (shouldKeepRaster) {
+              this.logger.log(`  💾 Sheet ${i + 1}: PRESERVING rasterData for downstream extraction (category: ${classification.category}, disciplines: ${classification.discipline.join(', ')})`);
+            } else {
+              sheet.content.rasterData = undefined;
+              this.logger.debug(`  🗑️ Sheet ${i + 1}: Cleared rasterData (not needed for extraction)`);
             }
           }
-        }
-      } catch (error: any) {
-        this.logger.error(
-          `  ❌ Sheet classification failed for sheet ${i + 1}/${sheets.length} (index ${sheet.index}): ${error.message}`,
-          error.stack
-        );
-        const fallback: SheetClassificationMetadata = {
-          sheetId: sheet.sheetIdGuess || sheet.name,
-          title: sheet.name,
-          discipline: [],
-          category: "other",
-          notes: `Classification failed: ${error.message}`,
-          isPrimaryPlan: null,
-        };
-        sheet.classification = fallback;
-        results.push(fallback);
 
-        // Clear buffer even on error (but check if it should be preserved)
-        if (sheet.content?.rasterData) {
-          const shouldKeepOnError = sheet.classification && this.shouldPreserveRasterData(sheet.classification);
-          if (!shouldKeepOnError) {
-            sheet.content.rasterData = undefined;
+          // Force GC periodically if memory is high and GC is available
+          if (completedCount % 10 === 0 && global.gc) {
+            const memUsage = process.memoryUsage();
+            const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+            const heapTotalMB = Math.round(memUsage.heapTotal / 1024 / 1024);
+
+            if (heapUsedMB > heapTotalMB * 0.75) {
+              try {
+                const before = heapUsedMB;
+                global.gc();
+                const after = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+                this.logger.debug(`  🧹 GC after ${completedCount} sheets: ${before}MB -> ${after}MB`);
+              } catch (e) {
+                // Ignore GC errors
+              }
+            }
           }
-        }
-      }
-    }
 
-    this.logger.log(`✅ Sheet classification complete: ${results.length} sheets processed`);
+          return classification;
+        } catch (error: any) {
+          this.logger.error(
+            `  ❌ Sheet classification failed for sheet ${i + 1}/${sheets.length} (index ${sheet.index}): ${error.message}`,
+            error.stack
+          );
+          const fallback: SheetClassificationMetadata = {
+            sheetId: sheet.sheetIdGuess || sheet.name,
+            title: sheet.name,
+            discipline: [],
+            category: "other",
+            notes: `Classification failed: ${error.message}`,
+            isPrimaryPlan: null,
+          };
+          sheet.classification = fallback;
+          completedCount++;
+
+          // Clear buffer even on error (but check if it should be preserved)
+          if (sheet.content?.rasterData) {
+            const shouldKeepOnError = sheet.classification && this.shouldPreserveRasterData(sheet.classification);
+            if (!shouldKeepOnError) {
+              sheet.content.rasterData = undefined;
+            }
+          }
+
+          return fallback;
+        }
+      },
+      effectiveLimit
+    );
+
+    const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+    this.logger.log(`✅ Sheet classification complete: ${results.length} sheets processed in ${elapsedSec}s`);
     return results;
   }
 

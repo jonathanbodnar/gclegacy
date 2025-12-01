@@ -58,6 +58,7 @@ export class CeilingHeightExtractionService {
   private readonly model: string;
   private readonly textBudget: number;
   private readonly roomContextBudget: number;
+  private readonly parallelLimit: number;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>("OPENAI_API_KEY");
@@ -73,6 +74,10 @@ export class CeilingHeightExtractionService {
       this.configService.get<string>("CEILING_ROOM_CONTEXT_LIMIT") || "8000",
       10
     );
+    this.parallelLimit = parseInt(
+      this.configService.get<string>("PARALLEL_EXTRACTION_LIMIT") || "3",
+      10
+    );
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
@@ -81,6 +86,32 @@ export class CeilingHeightExtractionService {
         "OPENAI_API_KEY not configured - skipping ceiling extraction"
       );
     }
+  }
+
+  /**
+   * Process items in parallel with controlled concurrency
+   */
+  private async processInParallel<T, R>(
+    items: T[],
+    processor: (item: T, index: number) => Promise<R>,
+    concurrencyLimit: number
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let currentIndex = 0;
+
+    const worker = async () => {
+      while (currentIndex < items.length) {
+        const index = currentIndex++;
+        results[index] = await processor(items[index], index);
+      }
+    };
+
+    const workers = Array(Math.min(concurrencyLimit, items.length))
+      .fill(null)
+      .map(() => worker());
+
+    await Promise.all(workers);
+    return results;
   }
 
   async extractHeights(
@@ -145,25 +176,32 @@ export class CeilingHeightExtractionService {
       });
     }
 
-    const results: RoomCeilingHeight[] = [];
+    const effectiveLimit = Math.min(this.parallelLimit, rcSheets.length);
+    this.logger.log(
+      `📐 Extracting ceiling heights from ${rcSheets.length} sheets (parallel: ${effectiveLimit} concurrent)`
+    );
+    const startTime = Date.now();
 
-    for (const sheet of rcSheets) {
-      try {
-        const contextEntries =
-          spatialBySheet.get(sheet.index) ||
-          roomMappingBySheet.get(sheet.index) ||
-          [];
-        const contextJson = JSON.stringify(contextEntries);
-        const trimmedContext =
-          contextJson.length > this.roomContextBudget
-            ? contextJson.slice(0, this.roomContextBudget) + "..."
-            : contextJson;
-        const entries = await this.extractFromSheet(sheet, trimmedContext);
-        const heightEntries = Array.isArray(entries?.entries)
-          ? entries.entries
-          : [];
-        for (const entry of heightEntries) {
-          results.push({
+    // Process sheets in parallel with controlled concurrency
+    const sheetResults = await this.processInParallel(
+      rcSheets,
+      async (sheet, i) => {
+        try {
+          const contextEntries =
+            spatialBySheet.get(sheet.index) ||
+            roomMappingBySheet.get(sheet.index) ||
+            [];
+          const contextJson = JSON.stringify(contextEntries);
+          const trimmedContext =
+            contextJson.length > this.roomContextBudget
+              ? contextJson.slice(0, this.roomContextBudget) + "..."
+              : contextJson;
+          this.logger.log(`  🔍 Ceiling extraction sheet ${i + 1}/${rcSheets.length}: ${sheet.name || sheet.index}`);
+          const entries = await this.extractFromSheet(sheet, trimmedContext);
+          const heightEntries = Array.isArray(entries?.entries)
+            ? entries.entries
+            : [];
+          return heightEntries.map(entry => ({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
             room_number: entry.room_number || entry.space_id,
@@ -174,14 +212,21 @@ export class CeilingHeightExtractionService {
               entry.source_sheet ?? sheet.classification?.category ?? null,
             confidence: entry.confidence,
             notes: entry.notes,
-          });
+          }));
+        } catch (error: any) {
+          this.logger.warn(
+            `Ceiling height extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
+          );
+          return [];
         }
-      } catch (error: any) {
-        this.logger.warn(
-          `Ceiling height extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
-        );
-      }
-    }
+      },
+      effectiveLimit
+    );
+
+    // Flatten results
+    const results = sheetResults.flat();
+    const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+    this.logger.log(`✅ Ceiling extraction complete: ${results.length} heights from ${rcSheets.length} sheets in ${elapsedSec}s`);
 
     return results;
   }

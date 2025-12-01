@@ -69,6 +69,7 @@ export class ScaleExtractionService {
   private readonly openai?: OpenAI;
   private readonly model: string;
   private readonly textBudget: number;
+  private readonly parallelLimit: number;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>("OPENAI_API_KEY");
@@ -78,6 +79,10 @@ export class ScaleExtractionService {
       "gpt-5.1-2025-11-13";
     this.textBudget = parseInt(
       this.configService.get<string>("SCALE_EXTRACTION_TEXT_LIMIT") || "6000",
+      10
+    );
+    this.parallelLimit = parseInt(
+      this.configService.get<string>("PARALLEL_EXTRACTION_LIMIT") || "5",
       10
     );
 
@@ -90,33 +95,80 @@ export class ScaleExtractionService {
     }
   }
 
+  /**
+   * Process items in parallel with controlled concurrency
+   */
+  private async processInParallel<T, R>(
+    items: T[],
+    processor: (item: T, index: number) => Promise<R>,
+    concurrencyLimit: number
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let currentIndex = 0;
+
+    const worker = async () => {
+      while (currentIndex < items.length) {
+        const index = currentIndex++;
+        results[index] = await processor(items[index], index);
+      }
+    };
+
+    const workers = Array(Math.min(concurrencyLimit, items.length))
+      .fill(null)
+      .map(() => worker());
+
+    await Promise.all(workers);
+    return results;
+  }
+
   async extractScales(sheets: SheetData[]): Promise<ScaleAnnotation[]> {
     if (!this.openai) {
       return [];
     }
 
-    const annotations: ScaleAnnotation[] = [];
-    for (const sheet of sheets) {
+    // Filter sheets with text content
+    const validSheets = sheets.filter(sheet => {
       const text = sheet.content?.textData || sheet.text || "";
-      if (!text.trim()) {
-        continue;
-      }
+      return text.trim().length > 0;
+    });
 
-      try {
-        const sheetAnnotations = await this.extractFromSheet(sheet, text);
-        for (const entry of sheetAnnotations) {
-          annotations.push({
+    if (!validSheets.length) {
+      return [];
+    }
+
+    const effectiveLimit = Math.min(this.parallelLimit, validSheets.length);
+    this.logger.log(
+      `📏 Extracting scales from ${validSheets.length} sheets (parallel: ${effectiveLimit} concurrent)`
+    );
+    const startTime = Date.now();
+
+    // Process sheets in parallel with controlled concurrency
+    const sheetResults = await this.processInParallel(
+      validSheets,
+      async (sheet, i) => {
+        const text = sheet.content?.textData || sheet.text || "";
+        try {
+          this.logger.log(`  🔍 Scale extraction sheet ${i + 1}/${validSheets.length}: ${sheet.name || sheet.index}`);
+          const sheetAnnotations = await this.extractFromSheet(sheet, text);
+          return sheetAnnotations.map(entry => ({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
             ...entry,
-          });
+          }));
+        } catch (error: any) {
+          this.logger.warn(
+            `Scale extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
+          );
+          return [];
         }
-      } catch (error: any) {
-        this.logger.warn(
-          `Scale extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
-        );
-      }
-    }
+      },
+      effectiveLimit
+    );
+
+    // Flatten results
+    const annotations = sheetResults.flat();
+    const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+    this.logger.log(`✅ Scale extraction complete: ${annotations.length} annotations from ${validSheets.length} sheets in ${elapsedSec}s`);
 
     return annotations;
   }

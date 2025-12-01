@@ -80,6 +80,7 @@ export class WallRunExtractionService {
   private readonly openai?: OpenAI;
   private readonly model: string;
   private readonly partitionContextBudget: number;
+  private readonly parallelLimit: number;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.get<string>("OPENAI_API_KEY");
@@ -91,6 +92,10 @@ export class WallRunExtractionService {
       this.configService.get<string>("WALL_PARTITION_CONTEXT_LIMIT") || "6000",
       10
     );
+    this.parallelLimit = parseInt(
+      this.configService.get<string>("PARALLEL_EXTRACTION_LIMIT") || "3",
+      10
+    );
 
     if (apiKey) {
       this.openai = new OpenAI({ apiKey });
@@ -99,6 +104,32 @@ export class WallRunExtractionService {
         "OPENAI_API_KEY not configured - skipping wall extraction"
       );
     }
+  }
+
+  /**
+   * Process items in parallel with controlled concurrency
+   */
+  private async processInParallel<T, R>(
+    items: T[],
+    processor: (item: T, index: number) => Promise<R>,
+    concurrencyLimit: number
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let currentIndex = 0;
+
+    const worker = async () => {
+      while (currentIndex < items.length) {
+        const index = currentIndex++;
+        results[index] = await processor(items[index], index);
+      }
+    };
+
+    const workers = Array(Math.min(concurrencyLimit, items.length))
+      .fill(null)
+      .map(() => worker());
+
+    await Promise.all(workers);
+    return results;
   }
 
   async extractWallRuns(
@@ -135,34 +166,48 @@ export class WallRunExtractionService {
         ? partitionContextJson.slice(0, this.partitionContextBudget) + "..."
         : partitionContextJson;
 
-    const results: WallRunSegment[] = [];
+    const effectiveLimit = Math.min(this.parallelLimit, floorPlanSheets.length);
+    this.logger.log(
+      `🧱 Extracting walls from ${floorPlanSheets.length} sheets (parallel: ${effectiveLimit} concurrent)`
+    );
+    const startTime = Date.now();
 
-    for (const sheet of floorPlanSheets) {
-      const sheetSpaces = spaces.filter(
-        (space) => space.sheetIndex === sheet.index
-      );
-      try {
-        const segments = await this.extractFromSheet(
-          sheet,
-          partitionContext,
-          sheetSpaces
+    // Process sheets in parallel with controlled concurrency
+    const sheetResults = await this.processInParallel(
+      floorPlanSheets,
+      async (sheet, i) => {
+        const sheetSpaces = spaces.filter(
+          (space) => space.sheetIndex === sheet.index
         );
-        const entries = Array.isArray(segments?.segments)
-          ? segments.segments
-          : [];
-        for (const segment of entries) {
-          results.push({
+        try {
+          this.logger.log(`  🔍 Wall extraction sheet ${i + 1}/${floorPlanSheets.length}: ${sheet.name || sheet.index}`);
+          const segments = await this.extractFromSheet(
+            sheet,
+            partitionContext,
+            sheetSpaces
+          );
+          const entries = Array.isArray(segments?.segments)
+            ? segments.segments
+            : [];
+          return entries.map(segment => ({
             sheetIndex: sheet.index,
             sheetName: sheet.name,
             ...segment,
-          });
+          }));
+        } catch (error: any) {
+          this.logger.warn(
+            `Wall run extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
+          );
+          return [];
         }
-      } catch (error: any) {
-        this.logger.warn(
-          `Wall run extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
-        );
-      }
-    }
+      },
+      effectiveLimit
+    );
+
+    // Flatten results
+    const results = sheetResults.flat();
+    const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+    this.logger.log(`✅ Wall extraction complete: ${results.length} segments from ${floorPlanSheets.length} sheets in ${elapsedSec}s`);
 
     return results;
   }
