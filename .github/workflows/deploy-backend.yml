@@ -1,0 +1,56 @@
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+env:
+  DROPLET_IP: 165.22.162.176
+  DROPLET_USER: root
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to DigitalOcean Droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ env.DROPLET_IP }}
+          username: ${{ env.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          script: |
+            cd /root/gclegacy
+            
+            # Configure git to use token for pulling
+            git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/jonathanbodnar/gclegacy.git
+            
+            # Pull latest changes
+            git fetch origin main
+            git reset --hard origin/main
+            
+            # Navigate to backend
+            cd backend
+            
+            # Rebuild and restart containers
+            docker compose build --no-cache api
+            docker compose up -d api
+            
+            # Wait for health check
+            echo "Waiting for API to be healthy..."
+            sleep 30
+            
+            # Verify deployment
+            if curl -sf http://localhost:3000/health > /dev/null; then
+              echo "✅ Deployment successful! API is healthy."
+            else
+              echo "❌ Deployment failed! API health check failed."
+              docker logs backend-api-1 --tail 50
+              exit 1
+            fi
