@@ -1,0 +1,69 @@
+services:
+  - type: web
+    name: plantakeoff-api
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: export NODE_OPTIONS="--max-old-space-size=2048" && npm install --include=dev && npm run db:generate && npm run build:render && npm run verify:build
+    startCommand: npm run start:render
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: API_PREFIX
+        value: v1
+      - key: MINIMAL_START
+        value: "false"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: plantakeoff-db
+          property: connectionString
+      # Note: REDIS_URL should be set manually in Render dashboard after Redis service is created
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 24h
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: RATE_LIMIT_TTL
+        value: "60"
+      - key: RATE_LIMIT_MAX
+        value: "100"
+      - key: LOG_LEVEL
+        value: info
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=3072 --expose-gc"
+      # PDF Processing Configuration - Optimized for memory constraints
+      - key: PDF_RENDER_DPI
+        value: "300"
+      - key: PDF_PAGE_BATCH_SIZE
+        value: "5"
+      - key: PDF_MAX_CONCURRENT_PAGES
+        value: "1"
+      - key: VISION_BATCH_SIZE
+        value: "2"
+      - key: MONITOR_MEMORY
+        value: "true"
+      # Note: Add these manually in Render dashboard after deployment:
+      # - OPENAI_API_KEY (required for plan analysis)
+      # - REDIS_URL (optional, from Redis service connection string)
+      # - WASABI_ACCESS_KEY_ID (optional, for cloud storage)
+      # - WASABI_SECRET_ACCESS_KEY (optional, for cloud storage)
+      # - WASABI_BUCKET_NAME (optional, for cloud storage)
+      # - WASABI_ENDPOINT (optional, defaults to https://s3.wasabisys.com)
+      # - WASABI_REGION (optional, defaults to us-east-1)
+
+databases:
+  - name: plantakeoff-db
+    databaseName: plantakeoff
+    user: plantakeoff
+    plan: starter
+    region: oregon
+
+  - name: plantakeoff-redis
+    type: redis
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: allkeys-lru

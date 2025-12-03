@@ -8,6 +8,7 @@ This is a monorepo containing both the backend API and frontend React applicatio
 
 - **Multi-format support**: PDF, DWG/DXF, RVT/IFC files
 - **AI-powered extraction**: Automatic detection of rooms, walls, doors, windows, pipes, ducts, and fixtures
+- **Vertical context aware**: Elevation/section parsing with story heights and riser detection for better volume/material outputs
 - **Scale detection**: Auto-detect scale and units from title blocks and dimension strings
 - **Materials mapping**: Configurable YAML/JSON rules to generate materials lists from extracted features
 - **Cloud-native**: Containerized services with S3 storage and PostGIS database
@@ -122,8 +123,16 @@ curl -X POST http://localhost:3000/v1/jobs \
   -d '{
     "fileId": "file_abc123",
     "disciplines": ["A", "P", "M", "E"],
-    "targets": ["rooms", "walls", "doors", "windows", "pipes", "ducts", "fixtures"],
+    "targets": ["rooms", "walls", "doors", "windows", "pipes", "ducts", "fixtures", "vertical"],
     "materialsRuleSetId": "mrs_001",
+    "options": {
+      "inferScale": true,
+      "defaultStoryHeightFt": 12,
+      "levelOverrides": {
+        "Level 1": 0,
+        "Level 2": 12
+      }
+    },
     "webhookUrl": "https://yourapp.com/hooks/plan"
   }'
 ```

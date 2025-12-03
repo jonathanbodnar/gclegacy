@@ -1,15 +1,37 @@
 [phases.setup]
-nixPkgs = ["nodejs_18", "npm-9_x", "python3", "postgresql", "vips"]
+nixPkgs = [
+  "nodejs_20",
+  "npm-10_x", 
+  "python3",
+  "postgresql",
+  "vips",
+  "imagemagick",
+  "graphicsmagick",
+  "ghostscript",
+  "poppler_utils",
+  "cairo",
+  "pango",
+  "pixman"
+]
 
 [phases.install]
 cmds = ["npm install"]
 
 [phases.build]
-cmds = ["echo 'Using enhanced API server - no build needed'"]
+cmds = [
+  "npx prisma generate",
+  "npm run build"
+]
+
+[phases.deploy]
+cmds = [
+  "npx prisma migrate deploy"
+]
 
 [start]
-cmd = "npm run start:instant"
+cmd = "npm start"
 
 [variables]
 NODE_ENV = "production"
-MINIMAL_START = "true"
+
+MINIMAL_START='false'

@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: plantakeoff-backend
+    env: node
+    region: oregon
+    plan: starter
+    rootDir: backend
+    buildCommand: export NODE_OPTIONS="--max-old-space-size=2048" && npm install --include=dev && npx prisma generate && npm run build:render && npm run verify:build
+    startCommand: node --max-old-space-size=1024 --expose-gc dist/src/main.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        fromService:
+          type: web
+          name: plantakeoff-backend
+          property: port
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=1024 --expose-gc"
+      # PDF Processing Configuration
+      - key: PDF_RENDER_DPI
+        value: "200"
+      - key: PDF_PAGE_BATCH_SIZE
+        value: "3"
+      - key: MONITOR_MEMORY
+        value: "true"
+

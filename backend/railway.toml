@@ -14,11 +14,16 @@ source = "./backend"
 [services.variables]
 NODE_ENV = "production"
 PORT = "${{ PORT }}"
+# DATABASE_URL will be automatically set by Railway when services are linked
+# IMPORTANT: Ensure you remove any managed PostgreSQL service from Railway dashboard
+# The DATABASE_URL should point to the "postgres" container service below
+# Format: postgresql://plantakeoff:${POSTGRES_PASSWORD}@postgres:5432/plantakeoff
 
 [[services]]
 name = "plantakeoff-frontend"
 source = "./frontend"
 
+# PostgreSQL Container Service
 [[services]]
 name = "postgres"
 source = "postgres:15"

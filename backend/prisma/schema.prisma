@@ -3,13 +3,11 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [postgis]
 }
 
 model File {
@@ -38,20 +36,20 @@ model Job {
   id          String    @id @default(cuid())
   fileId      String
   status      JobStatus @default(QUEUED)
-  disciplines String[]  // ["A","P","M","E"]
-  targets     String[]  // ["rooms","walls","doors","windows","pipes","ducts","fixtures"]
-  
+  disciplines String[] // ["A","P","M","E"]
+  targets     String[] // ["rooms","walls","doors","windows","pipes","ducts","fixtures"]
+
   // Configuration
   materialsRuleSetId String?
   webhookUrl         String?
-  options            Json?   // bimPreferred, inferScale, etc.
-  
+  options            Json? // bimPreferred, inferScale, etc.
+
   // Execution info
   startedAt  DateTime?
   finishedAt DateTime?
   progress   Float     @default(0.0)
   error      String?
-  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -67,15 +65,16 @@ model Job {
 model Sheet {
   id         String  @id @default(cuid())
   jobId      String
-  index      Int     // Page/sheet number
+  index      Int // Page/sheet number
   name       String? // Sheet name/title
   discipline String? // A, P, M, E
   scale      String? // "1/4\"=1'-0\""
   units      String? // "ft", "m"
-  
+  scaleRatio Float?  // Numeric ratio for calculations
+
   // Spatial reference
-  srid       Int?    @default(4326)
-  
+  srid Int? @default(4326)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -92,18 +91,24 @@ model Feature {
   jobId   String
   sheetId String?
   type    FeatureType
-  
+
   // Properties (JSON)
   props Json? // partitionType, service, diameterIn, etc.
-  
-  // Geometry (PostGIS)
-  geom Unsupported("geometry")?
-  
+
+  // Geometry (stored as JSON)
+  geom Json? // Geometry data in GeoJSON or custom format
+
   // Computed metrics
   area   Float?
   length Float?
   count  Int?   @default(1)
-  
+
+  // Provenance (bounding boxes, source text, confidence)
+  provenance Json? // { boundingBox: [[x1,y1], [x2,y2]], sourceText: string, confidence: number, extractionMethod: string }
+
+  // Validation metadata
+  validation Json? // { isValid: boolean, confidence: number, issues: [] }
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -115,16 +120,17 @@ model Feature {
 }
 
 model Material {
-  id     String @id @default(cuid())
-  jobId  String
-  sku    String
-  qty    Float
-  uom    String // Unit of measure: "ea", "ft", "ft2", etc.
-  
+  id          String @id @default(cuid())
+  jobId       String
+  sku         String
+  description String? // Product description from rules
+  qty         Float
+  uom         String // Unit of measure: "ea", "ft", "ft2", etc.
+
   // Traceability
   ruleId  String?
-  sources Json?  // Array of feature IDs that contributed
-  
+  sources Json? // Array of feature IDs that contributed
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -138,8 +144,8 @@ model MaterialsRuleSet {
   id      String @id @default(cuid())
   name    String
   version String
-  rules   Json   // YAML/JSON rules content
-  
+  rules   Json // YAML/JSON rules content
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -163,4 +169,8 @@ enum FeatureType {
   DUCT
   FIXTURE
   EQUIPMENT
+  ELEVATION
+  SECTION
+  RISER
+  LEVEL
 }

@@ -36,7 +36,7 @@ class TokenResponse {
 }
 
 @ApiTags('Authentication')
-@Controller('oauth')
+@Controller('/oauth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 

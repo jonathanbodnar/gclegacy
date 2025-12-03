@@ -1,293 +1,1265 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import OpenAI from 'openai';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import OpenAI from "openai";
+import { appendVisionLog } from "./vision.logger";
 
 export interface VisionAnalysisResult {
+  sheetTitle?: string;
   rooms: Array<{
     id: string;
     name?: string;
     area?: number;
     polygon?: number[][];
-    program?: string;
+    program?: string | null;
+    level?: string;
+    heightFt?: number;
   }>;
   walls: Array<{
     id: string;
     length?: number;
     partitionType?: string;
     polyline?: number[][];
+    level?: string;
+    heightFt?: number;
   }>;
   openings: Array<{
     id: string;
-    type: 'door' | 'window';
+    type: "door" | "window";
     width?: number;
     height?: number;
     location?: number[];
+    level?: string;
   }>;
   pipes: Array<{
     id: string;
-    service: 'CW' | 'HW' | 'SAN' | 'VENT';
+    service: "CW" | "HW" | "SAN" | "VENT";
     diameter?: number;
     length?: number;
     polyline?: number[][];
+    level?: string;
+    heightFt?: number;
   }>;
   ducts: Array<{
     id: string;
     size?: string;
     length?: number;
     polyline?: number[][];
+    level?: string;
+    heightFt?: number;
   }>;
   fixtures: Array<{
     id: string;
     type: string;
     count: number;
     location?: number[];
+    level?: string;
+    heightFt?: number;
   }>;
+  levels?: Array<{
+    id: string;
+    name: string;
+    elevationFt?: number;
+    heightFt?: number;
+  }>;
+  elevations?: Array<{
+    id: string;
+    face?: string;
+    widthFt?: number;
+    heightFt?: number;
+    fromLevel?: string;
+    toLevel?: string;
+    notes?: string;
+  }>;
+  sections?: Array<{
+    id: string;
+    description?: string;
+    fromLevel?: string;
+    toLevel?: string;
+    heightFt?: number;
+  }>;
+  risers?: Array<{
+    id: string;
+    system?: string;
+    levels: string[];
+    heightFt?: number;
+    qty?: number;
+  }>;
+  verticalMetadata?: {
+    defaultStoryHeightFt?: number;
+    totalStories?: number;
+    referenceDatum?: string;
+    notes?: string[];
+  };
   scale?: {
     detected: string;
-    units: 'ft' | 'm';
+    units: "ft" | "m";
     ratio: number;
+    confidence?: "high" | "medium" | "low";
+    method?: "titleblock" | "dimensions" | "reference" | "assumed";
   };
+  materials?: Array<{
+    id: string;
+    type: string; // "wall", "floor", "ceiling", "pipe", "duct", "fixture"
+    specification: string; // Material spec from drawing (e.g., "PT-1", "1/2\" Type L Copper")
+    location?: string; // Room name or area where material is used
+    quantity?: number;
+    unit?: string;
+    source?: string; // Where on drawing this was found (e.g., "legend", "schedule", "callout")
+  }>;
 }
 
 @Injectable()
 export class OpenAIVisionService {
   private readonly logger = new Logger(OpenAIVisionService.name);
   private openai: OpenAI;
+  private allowMockFallback: boolean;
+  private savedImageCount = 0; // Track how many images we've saved
 
   constructor(private configService: ConfigService) {
-    const apiKey = this.configService.get('OPENAI_API_KEY');
+    const apiKey = this.configService.get("OPENAI_API_KEY");
     if (!apiKey) {
-      this.logger.warn('OpenAI API key not configured - vision analysis will be limited');
+      this.logger.warn(
+        "OpenAI API key not configured - vision analysis will be limited"
+      );
     }
-    
+
     this.openai = new OpenAI({
-      apiKey: apiKey || 'dummy-key',
+      apiKey: apiKey || "dummy-key",
     });
+    this.allowMockFallback =
+      (this.configService.get("VISION_ALLOW_MOCK") || "false").toLowerCase() ===
+      "true";
   }
 
   async analyzePlanImage(
-    imageBuffer: Buffer, 
-    disciplines: string[], 
+    imageBuffer: Buffer,
+    disciplines: string[],
     targets: string[],
     options?: any
   ): Promise<VisionAnalysisResult> {
-    this.logger.log(`Analyzing plan image with OpenAI Vision (disciplines: ${disciplines.join(',')}, targets: ${targets.join(',')})`);
+    // Only log in development to reduce log volume
+    if (process.env.NODE_ENV !== "production") {
+    this.logger.log(
+      `Analyzing plan image with OpenAI Vision (disciplines: ${disciplines.join(",")}, targets: ${targets.join(",")})`
+    );
+    }
+
+    // 🔍 DEBUG: Log image buffer info
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('\n========== IMAGE BUFFER INFO ==========');
+      console.log(`Image size: ${(imageBuffer.length / 1024).toFixed(2)} KB`);
+      console.log(`First 20 bytes (hex): ${imageBuffer.slice(0, 20).toString('hex')}`);
+      console.log('=======================================\n');
+    }
 
     try {
+      // Validate image buffer before processing
+      this.validateImageBuffer(imageBuffer);
+
+      // Determine image format from buffer
+      const imageFormat = this.detectImageFormat(imageBuffer);
+      if (!imageFormat) {
+        throw new Error(
+          "Invalid image format: buffer must be a valid PNG or JPEG"
+        );
+      }
+
       // Convert buffer to base64 for OpenAI
-      const base64Image = imageBuffer.toString('base64');
-      const imageUrl = `data:image/png;base64,${base64Image}`;
+      const base64Image = imageBuffer.toString("base64");
+      const imageUrl = `data:image/${imageFormat};base64,${base64Image}`;
+
+      // 🔍 DEBUG: Validate base64 encoding and data URL format
+      if (process.env.NODE_ENV !== 'production' && process.env.VALIDATE_BASE64 === 'true') {
+        console.log('\n========== BASE64 VALIDATION ==========');
+        console.log(`Base64 length: ${base64Image.length} characters`);
+        console.log(`Base64 first 100 chars: ${base64Image.substring(0, 100)}...`);
+        console.log(`Base64 last 50 chars: ...${base64Image.substring(base64Image.length - 50)}`);
+        
+        // Validate base64 format (should only contain: A-Z, a-z, 0-9, +, /, =)
+        const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+        const isValidBase64 = base64Regex.test(base64Image);
+        console.log(`✅ Base64 format valid: ${isValidBase64}`);
+        
+        // Validate data URL format
+        const hasCorrectPrefix = imageUrl.startsWith(`data:image/${imageFormat};base64,`);
+        console.log(`✅ Data URL prefix correct: ${hasCorrectPrefix}`);
+        console.log(`Data URL length: ${imageUrl.length} characters`);
+        console.log(`Data URL first 100 chars: ${imageUrl.substring(0, 100)}...`);
+        
+        // Test decode base64 to verify it's valid
+        try {
+          const decoded = Buffer.from(base64Image, 'base64');
+          console.log(`✅ Base64 decode successful: ${decoded.length} bytes`);
+          console.log(`Decoded size matches original: ${decoded.length === imageBuffer.length}`);
+          
+          // Check PNG/JPEG magic numbers in decoded data
+          const magicNumber = decoded.slice(0, 4).toString('hex');
+          const isPNG = magicNumber === '89504e47';
+          const isJPEG = magicNumber.substring(0, 6) === 'ffd8ff';
+          console.log(`Magic number: ${magicNumber}`);
+          console.log(`✅ Valid image format: PNG=${isPNG}, JPEG=${isJPEG}`);
+        } catch (error) {
+          console.log(`❌ Base64 decode FAILED: ${error.message}`);
+        }
+        
+        console.log('=======================================\n');
+      }
+
+      // 🔍 DEBUG: Save HTML file to test data URL in browser (independent of validation)
+      if (process.env.NODE_ENV !== 'production' && process.env.SAVE_HTML_TEST === 'true' && this.savedImageCount < 3) {
+        const fs = require('fs');
+        const path = require('path');
+        const testDir = path.join(process.cwd(), 'debug-images');
+        
+        if (!fs.existsSync(testDir)) {
+          fs.mkdirSync(testDir, { recursive: true });
+        }
+        
+        // Save HTML for first 3 images only
+        const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Data URL Test</title>
+  <style>
+    body { margin: 20px; font-family: Arial; }
+    img { max-width: 100%; border: 2px solid #ccc; }
+    .info { background: #f0f0f0; padding: 10px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>Data URL Image Test</h1>
+  <div class="info">
+    <p><strong>Base64 Length:</strong> ${base64Image.length} characters</p>
+    <p><strong>Image Format:</strong> ${imageFormat}</p>
+    <p><strong>Original Size:</strong> ${(imageBuffer.length / 1024).toFixed(2)} KB</p>
+  </div>
+  <h2>If you see the image below, base64 encoding is CORRECT:</h2>
+  <img src="${imageUrl}" alt="Test Image">
+  <div class="info">
+    <p>✅ If image displays correctly = Base64 encoding works!</p>
+    <p>❌ If broken image icon = Base64 encoding failed!</p>
+  </div>
+</body>
+</html>`;
+        
+        const htmlPath = path.join(testDir, `base64-test-${Date.now()}.html`);
+        fs.writeFileSync(htmlPath, htmlContent);
+        console.log(`\n🌐 HTML TEST FILE: ${htmlPath}`);
+        console.log(`   Open this file in a browser to verify data URL works!\n`);
+      }
+
+      // 🔍 DEBUG: Save first 3 images to verify quality (remove in production)
+      if (process.env.NODE_ENV !== 'production' && process.env.SAVE_SAMPLE_IMAGES === 'true' && this.savedImageCount < 3) {
+        const fs = require('fs');
+        const path = require('path');
+        const sampleDir = path.join(process.cwd(), 'debug-images');
+        
+        // Create debug directory if it doesn't exist
+        if (!fs.existsSync(sampleDir)) {
+          fs.mkdirSync(sampleDir, { recursive: true });
+        }
+        
+        // Save first 3 images only
+        const timestamp = Date.now();
+        const randomId = Math.random().toString(36).substring(2, 8);
+        const samplePath = path.join(sampleDir, `page-${timestamp}-${randomId}.${imageFormat}`);
+        
+        fs.writeFileSync(samplePath, imageBuffer);
+        this.savedImageCount++; // Increment counter
+        console.log(`\n🖼️  IMAGE SAVED (${this.savedImageCount}/3): ${samplePath}`);
+        console.log(`   Size: ${(imageBuffer.length / 1024).toFixed(2)} KB\n`);
+      }
 
       // Create comprehensive prompt based on disciplines and targets
       const prompt = this.createAnalysisPrompt(disciplines, targets);
 
+      // 🔍 DEBUG: Log prompt being sent
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('\n========== OPENAI PROMPT INFO ==========');
+        console.log(`Prompt length: ${prompt.length} characters`);
+        console.log(`First 500 chars of prompt:\n${prompt.substring(0, 500)}...`);
+        console.log('=========================================\n');
+      }
+
+      // Retry logic with exponential backoff for rate limiting
+      const maxRetries = parseInt(process.env.OPENAI_MAX_RETRIES || "3", 10);
+      const baseDelay = parseInt(
+        process.env.OPENAI_RETRY_DELAY_MS || "1000",
+        10
+      );
+      let lastError: any = null;
+
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
       const response = await this.openai.chat.completions.create({
-        model: "gpt-4-vision-preview",
+            model: process.env.OPENAI_VISION_MODEL || "gpt-4o",
         messages: [
+          {
+            role: "system",
+            content: `You are an expert architectural/MEP plan analyst with full visual access to the provided drawing.
+Return VALID JSON only that matches the requested schema.
+If data is missing, use nulls or empty arrays—never apologize or say you cannot analyze.
+Do not add prose, markdown, or explanations beyond the JSON object.`,
+          },
           {
             role: "user",
             content: [
               {
                 type: "text",
-                text: prompt
+                text: prompt,
               },
               {
                 type: "image_url",
                 image_url: {
                   url: imageUrl,
-                  detail: "high"
-                }
-              }
-            ]
-          }
+                  detail: "high",
+                },
+              },
+            ],
+          },
         ],
-        max_tokens: 4000,
-        temperature: 0.1, // Low temperature for consistent technical analysis
+        max_completion_tokens: 16000,  // Increased from 4000 to allow more detailed responses
+        temperature: 0.0,  // Zero temperature for deterministic, consistent results
       });
 
+          // Success - break out of retry loop
       const analysisText = response.choices[0]?.message?.content;
+      
+      // 🔍 DEBUG: Log full OpenAI response metadata
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('\n========== OPENAI RESPONSE INFO ==========');
+        console.log(`Model used: ${response.model}`);
+        console.log(`Total tokens: ${response.usage?.total_tokens || 'N/A'}`);
+        console.log(`Prompt tokens: ${response.usage?.prompt_tokens || 'N/A'}`);
+        console.log(`Completion tokens: ${response.usage?.completion_tokens || 'N/A'}`);
+        console.log(`Response length: ${analysisText?.length || 0} characters`);
+        console.log(`Finish reason: ${response.choices[0]?.finish_reason || 'N/A'}`);
+      
+        if (!analysisText) {
+          console.log('❌ ERROR: No analysis text in response!');
+          console.log('Full response:', JSON.stringify(response, null, 2));
+        }
+        
+        console.log('\n--- FULL OPENAI RESPONSE (First 1000 chars) ---');
+        console.log(analysisText?.substring(0, 1000) || 'N/A');
+        console.log('\n--- END OF RESPONSE PREVIEW ---');
+        
+        if (analysisText && analysisText.length > 1000) {
+          console.log(`\n... (${analysisText.length - 1000} more characters)`);
+        }
+        console.log('==========================================\n');
+      }
+      
       if (!analysisText) {
-        throw new Error('No analysis response from OpenAI');
+        throw new Error("No analysis response from OpenAI");
       }
 
-      // Parse the structured response
-      const result = await this.parseAnalysisResponse(analysisText, targets);
-      
-      this.logger.log(`OpenAI analysis completed: ${result.rooms.length} rooms, ${result.walls.length} walls, ${result.fixtures.length} fixtures`);
-      
-      return result;
+          // Log response preview for debugging
+          this.logger.log(
+            `OpenAI response preview (${analysisText.length} chars): ${analysisText.substring(0, 200)}...`
+          );
 
-    } catch (error) {
-      this.logger.error('OpenAI vision analysis failed:', error.message);
+          // Process the response (moved outside retry loop)
+          const result = await this.processAnalysisResponse(
+            analysisText,
+            disciplines,
+            targets
+          );
+          
+          // 🔍 DEBUG: Log parsed result details
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('\n========== PARSED RESULT DETAILS ==========');
+            console.log(`✅ Rooms: ${result.rooms.length}`);
+            if (result.rooms.length > 0) {
+              console.log('First room:', JSON.stringify(result.rooms[0], null, 2));
+            }
+            console.log(`✅ Walls: ${result.walls.length}`);
+            if (result.walls.length > 0) {
+              console.log('First wall:', JSON.stringify(result.walls[0], null, 2));
+            }
+            console.log(`✅ Pipes: ${result.pipes.length}`);
+            if (result.pipes.length > 0) {
+              console.log('First pipe:', JSON.stringify(result.pipes[0], null, 2));
+            }
+            console.log(`✅ Ducts: ${result.ducts.length}`);
+            if (result.ducts.length > 0) {
+              console.log('First duct:', JSON.stringify(result.ducts[0], null, 2));
+            }
+            console.log(`✅ Fixtures: ${result.fixtures.length}`);
+            if (result.fixtures.length > 0) {
+              console.log('First fixture:', JSON.stringify(result.fixtures[0], null, 2));
+            }
+            console.log(`✅ Scale: ${result.scale?.detected || 'N/A'} (ratio: ${result.scale?.ratio || 'N/A'})`);
+            console.log('===========================================\n');
+          }
+          
+          // Log what was extracted
+          this.logger.log(
+            `Parsed ${result.rooms.length} rooms, ${result.walls.length} walls, ` +
+            `${result.pipes.length} pipes, ${result.ducts.length} ducts, ` +
+            `${result.fixtures.length} fixtures from OpenAI response`
+          );
+          
+          return result;
+        } catch (error: any) {
+          lastError = error;
+
+          // Check if it's a rate limit error
+          const isRateLimit =
+            error.status === 429 ||
+            error.message?.includes("rate limit") ||
+            error.message?.includes("Rate limit") ||
+            error.code === "rate_limit_exceeded";
+
+          // Check if it's a retryable error
+          const isRetryable =
+            isRateLimit ||
+            (error.status >= 500 && error.status < 600) || // Server errors
+            error.code === "internal_error" ||
+            error.code === "server_error";
+
+          // If not retryable or out of retries, throw immediately
+          if (!isRetryable || attempt >= maxRetries) {
+            throw error;
+          }
+
+          // Calculate exponential backoff delay
+          const delay = baseDelay * Math.pow(2, attempt);
+          const jitter = Math.random() * 0.3 * delay; // Add up to 30% jitter
+          const totalDelay = delay + jitter;
+
+          // Only log retries in development to reduce log volume
+          if (process.env.NODE_ENV !== "production") {
+            this.logger.warn(
+              `OpenAI API ${isRateLimit ? "rate limit" : "error"} (attempt ${attempt + 1}/${maxRetries + 1}): ${error.message}. Retrying in ${Math.round(totalDelay)}ms...`
+            );
+          }
+
+          // Wait before retrying
+          await new Promise((resolve) => setTimeout(resolve, totalDelay));
+        }
+      }
+
+      // Should never reach here, but just in case
+      throw (
+        lastError || new Error("Failed to analyze plan image after retries")
+      );
+    } catch (error: any) {
+      // 🔍 DEBUG: Log detailed error information
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('\n========== OPENAI ERROR ==========');
+        console.log('Error message:', error.message);
+        console.log('Error status:', error.status);
+        console.log('Error code:', error.code);
+        console.log('Error type:', error.type);
+        console.log('Full error:', JSON.stringify(error, null, 2));
+        console.log('==================================\n');
+      }
       
+      const errorDetails = {
+        message: error.message,
+        status: error.status,
+        code: error.code,
+        type: error.type,
+      };
+
+      this.logger.error("OpenAI vision analysis failed:", errorDetails);
+
+      // Check for authentication errors
+      if (
+        error.status === 401 ||
+        error.message?.includes("Incorrect API key") ||
+        error.message?.includes("authentication")
+      ) {
+        this.logger.error(
+          "❌ OpenAI API Key is invalid or missing! Set OPENAI_API_KEY in Railway environment variables."
+        );
+        throw new Error(
+          "OpenAI API authentication failed. Please configure a valid OPENAI_API_KEY."
+        );
+      }
+
+      await appendVisionLog("OpenAI vision analysis failed", {
+        disciplines,
+        targets,
+        error: error.message,
+        errorDetails,
+      });
+
       // Fallback to mock data for testing
-      return this.generateMockAnalysis(disciplines, targets);
+      if (this.allowMockFallback) {
+        this.logger.warn(
+          "⚠️  Falling back to mock data (VISION_ALLOW_MOCK=true)"
+        );
+        return this.generateMockAnalysis(disciplines, targets);
+      }
+      this.logger.warn("⚠️  Returning empty analysis due to failure.");
+      return this.generateEmptyAnalysis(targets);
     }
   }
 
-  private createAnalysisPrompt(disciplines: string[], targets: string[]): string {
+  private async processAnalysisResponse(
+    analysisText: string,
+    disciplines: string[],
+    targets: string[]
+  ): Promise<VisionAnalysisResult> {
+      if (this.isRefusalResponse(analysisText)) {
+        await appendVisionLog("OpenAI vision refusal", {
+          disciplines,
+          targets,
+          message: analysisText.slice(0, 500),
+        });
+
+      if (this.allowMockFallback) {
+        this.logger.warn(
+          "⚠️  OpenAI vision refusal – falling back to mock data (VISION_ALLOW_MOCK=true)"
+        );
+        return this.generateMockAnalysis(disciplines, targets);
+      }
+
+      this.logger.warn(
+        "⚠️  OpenAI vision refusal detected – returning empty analysis so pipeline can continue."
+        );
+      return this.generateEmptyAnalysis(targets);
+      }
+
+      await appendVisionLog("OpenAI vision raw response", {
+        disciplines,
+        targets,
+        length: analysisText.length,
+        preview: analysisText.slice(0, 500),
+        timestamp: new Date().toISOString(),
+      });
+
+      // Parse the structured response
+      const result = await this.parseAnalysisResponse(analysisText, targets);
+
+    // Only log in development
+    if (process.env.NODE_ENV !== "production") {
+      this.logger.log(
+        `OpenAI analysis completed: ${result.rooms.length} rooms, ${result.walls.length} walls, ${result.fixtures.length} fixtures`
+      );
+    }
+
+      return result;
+  }
+
+  private createAnalysisPrompt(
+    disciplines: string[],
+    targets: string[]
+  ): string {
     const disciplineMap = {
-      'A': 'Architectural (floor plans, rooms, walls, doors, windows)',
-      'P': 'Plumbing (pipes, fixtures, water/sewer systems)', 
-      'M': 'Mechanical/HVAC (ducts, equipment, air systems)',
-      'E': 'Electrical (lighting, panels, conduits)'
+      A: "Architectural (floor plans, rooms, walls, doors, windows)",
+      P: "Plumbing (pipes, fixtures, water/sewer systems)",
+      M: "Mechanical/HVAC (ducts, equipment, air systems)",
+      E: "Electrical (lighting, panels, conduits)",
     };
 
     const targetMap = {
-      'rooms': 'room boundaries and areas with names/numbers',
-      'walls': 'wall centerlines with partition types',
-      'doors': 'door locations with sizes',
-      'windows': 'window locations with sizes', 
-      'pipes': 'piping systems with diameters and services (CW/HW/SAN)',
-      'ducts': 'ductwork with sizes',
-      'fixtures': 'plumbing/electrical fixtures with types and counts'
+      rooms: "room boundaries and areas with names/numbers - measure dimensions and calculate square footage",
+      walls: "wall centerlines with partition types - MEASURE linear length in feet for EVERY wall segment",
+      doors: "door locations with sizes - read dimensions from annotations or measure",
+      windows: "window locations with sizes - read dimensions from annotations or measure",
+      pipes: "piping systems with diameters, services (CW/HW/SAN), and RUN LENGTHS - MEASURE visible pipe centerline OR read dimension annotations like '24-6 LF'",
+      ducts: "ductwork with sizes and RUN LENGTHS - MEASURE visible duct centerline OR read dimension annotations",
+      fixtures: "plumbing/electrical fixtures with types and counts",
+      levels: "building levels with elevations and clear heights",
+      elevations: "exterior/interior elevations that show story heights",
+      sections:
+        "section cuts indicating vertical dimensions and structural relationships",
+      risers:
+        "vertical riser diagrams for plumbing/mechanical/electrical systems",
     };
 
-    return `You are an expert architectural/MEP plan analyst. Analyze this construction drawing and extract specific technical information.
+    const wantsVertical = {
+      levels: targets.includes("levels"),
+      elevations: targets.includes("elevations"),
+      sections: targets.includes("sections"),
+      risers: targets.includes("risers"),
+    };
+    const verticalRequested = Object.values(wantsVertical).some(Boolean);
 
-DISCIPLINES TO ANALYZE: ${disciplines.map(d => disciplineMap[d]).join(', ')}
-
-EXTRACTION TARGETS: ${targets.map(t => targetMap[t]).join(', ')}
-
-Please provide a detailed analysis in the following JSON format:
-
-{
+    const jsonSections: string[] = [
+      `  "sheetTitle": "exact sheet number/name from title block (e.g. A-101, S-201, I401) - read from title block, not generic names",
   "scale": {
-    "detected": "scale found in titleblock (e.g. 1/4\"=1'-0\")",
-    "units": "ft or m",
-    "ratio": "numeric ratio for calculations"
-  },
-  "rooms": [
+    "detected": "exact scale text from titleblock (e.g. 1/4\\"=1'-0\\", 1:100, SCALE: 1/8\\"=1'-0\\") - MUST read from drawing, not guess",
+    "units": "ft or m (based on detected scale)",
+    "ratio": "numeric ratio for pixel-to-real conversion (e.g., 1/4\\"=1'-0\\" = 48, 1:100 = 100)",
+    "confidence": "high/medium/low based on clarity of scale notation",
+    "method": "titleblock/dimensions/reference/assumed"
+  }`,
+      `  "rooms": [
     {
       "id": "unique_id",
-      "name": "room name or number from plan",
+      "name": "room name or number from plan (read exact text)",
       "area": "calculated area in square units",
-      "program": "room type (office, toilet, etc.)"
+      "polygon": [[x1,y1], [x2,y2], [x3,y3], [x1,y1]] - REQUIRED: closed polygon by TRACING visible room boundaries. Must have at least 3 distinct vertices. Empty array [] is FAILURE,
+      "program": "ONLY if explicitly labeled on plan - use null if not shown, DO NOT guess"
     }
-  ],
-  "walls": [
+  ]`,
+      `  "walls": [
     {
       "id": "unique_id", 
-      "length": "linear length",
-      "partitionType": "wall type from legend (PT-1, etc.)"
+      "length": "linear length in feet (must be > 0) - calculate using scale ratio",
+      "partitionType": "wall type from legend (PT-1, EXT-1, etc.)",
+      "polyline": [[x1,y1], [x2,y2]] - REQUIRED: wall centerline by TRACING visible walls. Must have at least 2 distinct points. Empty array [] means you didn't extract the wall
     }
-  ],
-  "openings": [
+  ]`,
+      `  "openings": [
     {
       "id": "unique_id",
       "type": "door or window", 
       "width": "opening width",
       "height": "opening height"
     }
-  ],
-  "pipes": [
+  ]`,
+      `  "pipes": [
     {
       "id": "unique_id",
       "service": "CW (cold water), HW (hot water), SAN (sanitary), or VENT",
-      "diameter": "pipe diameter in inches",
-      "length": "pipe run length"
+      "diameter": "pipe diameter in inches (numeric value only)",
+      "length": "pipe run length in FEET (numeric value only) - measure the visible pipe path OR read from dimension annotations like '24-6 LF' - REQUIRED for every pipe"
     }
-  ],
-  "ducts": [
+  ]`,
+      `  "ducts": [
     {
       "id": "unique_id", 
       "size": "duct size (e.g. 12x10)",
-      "length": "duct run length"
+      "length": "duct run length in FEET (numeric value only) - measure the visible duct path OR read from dimension annotations - REQUIRED for every duct"
     }
-  ],
-  "fixtures": [
+  ]`,
+      `  "fixtures": [
     {
       "id": "unique_id",
       "type": "fixture type (toilet, sink, light, etc.)",
       "count": "number of fixtures"
     }
-  ]
+  ]`,
+      `  "materials": [
+    {
+      "id": "unique_id",
+      "type": "wall/floor/ceiling/pipe/duct/fixture",
+      "specification": "exact material spec from drawing (e.g., PT-1, 1/2\\" Type L Copper, 12x10 Duct)",
+      "location": "room name or area (if specified)",
+      "quantity": "quantity if shown",
+      "unit": "unit of measure if shown",
+      "source": "where found: legend/schedule/callout/annotation"
+    }
+  ]`,
+    ];
+
+    if (wantsVertical.levels) {
+      jsonSections.push(`  "levels": [
+    {
+      "id": "L1",
+      "name": "Level 1",
+      "elevationFt": 0,
+      "heightFt": 12
+    }
+  ]`);
+    }
+
+    if (wantsVertical.elevations) {
+      jsonSections.push(`  "elevations": [
+    {
+      "id": "ELEV-A",
+      "face": "South",
+      "fromLevel": "Level 1",
+      "toLevel": "Roof",
+      "heightFt": 24,
+      "notes": "Parapet @ 27'-0\\""
+    }
+  ]`);
+    }
+
+    if (wantsVertical.sections) {
+      jsonSections.push(`  "sections": [
+    {
+      "id": "SEC-A",
+      "description": "Building section through core",
+      "fromLevel": "Level 1",
+      "toLevel": "Roof",
+      "heightFt": 24
+    }
+  ]`);
+    }
+
+    if (wantsVertical.risers) {
+      jsonSections.push(`  "risers": [
+    {
+      "id": "R-PCW",
+      "system": "Plumbing CW",
+      "levels": ["Level 1", "Level 2", "Roof"],
+      "heightFt": 24,
+      "qty": 1
+    }
+  ],
+  "verticalMetadata": {
+    "defaultStoryHeightFt": 12,
+    "totalStories": 2,
+    "referenceDatum": "Level 1 = 0'-0\\"",
+    "notes": [
+      "Parapet is 3' above roof",
+      "Mezzanine at 9'-0\\" A.F.F."
+    ]
+  }`);
+    }
+
+    const verticalInstruction = verticalRequested
+      ? "\n- Capture vertical information (story heights, level names, risers) whenever available"
+      : "";
+
+    const wallRules = targets.includes("walls")
+      ? `\n\nCRITICAL WALL EXTRACTION RULES:
+- Extract ONLY actual walls (partition lines, structural walls, demising walls)
+- DO NOT include: columns (circular/square structural elements), furniture, equipment, casework, dimension lines, text, symbols, or annotations
+- Columns are typically shown as filled circles/squares and should be EXCLUDED
+- Wall polylines must have at least 2 distinct coordinate points with non-zero length
+- Each wall segment should be a continuous line - do not create 0-length walls
+- If a wall is interrupted by a door/window, treat it as separate wall segments`
+      : "";
+
+    const roomRules = targets.includes("rooms")
+      ? `\n\nCRITICAL ROOM EXTRACTION RULES:
+- Room polygons must be closed shapes (first and last coordinates must match)
+- Polygon must have at least 3 distinct vertices to form a valid area
+- Extract room program/type ONLY if explicitly labeled on the plan (e.g., "OFFICE", "TOILET", "STORAGE")
+- If room type is not labeled, set program to null - DO NOT guess or infer room types`
+      : "";
+
+    return `You are an expert architectural/MEP plan analyst. Analyze this construction drawing and extract specific technical information.
+
+DISCIPLINES TO ANALYZE: ${disciplines.map((d) => disciplineMap[d]).join(", ")}
+
+EXTRACTION TARGETS: ${targets.map((t) => targetMap[t]).join(", ")}
+
+SHEET TITLE EXTRACTION:
+- Read the EXACT sheet number/name from the title block (typically in lower right corner)
+- Look for patterns like: "SHEET NO.", "DRAWING NO.", "SHEET", or similar labels
+- Extract the actual sheet identifier (e.g., "A-101", "S-201", "I401", "A1.01")
+- Do NOT use generic names like "Page 1" or duplicate the same name for all sheets
+
+Please provide a detailed analysis in the following JSON format:
+
+{
+${jsonSections.join(",\n\n")}
 }
 
-IMPORTANT: 
-- Look for scale information in title blocks
-- Count and measure visible elements accurately
+SCALE EXTRACTION (CRITICAL - NEVER SKIP THIS):
+- Read scale EXACTLY as shown in title block (e.g., "1/4\\"=1'-0\\"", "SCALE: 1/8\\"=1'-0\\"", "1:100")
+- Calculate ratio accurately: 1/4"=1'-0" = 48 (1/4 inch represents 1 foot = 12 inches, so 12 / 0.25 = 48)
+- If scale is "AS NOTED" or not in title block, CALIBRATE using visible dimensions:
+  * Standard door width = 3 feet (36 inches)
+  * Room dimensions typically 10-30 feet
+  * Measure a door or known dimension on the image and calculate the scale from it
+- Common architectural scales: 1/4"=1'-0" (48), 1/8"=1'-0" (96), 1/2"=1'-0" (24)
+- For floor plans without explicit scale, assume 1/4"=1'-0" (ratio=48) as default
+- YOU MUST ALWAYS provide a numeric scale ratio - it is REQUIRED for geometry extraction
+- Set confidence="low" and method="assumed" for estimates, confidence="high" when read from title block
+
+MATERIAL EXTRACTION:
+- Extract materials from: wall type legends, finish schedules, pipe/duct specifications, fixture schedules
+- Read EXACT specifications as shown (e.g., "PT-1", "1/2\\" Type L Copper", "12x10 Galvanized Duct")
+- Include source location (legend, schedule, callout, annotation) for traceability
+- Only extract materials that are EXPLICITLY shown on the drawing - do not infer or guess
+- For walls: extract partition type from legend (PT-1, EXT-1, etc.)
+- For pipes: extract material and diameter from line types or callouts
+- For ducts: extract size and material from specifications
+- For fixtures: extract material specs if shown in schedules
+
+GEOMETRY EXTRACTION (CRITICAL - THIS IS YOUR PRIMARY TASK):
+- For ROOMS: Trace the VISIBLE boundary polygon of each room you can see on the plan
+  * Extract polygon coordinates by following the wall lines that enclose each room
+  * Polygon MUST be a closed shape with at least 3 distinct points
+  * Example: [[0,0], [100,0], [100,50], [0,50], [0,0]]
+  * You MUST provide coordinates for every visible room - empty polygons are NOT acceptable
+- For WALLS: Trace the VISIBLE centerline of each wall segment
+  * Extract polyline coordinates along the wall centerline
+  * Polyline must have at least 2 distinct points
+  * Measure length using scale ratio
+- For PIPES/DUCTS: Trace the VISIBLE path from start to end
+  * Measure the path length using scale ratio OR read dimension callouts
+  * Always return LENGTH as numeric value in FEET
+  * Convert 24'-6" to 24.5 feet (6 inches = 0.5 feet)
+
+WHAT TO EXTRACT vs WHAT NOT TO GUESS:
+✅ DO EXTRACT (this is NOT guessing - it's reading what's visible):
+- Room boundary polygons by tracing visible walls
+- Wall polylines by following visible partition lines  
+- Pipe/duct paths by tracing visible runs
+- Dimensions by measuring with scale ratio
+- Room names/numbers that are labeled on the plan
+- Materials listed in legends/schedules
+
+❌ DO NOT GUESS (only null if truly not shown):
+- Room program/use if not explicitly labeled
+- Material specifications if not in legend
+- Dimensions if element is not visible
+- Scale if no reference dimensions exist
+
+CRITICAL: Extracting visible geometry (polygons, polylines, coordinates) from the drawing is your PRIMARY TASK and is NOT guessing or hallucinating!
+
+IMPORTANT - YOUR SUCCESS IS MEASURED BY GEOMETRY EXTRACTED: 
+- Extract coordinates (polygons/polylines) for EVERY visible room, wall, pipe, and duct you can see
+- Empty arrays are a FAILURE - if you can see rooms/walls on the plan, extract their geometry
+- Calibrate/estimate scale if needed (use doors ~3ft, typical room sizes) - DO NOT leave ratio as null
+- Trace visible lines to create polygons/polylines - this is NOT guessing, it's your core task
+- Count and measure all visible elements using your calibrated scale
 - Use standard architectural/MEP terminology
-- Provide realistic dimensions based on typical construction
-- Include only elements that are clearly visible in the drawing
-- Return valid JSON only`;
+- Provide realistic dimensions based on measured values and scale ratio${verticalInstruction}${wallRules}${roomRules}
+- Return valid JSON only - but JSON with empty arrays for visible elements is INCOMPLETE`;
   }
 
-  private async parseAnalysisResponse(responseText: string, targets: string[]): Promise<VisionAnalysisResult> {
+  private async parseAnalysisResponse(
+    responseText: string,
+    targets: string[]
+  ): Promise<VisionAnalysisResult> {
     try {
       // Extract JSON from response (handle markdown code blocks)
-      const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || responseText.match(/\{[\s\S]*\}/);
-      const jsonText = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : responseText;
-      
+      const jsonMatch =
+        responseText.match(/```json\n([\s\S]*?)\n```/) ||
+        responseText.match(/\{[\s\S]*\}/);
+      const jsonText = jsonMatch ? jsonMatch[1] || jsonMatch[0] : responseText;
+
       const parsed = JSON.parse(jsonText);
-      
+
       // Validate and structure the response
       return {
-        rooms: this.validateArray(parsed.rooms, targets.includes('rooms')),
-        walls: this.validateArray(parsed.walls, targets.includes('walls')),
-        openings: this.validateArray(parsed.openings, targets.includes('doors') || targets.includes('windows')),
-        pipes: this.validateArray(parsed.pipes, targets.includes('pipes')),
-        ducts: this.validateArray(parsed.ducts, targets.includes('ducts')),
-        fixtures: this.validateArray(parsed.fixtures, targets.includes('fixtures')),
-        scale: parsed.scale || { detected: 'Unknown', units: 'ft', ratio: 1 },
+        sheetTitle:
+          typeof parsed.sheetTitle === "string"
+            ? parsed.sheetTitle.trim()
+            : undefined,
+        rooms: this.validateAndFilterRooms(
+          parsed.rooms,
+          targets.includes("rooms")
+        ),
+        walls: this.validateAndFilterWalls(
+          parsed.walls,
+          targets.includes("walls")
+        ),
+        openings: this.validateArray(
+          parsed.openings,
+          targets.includes("doors") || targets.includes("windows")
+        ),
+        pipes: this.validatePipes(parsed.pipes, targets.includes("pipes")),
+        ducts: this.validateDucts(parsed.ducts, targets.includes("ducts")),
+        fixtures: this.validateArray(
+          parsed.fixtures,
+          targets.includes("fixtures")
+        ),
+        levels: this.validateArray(parsed.levels, targets.includes("levels")),
+        elevations: this.validateArray(
+          parsed.elevations,
+          targets.includes("elevations")
+        ),
+        sections: this.validateArray(
+          parsed.sections,
+          targets.includes("sections")
+        ),
+        risers: this.validateArray(parsed.risers, targets.includes("risers")),
+        verticalMetadata: this.normalizeVerticalMetadata(
+          parsed.verticalMetadata
+        ),
+        scale: this.normalizeScale(parsed.scale),
+        materials: this.validateArray(parsed.materials, true), // Always extract materials if available
       };
     } catch (error) {
-      this.logger.warn('Failed to parse OpenAI response, using fallback data');
+      this.logger.warn("Failed to parse OpenAI response, using fallback data");
+      await appendVisionLog("Vision JSON parse failure", {
+        error: error.message,
+        responsePreview: responseText?.slice(0, 1000),
+      });
       return this.generateMockAnalysis([], targets);
     }
   }
 
   private validateArray(items: any[], shouldInclude: boolean): any[] {
     if (!shouldInclude || !Array.isArray(items)) return [];
-    
+
     return items.map((item, index) => ({
       id: item.id || `item_${index + 1}`,
       ...item,
     }));
   }
 
-  private generateMockAnalysis(disciplines: string[], targets: string[]): VisionAnalysisResult {
-    // Fallback mock data when OpenAI is not available
+  private validatePipes(items: any[], shouldInclude: boolean): VisionAnalysisResult["pipes"] {
+    if (!shouldInclude || !Array.isArray(items)) return [];
+
+    const validatedPipes = items.map((item, index) => {
+      // Normalize numeric fields
+      const diameter = this.parseNumericValue(item.diameter);
+      const length = this.parseNumericValue(item.length);
+      const heightFt = this.parseNumericValue(item.heightFt);
+
+      // Debug logging for pipe extraction
+      if (!item.length || length === undefined) {
+        Logger.warn(
+          `Pipe ${item.id || index} missing length: raw=${JSON.stringify(item.length)} → parsed=${length}`,
+          'OpenAIVisionService'
+        );
+      }
+
+      return {
+        id: item.id || `pipe_${index + 1}`,
+        service: item.service || "CW",
+        diameter: diameter,
+        length: length,
+        polyline: item.polyline,
+        level: item.level,
+        heightFt: heightFt,
+      };
+    });
+
+    const withLengths = validatedPipes.filter(p => p.length !== undefined);
+    if (withLengths.length < validatedPipes.length) {
+      Logger.warn(
+        `${validatedPipes.length - withLengths.length} of ${validatedPipes.length} pipes missing length values`,
+        'OpenAIVisionService'
+      );
+    }
+
+    return validatedPipes;
+  }
+
+  private validateDucts(items: any[], shouldInclude: boolean): VisionAnalysisResult["ducts"] {
+    if (!shouldInclude || !Array.isArray(items)) return [];
+
+    return items.map((item, index) => {
+      // Normalize numeric fields
+      const length = this.parseNumericValue(item.length);
+      const heightFt = this.parseNumericValue(item.heightFt);
+
+      // Debug logging for duct length parsing
+      if (item.length !== undefined && length === undefined) {
+        Logger.warn(
+          `Failed to parse duct length: raw="${item.length}" → parsed=undefined`,
+          'OpenAIVisionService'
+        );
+      }
+
+      return {
+        id: item.id || `duct_${index + 1}`,
+        size: item.size,
+        length: length,
+        polyline: item.polyline,
+        level: item.level,
+        heightFt: heightFt,
+      };
+    });
+  }
+
+  private parseNumericValue(value: any): number | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      // Strip units (ft, in, ", ', etc.) and parse
+      const cleaned = value.replace(/[^\d.-]/g, '');
+      if (!cleaned) return undefined;
+      const parsed = parseFloat(cleaned);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return undefined;
+  }
+
+  private validateAndFilterRooms(
+    rooms: any[],
+    shouldInclude: boolean
+  ): VisionAnalysisResult["rooms"] {
+    if (!shouldInclude || !Array.isArray(rooms)) return [];
+
+    const validRooms: VisionAnalysisResult["rooms"] = [];
+    
+    this.logger.log(`Validating ${rooms.length} rooms from OpenAI response`);
+
+    for (const room of rooms) {
+      // Validate polygon if present - but allow rooms WITHOUT polygons too!
+      if (room.polygon) {
+        const polygon = room.polygon;
+        if (!Array.isArray(polygon) || polygon.length < 3) {
+          this.logger.warn(
+            `Room ${room.id} has invalid polygon (${polygon?.length || 0} vertices), accepting without geometry`
+          );
+          // Don't skip - just clear the polygon and continue
+          room.polygon = null;
+        }
+
+        if (room.polygon) {
+          // Check if polygon is closed (first and last points should match)
+          const first = polygon[0];
+          const last = polygon[polygon.length - 1];
+          const isClosed =
+            Array.isArray(first) &&
+            Array.isArray(last) &&
+            first.length >= 2 &&
+            last.length >= 2 &&
+            Math.abs(first[0] - last[0]) < 0.001 &&
+            Math.abs(first[1] - last[1]) < 0.001;
+
+          if (!isClosed && Array.isArray(first) && first.length >= 2) {
+            this.logger.debug(
+              `Room ${room.id}: polygon not closed, auto-closing by duplicating first point`
+            );
+            // Auto-close the polygon
+            room.polygon = [...polygon, [first[0], first[1]]];
+          }
+
+          // Validate all coordinates are valid numbers
+          const hasInvalidCoords = room.polygon.some(
+            (pt: any) =>
+              !Array.isArray(pt) ||
+              pt.length < 2 ||
+              !Number.isFinite(pt[0]) ||
+              !Number.isFinite(pt[1])
+          );
+          if (hasInvalidCoords) {
+            this.logger.warn(
+              `Room ${room.id} has invalid polygon coordinates, accepting without geometry`
+            );
+            // Don't skip - just clear the polygon
+            room.polygon = null;
+          }
+        }
+      }
+
+      // Ensure program is null if not explicitly provided (don't guess)
+      const program =
+        room.program && typeof room.program === "string" && room.program.trim()
+          ? room.program.trim()
+          : null;
+
+      validRooms.push({
+        id: room.id || `room_${validRooms.length + 1}`,
+        name: room.name,
+        area: this.toNumber(room.area),
+        polygon: room.polygon,
+        program: program,
+        level: room.level,
+        heightFt: this.toNumber(room.heightFt),
+      });
+    }
+
+    // Only log in development
+    if (process.env.NODE_ENV !== "production") {
+    this.logger.log(
+      `Validated ${validRooms.length} rooms (filtered ${rooms.length - validRooms.length} invalid)`
+    );
+    }
+    return validRooms;
+  }
+
+  private validateAndFilterWalls(
+    walls: any[],
+    shouldInclude: boolean
+  ): VisionAnalysisResult["walls"] {
+    if (!shouldInclude || !Array.isArray(walls)) return [];
+
+    const validWalls: VisionAnalysisResult["walls"] = [];
+    
+    this.logger.log(`Validating ${walls.length} walls from OpenAI response`);
+
+    for (const wall of walls) {
+      // Parse length - warn if missing but don't skip the wall
+      const length = this.toNumber(wall.length);
+      if (!length || length <= 0) {
+        this.logger.warn(
+          `Wall ${wall.id} has invalid/missing length (${wall.length}), keeping wall anyway`
+        );
+        // Don't skip - length might be calculated later or extracted from polyline
+      }
+
+      // Validate polyline if present
+      if (wall.polyline) {
+        const polyline = wall.polyline;
+        if (!Array.isArray(polyline) || polyline.length < 2) {
+          this.logger.warn(
+            `Wall ${wall.id} has invalid polyline (${polyline?.length || 0} points), clearing geometry`
+          );
+          wall.polyline = null;
+        } else {
+          // Check for distinct points (not all the same)
+          const firstPoint = polyline[0];
+          const allSame = polyline.every(
+            (pt: any) =>
+              Array.isArray(pt) &&
+              pt.length >= 2 &&
+              Math.abs(pt[0] - firstPoint[0]) < 0.001 &&
+              Math.abs(pt[1] - firstPoint[1]) < 0.001
+          );
+          if (allSame) {
+            this.logger.warn(
+              `Wall ${wall.id} has degenerate polyline, clearing geometry`
+            );
+            wall.polyline = null;
+          }
+        }
+      }
+
+      // Filter out columns and non-wall symbols
+      // Columns are typically small, square/circular elements
+      // Check if this might be a column based on characteristics
+      const partitionType = wall.partitionType?.toLowerCase() || "";
+      const isColumn =
+        partitionType.includes("column") ||
+        partitionType.includes("col") ||
+        (wall.polyline && wall.polyline.length === 4 && length < 2.0); // Small square-like shape < 2ft is likely a column
+
+      if (isColumn) {
+        this.logger.debug(
+          `Skipping wall ${wall.id}: identified as column, not a wall`
+        );
+        continue;
+      }
+
+      validWalls.push({
+        id: wall.id || `wall_${validWalls.length + 1}`,
+        length: length,
+        partitionType: wall.partitionType,
+        polyline: wall.polyline,
+        level: wall.level,
+        heightFt: this.toNumber(wall.heightFt),
+      });
+    }
+
+    // Only log in development
+    if (process.env.NODE_ENV !== "production") {
+    this.logger.log(
+      `Validated ${validWalls.length} walls (filtered ${walls.length - validWalls.length} invalid/columns)`
+    );
+    }
+    return validWalls;
+  }
+
+  private toNumber(value: any): number | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  }
+
+  private normalizeVerticalMetadata(
+    meta: any
+  ): VisionAnalysisResult["verticalMetadata"] {
+    if (!meta || typeof meta !== "object") {
+      return undefined;
+    }
+
+    const coerceNumber = (value: any): number | undefined => {
+      if (typeof value === "number") return value;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+
     return {
-      rooms: targets.includes('rooms') ? [
-        { id: 'R100', name: 'OFFICE', area: 150, program: 'Office' },
-        { id: 'R101', name: 'CONFERENCE', area: 200, program: 'Meeting' },
-      ] : [],
-      walls: targets.includes('walls') ? [
-        { id: 'W1', length: 20, partitionType: 'PT-1' },
-        { id: 'W2', length: 15, partitionType: 'PT-2' },
-      ] : [],
-      openings: (targets.includes('doors') || targets.includes('windows')) ? [
-        { id: 'D1', type: 'door', width: 3, height: 7 },
-        { id: 'W1', type: 'window', width: 4, height: 3 },
-      ] : [],
-      pipes: targets.includes('pipes') ? [
-        { id: 'P1', service: 'CW', diameter: 1, length: 50 },
-        { id: 'P2', service: 'HW', diameter: 0.75, length: 45 },
-      ] : [],
-      ducts: targets.includes('ducts') ? [
-        { id: 'D1', size: '12x10', length: 80 },
-        { id: 'D2', size: '8x8', length: 60 },
-      ] : [],
-      fixtures: targets.includes('fixtures') ? [
-        { id: 'F1', type: 'Toilet', count: 2 },
-        { id: 'F2', type: 'LED Light', count: 12 },
-      ] : [],
-      scale: { detected: '1/4"=1\'-0"', units: 'ft', ratio: 48 },
+      defaultStoryHeightFt: coerceNumber(meta.defaultStoryHeightFt),
+      totalStories: coerceNumber(meta.totalStories),
+      referenceDatum:
+        typeof meta.referenceDatum === "string"
+          ? meta.referenceDatum
+          : undefined,
+      notes: Array.isArray(meta.notes)
+        ? meta.notes.filter((n: any) => typeof n === "string")
+        : undefined,
+    };
+  }
+
+  private normalizeScale(scale: any): VisionAnalysisResult["scale"] {
+    if (!scale || typeof scale !== "object") {
+      return {
+        detected: "Unknown",
+        units: "ft",
+        ratio: 1,
+        confidence: "low",
+        method: "assumed",
+      };
+    }
+
+    const ratio = this.toNumber(scale.ratio) || 1;
+    const units = scale.units === "m" ? "m" : "ft";
+    const detected =
+      typeof scale.detected === "string" ? scale.detected : "Unknown";
+    const confidence =
+      scale.confidence || (detected === "Unknown" ? "low" : "medium");
+    const method =
+      scale.method || (detected === "Unknown" ? "assumed" : "titleblock");
+
+    // Validate ratio is reasonable
+    if (ratio < 1 || ratio > 10000) {
+      this.logger.warn(`Unusual scale ratio detected: ${ratio}`);
+    }
+
+    return {
+      detected,
+      units,
+      ratio,
+      confidence: confidence as "high" | "medium" | "low",
+      method: method as "titleblock" | "dimensions" | "reference" | "assumed",
+    };
+  }
+
+  private isRefusalResponse(text: string): boolean {
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    const refusalPhrases = [
+      "i'm unable to analyze",
+      "i am unable to analyze",
+      "i can't analyze",
+      "as an ai language model",
+      "cannot view images",
+      "do not have the ability to view",
+    ];
+    return refusalPhrases.some((phrase) => lower.includes(phrase));
+  }
+
+  private generateMockAnalysis(
+    disciplines: string[],
+    targets: string[]
+  ): VisionAnalysisResult {
+    // Return empty arrays instead of fake mock data
+    // This prevents polluting results with made-up rooms/fixtures
+    this.logger.warn("⚠️ generateMockAnalysis called - returning empty results (no fake data)");
+    return this.generateEmptyAnalysis(targets);
+  }
+
+  private generateEmptyAnalysis(targets: string[]): VisionAnalysisResult {
+    const includes = (key: string) => targets.includes(key);
+    return {
+      sheetTitle: undefined,
+      rooms: includes("rooms") ? [] : [],
+      walls: includes("walls") ? [] : [],
+      openings: includes("doors") || includes("windows") ? [] : [],
+      pipes: includes("pipes") ? [] : [],
+      ducts: includes("ducts") ? [] : [],
+      fixtures: includes("fixtures") ? [] : [],
+      levels: includes("levels") ? [] : [],
+      elevations: includes("elevations") ? [] : [],
+      sections: includes("sections") ? [] : [],
+      risers: includes("risers") ? [] : [],
+      verticalMetadata: undefined,
+      scale: {
+        detected: "Unknown",
+        units: "ft",
+        ratio: 1,
+        confidence: "low",
+        method: "assumed",
+      },
+      materials: [],
     };
   }
 
   async analyzeText(text: string, context: string): Promise<any> {
     try {
       const response = await this.openai.chat.completions.create({
-        model: "gpt-4",
+        model: process.env.OPENAI_VISION_MODEL || "gpt-4o",
         messages: [
           {
             role: "system",
-            content: "You are an expert construction document analyst. Extract technical information from architectural and MEP plan text."
+            content:
+              "You are an expert construction document analyst. Extract technical information from architectural and MEP plan text.",
           },
           {
-            role: "user", 
+            role: "user",
             content: `Analyze this text from a construction drawing and extract relevant technical information:
 
 Context: ${context}
@@ -301,27 +1273,34 @@ Extract:
 - Material specifications
 - Dimension callouts
 
-Return as structured JSON.`
-          }
+Return as structured JSON.`,
+          },
         ],
-        max_tokens: 1000,
-        temperature: 0.1,
+        max_completion_tokens: 2000,  // Increased for better text analysis
       });
 
-      return JSON.parse(response.choices[0]?.message?.content || '{}');
+      return JSON.parse(response.choices[0]?.message?.content || "{}");
     } catch (error) {
-      this.logger.warn('OpenAI text analysis failed:', error.message);
+      this.logger.warn("OpenAI text analysis failed:", error.message);
       return {};
     }
   }
 
-  async detectScale(imageBuffer: Buffer): Promise<{ scale?: string; units?: string; ratio?: number }> {
+  async detectScale(
+    imageBuffer: Buffer
+  ): Promise<{
+    detected: string;
+    units: "ft" | "m";
+    ratio: number;
+    confidence?: "high" | "medium" | "low";
+    method?: "titleblock" | "dimensions" | "reference" | "assumed";
+  }> {
     try {
-      const base64Image = imageBuffer.toString('base64');
+      const base64Image = imageBuffer.toString("base64");
       const imageUrl = `data:image/png;base64,${base64Image}`;
 
       const response = await this.openai.chat.completions.create({
-        model: "gpt-4-vision-preview",
+        model: process.env.OPENAI_VISION_MODEL || "gpt-4o",
         messages: [
           {
             role: "user",
@@ -341,27 +1320,96 @@ Return ONLY a JSON object with:
   "ratio": "numeric ratio for pixel-to-real conversion",
   "confidence": "high/medium/low",
   "method": "titleblock/dimensions/reference"
-}`
+}`,
               },
               {
                 type: "image_url",
                 image_url: {
                   url: imageUrl,
-                  detail: "high"
-                }
-              }
-            ]
-          }
+                  detail: "high",
+                },
+              },
+            ],
+          },
         ],
-        max_tokens: 500,
-        temperature: 0.1,
+        max_completion_tokens: 1000,  // Increased for scale detection
       });
 
-      const result = JSON.parse(response.choices[0]?.message?.content || '{}');
-      return result;
+      const result = JSON.parse(response.choices[0]?.message?.content || "{}");
+      return this.normalizeScale(result);
     } catch (error) {
-      this.logger.warn('OpenAI scale detection failed:', error.message);
-      return { scale: 'Unknown', units: 'ft', ratio: 1 };
+      this.logger.warn("OpenAI scale detection failed:", error.message);
+      return this.normalizeScale({
+        detected: "Unknown",
+        units: "ft",
+        ratio: 1,
+        confidence: "low",
+        method: "assumed",
+      });
     }
+  }
+
+  private validateImageBuffer(buffer: Buffer): void {
+    if (!buffer || buffer.length === 0) {
+      throw new Error("Image buffer is empty or null");
+    }
+
+    // Check minimum size (1KB minimum for a valid image)
+    if (buffer.length < 1024) {
+      throw new Error(
+        `Image buffer too small: ${buffer.length} bytes (minimum 1KB required)`
+      );
+    }
+
+    // Check maximum size (OpenAI limit is 20MB)
+    const maxSize = 20 * 1024 * 1024; // 20MB
+    if (buffer.length > maxSize) {
+      throw new Error(
+        `Image too large: ${buffer.length} bytes (maximum ${maxSize} bytes)`
+      );
+    }
+
+    // Validate image format headers
+    const pngHeader = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    const jpegHeader = Buffer.from([0xff, 0xd8, 0xff]);
+    const jpegHeader2 = Buffer.from([0xff, 0xd8, 0xff, 0xe0]); // JPEG with JFIF
+    const jpegHeader3 = Buffer.from([0xff, 0xd8, 0xff, 0xe1]); // JPEG with EXIF
+
+    const isPng = buffer.subarray(0, 8).equals(pngHeader);
+    const isJpeg =
+      buffer.subarray(0, 3).equals(jpegHeader) ||
+      buffer.subarray(0, 4).equals(jpegHeader2) ||
+      buffer.subarray(0, 4).equals(jpegHeader3);
+
+    if (!isPng && !isJpeg) {
+      throw new Error(
+        "Invalid image format: buffer must start with PNG or JPEG headers. " +
+          `First bytes: ${buffer.subarray(0, 8).toString("hex")}`
+      );
+    }
+  }
+
+  private detectImageFormat(buffer: Buffer): "png" | "jpeg" | null {
+    if (!buffer || buffer.length < 3) {
+      return null;
+    }
+
+    // Check PNG header
+    const pngHeader = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    if (buffer.subarray(0, 8).equals(pngHeader)) {
+      return "png";
+    }
+
+    // Check JPEG header
+    const jpegHeader = Buffer.from([0xff, 0xd8, 0xff]);
+    if (buffer.subarray(0, 3).equals(jpegHeader)) {
+      return "jpeg";
+    }
+
+    return null;
   }
 }

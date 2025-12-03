@@ -1,0 +1,23 @@
+# Render ignore file - files to exclude from deployment
+node_modules/
+dist/
+logs/
+*.log
+.env
+.env.local
+.env.*.local
+uploads/
+coverage/
+.git/
+.vscode/
+.idea/
+*.md
+!RENDER_DEPLOYMENT.md
+Dockerfile*
+docker-compose.yml
+railway.toml
+# nixpacks.toml - Keep this for Railway, but Render uses render.yaml
+RAILWAY_DEPLOYMENT.md
+REDIS_SETUP.md
+REQUIRED_ENV_VARS.md
+

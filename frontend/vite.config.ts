@@ -21,6 +21,14 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    port: process.env.PORT ? parseInt(process.env.PORT) : 5173,
+    host: true,
+    allowedHosts: [
+      'gclegacy.onrender.com',
+      '.onrender.com', // Allow all Render subdomains
+    ],
+  },
   build: {
     outDir: 'dist',
     sourcemap: true,

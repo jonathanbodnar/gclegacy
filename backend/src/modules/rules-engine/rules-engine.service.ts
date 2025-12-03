@@ -124,11 +124,21 @@ export class RulesEngineService {
     const materials = [];
     const vars = ruleSet.vars || {};
 
+    this.logger.log(`Processing ${features.length} features against ${ruleSet.rules.length} rules`);
+
+    let matchedFeatures = 0;
     for (const feature of features) {
       // Find matching rules for this feature
       const matchingRules = ruleSet.rules.filter(rule => 
         this.evaluateCondition(rule.when, feature, vars)
       );
+
+      if (matchingRules.length > 0) {
+        matchedFeatures++;
+        this.logger.debug(
+          `Feature ${feature.id} (type: ${feature.type}) matched ${matchingRules.length} rule(s)`
+        );
+      }
 
       for (const rule of matchingRules) {
         for (const materialItem of rule.materials) {
@@ -149,19 +159,37 @@ export class RulesEngineService {
               });
             }
           } catch (error) {
-            this.logger.warn(`Error evaluating material ${materialItem.sku}: ${error.message}`);
+            this.logger.warn(
+              `Error evaluating material ${materialItem.sku} for feature ${feature.id}: ${error.message} ` +
+              `(Feature props: length=${feature.length}, area=${feature.area}, count=${feature.count}, type=${feature.type})`
+            );
           }
         }
       }
     }
 
+    this.logger.log(
+      `Matched ${matchedFeatures} out of ${features.length} features, generated ${materials.length} material items before consolidation`
+    );
+
     // Consolidate materials by SKU
-    return this.consolidateMaterials(materials);
+    const consolidated = this.consolidateMaterials(materials);
+    this.logger.log(`Consolidated to ${consolidated.length} unique material SKUs`);
+    return consolidated;
   }
 
   private evaluateCondition(condition: Record<string, any>, feature: any, vars: Record<string, any>): boolean {
     for (const [key, value] of Object.entries(condition)) {
       const featureValue = this.getFeatureValue(feature, key);
+      
+      // Handle special case: 'feature' key maps to 'type' property with case-insensitive matching
+      if (key === 'feature') {
+        const featureType = feature.type || feature.props?.type;
+        if (!featureType || featureType.toUpperCase() !== String(value).toUpperCase()) {
+          return false;
+        }
+        continue;
+      }
       
       if (featureValue !== value) {
         return false;
@@ -177,6 +205,7 @@ export class RulesEngineService {
     
     for (const part of parts) {
       if (value && typeof value === 'object') {
+        // Check top-level property first, then props
         value = value[part] || value.props?.[part];
       } else {
         return undefined;
@@ -190,33 +219,65 @@ export class RulesEngineService {
     // Simple expression evaluator
     // In production, you'd want a more robust and secure expression parser
     
-    // Replace variables
-    let expr = expression;
+    // Build a map of all available values (vars first, then feature properties)
+    const valueMap = new Map<string, number>();
     
-    // Replace feature properties
-    expr = expr.replace(/(\w+)/g, (match) => {
-      if (vars.hasOwnProperty(match)) {
-        return vars[match].toString();
+    // Add variables from vars
+    for (const [key, value] of Object.entries(vars)) {
+      const numValue = typeof value === 'number' ? value : Number(value);
+      if (!Number.isNaN(numValue)) {
+        valueMap.set(key, numValue);
       }
-      
-      const featureValue = this.getFeatureValue(feature, match);
-      if (featureValue !== undefined) {
-        return featureValue.toString();
+    }
+    
+    // Add feature properties (check both top-level and props)
+    const featureProps = ['length', 'area', 'count'];
+    for (const prop of featureProps) {
+      if (feature[prop] !== undefined && feature[prop] !== null) {
+        const numValue = typeof feature[prop] === 'number' ? feature[prop] : Number(feature[prop]);
+        if (!Number.isNaN(numValue)) {
+          valueMap.set(prop, numValue);
+        }
       }
-      
-      return match;
-    });
+    }
+    
+    // Also check props object for additional properties
+    if (feature.props && typeof feature.props === 'object') {
+      for (const [key, value] of Object.entries(feature.props)) {
+        if (typeof value === 'number' || (typeof value === 'string' && !Number.isNaN(Number(value)))) {
+          const numValue = typeof value === 'number' ? value : Number(value);
+          if (!Number.isNaN(numValue)) {
+            valueMap.set(key, numValue);
+          }
+        }
+      }
+    }
+    
+    // Replace variables in expression, being careful to match whole words only
+    let expr = expression;
+    const sortedKeys = Array.from(valueMap.keys()).sort((a, b) => b.length - a.length); // Sort by length descending to match longer names first
+    
+    for (const key of sortedKeys) {
+      // Match whole word boundaries to avoid partial replacements
+      const regex = new RegExp(`\\b${key}\\b`, 'g');
+      expr = expr.replace(regex, valueMap.get(key)!.toString());
+    }
 
     // Basic math operations (be very careful with eval in production!)
     try {
       // Only allow basic math operations for security
       if (!/^[0-9+\-*/.() ]+$/.test(expr)) {
-        throw new Error('Invalid expression');
+        throw new Error('Invalid expression - contains non-numeric or non-operator characters');
       }
       
-      return eval(expr);
+      const result = eval(expr);
+      if (typeof result !== 'number' || Number.isNaN(result)) {
+        throw new Error('Expression did not evaluate to a valid number');
+      }
+      
+      return result;
     } catch (error) {
-      throw new Error(`Cannot evaluate expression: ${expression}`);
+      throw new Error(`Cannot evaluate expression: ${expression} - ${error.message}`);
     }
   }
 
@@ -277,6 +338,7 @@ export class RulesEngineService {
         data: {
           jobId,
           sku: material.sku,
+          description: material.description, // Save description from rules
           qty: material.qty,
           uom: material.uom,
           ruleId: material.source.ruleId,

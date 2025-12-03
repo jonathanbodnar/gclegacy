@@ -9,6 +9,7 @@ export interface IngestResult {
   jobId?: string;
   fileId: string;
   sheets: SheetData[];
+  rawPages?: RawPage[];
   metadata: {
     totalPages: number;
     detectedDisciplines: string[];
@@ -16,19 +17,60 @@ export interface IngestResult {
   };
 }
 
-export interface SheetData {
+export interface RawPage {
+  index: number;
+  text: string;
+  imagePath?: string;
+  widthPx?: number;
+  heightPx?: number;
+}
+
+export interface SheetData extends RawPage {
   index: number;
   name?: string;
   discipline?: string;
   scale?: string;
   units?: string;
+  sheetIdGuess?: string;
+  widthPx?: number;
+  heightPx?: number;
+  imagePath?: string;
+  pageSize?: {
+    widthPt: number;
+    heightPt: number;
+  };
+  renderDpi?: number;
   content: {
     rasterData?: Buffer;
     vectorData?: any;
     textData?: any;
     layerData?: any;
     modelData?: any;
+    metadata?: Record<string, any>;
   };
+  classification?: SheetClassificationMetadata;
+}
+
+export interface SheetClassificationMetadata {
+  sheetId?: string | null;
+  title?: string | null;
+  discipline: string[];
+  category:
+    | 'site'
+    | 'demo_floor'
+    | 'floor'
+    | 'fixture'
+    | 'rcp'
+    | 'elevations'
+    | 'sections'
+    | 'materials'
+    | 'furniture'
+    | 'artwork'
+    | 'rr_details'
+    | 'other';
+  confidence?: number | null;
+  notes?: string | null;
+  isPrimaryPlan?: boolean | null;
 }
 
 @Injectable()
@@ -48,11 +90,17 @@ export class IngestService {
     disciplines: string[],
     options?: any,
   ): Promise<IngestResult> {
-    this.logger.log(`Starting file ingest: ${fileId}`);
+    this.logger.log(`🚀 Starting file ingest: ${fileId}`);
 
     // Get file information
+    this.logger.log(`📋 Fetching file metadata from database...`);
     const file = await this.filesService.getFile(fileId);
+    this.logger.log(`📋 File info: ${file.filename}, mime=${file.mime}, size=${file.size} bytes`);
+    
+    this.logger.log(`📥 Downloading file buffer from storage...`);
+    const downloadStart = Date.now();
     const fileBuffer = await this.filesService.getFileBuffer(fileId);
+    this.logger.log(`✅ File buffer downloaded: ${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB in ${Date.now() - downloadStart}ms`);
 
     // Route to appropriate ingest service based on MIME type
     let result: IngestResult;
@@ -95,10 +143,22 @@ export class IngestService {
       return;
     }
 
-    // Create sheet records
+    // Create or update sheet records per index
     for (const sheet of sheets) {
-      await this.prisma.sheet.create({
-        data: {
+      await this.prisma.sheet.upsert({
+        where: {
+          jobId_index: {
+            jobId: job.id,
+            index: sheet.index,
+          },
+        },
+        update: {
+          name: sheet.name,
+          discipline: sheet.discipline,
+          scale: sheet.scale,
+          units: sheet.units,
+        },
+        create: {
           jobId: job.id,
           index: sheet.index,
           name: sheet.name,

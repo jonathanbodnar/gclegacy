@@ -106,9 +106,10 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
   const getTotalWallLength = () => data.walls.reduce((sum, wall) => sum + wall.length, 0);
   const getTotalPipeLength = () => data.pipes.reduce((sum, pipe) => sum + pipe.length, 0);
   const getTotalDuctLength = () => data.ducts.reduce((sum, duct) => sum + duct.length, 0);
+  const getTotalFixtures = () => data.fixtures.reduce((sum, fixture) => sum + fixture.count, 0);
 
   const renderSummary = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
         <div className="text-2xl font-bold text-blue-900">{data.rooms.length}</div>
         <div className="text-sm text-blue-700">Total Rooms</div>
@@ -133,6 +134,12 @@ export const TakeoffResults: React.FC<TakeoffResultsProps> = ({ data, onExport }
         <div className="text-2xl font-bold text-orange-900">{formatNumber(getTotalDuctLength())}</div>
         <div className="text-sm text-orange-700">Duct Length ({data.units.linear})</div>
         <div className="text-xs text-orange-600 mt-1">{data.ducts.length} duct runs</div>
+      </div>
+
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+        <div className="text-2xl font-bold text-yellow-900">{getTotalFixtures()}</div>
+        <div className="text-sm text-yellow-700">Total Fixtures</div>
+        <div className="text-xs text-yellow-600 mt-1">{data.fixtures.length} fixture types</div>
       </div>
     </div>
   );
