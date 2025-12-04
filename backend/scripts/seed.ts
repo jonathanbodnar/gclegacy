@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+// Comprehensive rule set that works with all extracted feature types
 const sampleRuleSet = {
   version: 1,
   units: {
@@ -10,122 +11,189 @@ const sampleRuleSet = {
     volume: 'ft3',
   },
   vars: {
-    height_ft: 10,
-    waste_pct: 0.07,
+    wall_height: 9,
+    perimeter_ratio: 0.4,
+    waste_floor: 1.07,
+    waste_paint: 1.15,
+    waste_ceiling: 1.05,
   },
   rules: [
-    // Architectural Rules
+    // Room/Space Rules - generates flooring, paint, ceiling, base
     {
-      when: { feature: 'wall', partitionType: 'PT-1' },
+      when: { feature: 'room' },
+      materials: [
+        {
+          sku: 'ARM-EXCELON-51910',
+          qty: 'area * waste_floor',
+          uom: 'SF',
+          description: 'Armstrong Excelon VCT Flooring (12x12)',
+        },
+        {
+          sku: 'SW-7006-PAINT',
+          qty: 'area * perimeter_ratio * waste_paint',
+          uom: 'SF',
+          description: 'Sherwin Williams Extra White Interior Paint',
+        },
+        {
+          sku: 'ARM-CIRRUS-ACT',
+          qty: 'area * waste_ceiling',
+          uom: 'SF',
+          description: 'Armstrong Cirrus 2x2 ACT Ceiling Tiles',
+        },
+        {
+          sku: 'RUBBER-BASE-4IN',
+          qty: 'area * perimeter_ratio',
+          uom: 'LF',
+          description: '4-inch Rubber Base Molding',
+        },
+      ],
+    },
+
+    // Wall Rules - generates framing and drywall
+    {
+      when: { feature: 'wall' },
       materials: [
         {
           sku: 'STUD-362-20GA',
-          qty: 'length * 0.75', // studs @16" o.c.
-          uom: 'ea',
-          description: '3-5/8" Metal Stud, 20 GA',
-        },
-        {
-          sku: 'GWB-58X-TypeX',
-          qty: 'length * height_ft * 2 / 32', // 4x8 sheets both sides
-          uom: 'ea',
-          description: '5/8" Gypsum Board, Type X',
-        },
-        {
-          sku: 'INSUL-ACOUSTIC',
-          qty: 'length * height_ft / 16', // batts per 16 sf
-          uom: 'ea',
-          description: 'Acoustic Insulation Batt',
-        },
-      ],
-    },
-    {
-      when: { feature: 'wall', partitionType: 'PT-2' },
-      materials: [
-        {
-          sku: 'STUD-600-20GA',
           qty: 'length * 0.75',
-          uom: 'ea',
-          description: '6" Metal Stud, 20 GA',
+          uom: 'LF',
+          description: 'Metal Studs 3-5/8" 20GA @ 16" OC',
         },
         {
-          sku: 'GWB-58X-TypeX',
-          qty: 'length * height_ft * 2 / 32',
-          uom: 'ea',
-          description: '5/8" Gypsum Board, Type X',
-        },
-      ],
-    },
-    
-    // Plumbing Rules
-    {
-      when: { feature: 'pipe', service: 'CW', diameterIn: 1 },
-      materials: [
-        {
-          sku: 'PVC-1IN',
-          qty: 'length * (1 + waste_pct)',
-          uom: 'ft',
-          description: '1" PVC Pipe, Schedule 40',
+          sku: 'GWB-58-TYPEX',
+          qty: 'length * wall_height * 2 / 32',
+          uom: 'SHT',
+          description: '5/8" Type X Gypsum Board (4x8 sheets)',
         },
         {
-          sku: 'COUPLING-1IN',
-          qty: 'length / 10', // coupling every 10 feet
-          uom: 'ea',
-          description: '1" PVC Coupling',
+          sku: 'JOINT-COMPOUND',
+          qty: 'length * wall_height * 0.05',
+          uom: 'GAL',
+          description: 'Joint Compound',
+        },
+        {
+          sku: 'DRYWALL-TAPE',
+          qty: 'length * 1.1',
+          uom: 'LF',
+          description: 'Paper Drywall Tape',
         },
       ],
     },
+
+    // Opening Rules (doors/windows)
     {
-      when: { feature: 'pipe', service: 'HW', diameterIn: 0.75 },
+      when: { feature: 'opening' },
       materials: [
         {
-          sku: 'COPPER-3/4IN',
-          qty: 'length * (1 + waste_pct)',
-          uom: 'ft',
-          description: '3/4" Copper Pipe, Type L',
-        },
-        {
-          sku: 'ELBOW-3/4IN',
-          qty: 'length / 20', // elbow every 20 feet
-          uom: 'ea',
-          description: '3/4" Copper 90° Elbow',
-        },
-      ],
-    },
-    
-    // HVAC Rules
-    {
-      when: { feature: 'duct', size: '12x10' },
-      materials: [
-        {
-          sku: 'DUCT-12X10',
-          qty: 'length * (1 + waste_pct)',
-          uom: 'ft',
-          description: '12" x 10" Galvanized Duct',
-        },
-        {
-          sku: 'REGISTER-12X10',
-          qty: 'length / 50', // register every 50 feet
-          uom: 'ea',
-          description: '12" x 10" Supply Register',
-        },
-      ],
-    },
-    
-    // Electrical Rules
-    {
-      when: { feature: 'fixture', fixtureType: 'FD2' },
-      materials: [
-        {
-          sku: 'LED-2X4-40W',
+          sku: 'DOOR-FRAME-HM',
           qty: 'count',
-          uom: 'ea',
-          description: '2x4 LED Troffer, 40W',
+          uom: 'EA',
+          description: 'Hollow Metal Door Frame 3-0 x 7-0',
         },
         {
-          sku: 'SWITCH-SINGLE',
-          qty: 'count / 4', // one switch per 4 fixtures
-          uom: 'ea',
-          description: 'Single Pole Switch, 15A',
+          sku: 'DOOR-SOLID-SC',
+          qty: 'count',
+          uom: 'EA',
+          description: 'Solid Core Wood Door',
+        },
+        {
+          sku: 'HARDWARE-SET',
+          qty: 'count',
+          uom: 'SET',
+          description: 'Door Hardware Set (hinges, lockset, closer)',
+        },
+      ],
+    },
+
+    // Pipe Rules
+    {
+      when: { feature: 'pipe' },
+      materials: [
+        {
+          sku: 'PIPE-COPPER-L',
+          qty: 'length',
+          uom: 'LF',
+          description: 'Copper Pipe Type L',
+        },
+        {
+          sku: 'PIPE-FITTING',
+          qty: 'length * 0.1',
+          uom: 'EA',
+          description: 'Copper Fittings (elbows, tees, couplings)',
+        },
+        {
+          sku: 'PIPE-HANGER',
+          qty: 'length / 4',
+          uom: 'EA',
+          description: 'Pipe Hangers @ 4ft OC',
+        },
+        {
+          sku: 'PIPE-INSUL',
+          qty: 'length',
+          uom: 'LF',
+          description: 'Pipe Insulation',
+        },
+      ],
+    },
+
+    // Duct Rules
+    {
+      when: { feature: 'duct' },
+      materials: [
+        {
+          sku: 'DUCT-GALV-RECT',
+          qty: 'length',
+          uom: 'LF',
+          description: 'Galvanized Rectangular Ductwork',
+        },
+        {
+          sku: 'DUCT-FITTING',
+          qty: 'length * 0.15',
+          uom: 'EA',
+          description: 'Duct Fittings (elbows, transitions)',
+        },
+        {
+          sku: 'DUCT-HANGER',
+          qty: 'length / 5',
+          uom: 'EA',
+          description: 'Duct Hangers @ 5ft OC',
+        },
+        {
+          sku: 'DUCT-SEALANT',
+          qty: 'length * 0.02',
+          uom: 'TUBE',
+          description: 'Duct Sealant',
+        },
+        {
+          sku: 'DUCT-INSUL',
+          qty: 'length * 2',
+          uom: 'SF',
+          description: 'Duct Insulation Wrap',
+        },
+      ],
+    },
+
+    // Fixture Rules (plumbing/electrical fixtures)
+    {
+      when: { feature: 'fixture' },
+      materials: [
+        {
+          sku: 'FIXTURE-UNIT',
+          qty: 'count',
+          uom: 'EA',
+          description: 'Plumbing/Electrical Fixture',
+        },
+        {
+          sku: 'FIXTURE-CONN',
+          qty: 'count * 2',
+          uom: 'EA',
+          description: 'Fixture Connections/Fittings',
+        },
+        {
+          sku: 'FIXTURE-MOUNT',
+          qty: 'count',
+          uom: 'EA',
+          description: 'Fixture Mounting Hardware',
         },
       ],
     },
