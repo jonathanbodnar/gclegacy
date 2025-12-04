@@ -145,6 +145,9 @@ export class JobProcessor {
       this.logger.log(`Starting job processing: ${jobId}`);
     }
 
+    // Declare ingestResult outside try block so it's accessible for cleanup
+    let ingestResult: any = null;
+
     try {
       // Update job status to processing
       this.logger.log(`📊 [Job ${jobId}] Step 0/10: Initializing job processing`);
@@ -153,7 +156,7 @@ export class JobProcessor {
       // Step 1: Ingest and parse file (20% progress)
       this.logger.log(`📊 [Job ${jobId}] Step 1/10: Starting file ingestion (progress: 10%)`);
       await progressReporter(10);
-      const ingestResult = await this.ingestService.ingestFile(
+      ingestResult = await this.ingestService.ingestFile(
         fileId,
         disciplines,
         options
@@ -560,6 +563,9 @@ export class JobProcessor {
       } else {
         this.logger.log(`Job completed successfully: ${jobId}`);
       }
+
+      // Cleanup: Clear buffers and temp files
+      await this.cleanupJobResources(ingestResult);
     } catch (error) {
       this.logger.error(`Job failed: ${jobId}`, error.stack);
       await this.jobsService.updateJobStatus(
@@ -568,7 +574,67 @@ export class JobProcessor {
         undefined,
         error.message
       );
+      
+      // Cleanup even on failure
+      if (ingestResult) {
+        await this.cleanupJobResources(ingestResult).catch(() => {});
+      }
       throw error;
+    }
+  }
+
+  /**
+   * Clean up temporary files and buffers after job processing
+   */
+  private async cleanupJobResources(ingestResult: any): Promise<void> {
+    const fs = await import('fs/promises');
+    let cleanedFiles = 0;
+    let clearedBuffers = 0;
+
+    try {
+      // Clean up temp image files from sheets
+      if (ingestResult?.sheets) {
+        for (const sheet of ingestResult.sheets) {
+          // Delete temp image file if it exists
+          if (sheet.content?.imagePath) {
+            try {
+              await fs.unlink(sheet.content.imagePath);
+              cleanedFiles++;
+            } catch (e) {
+              // File may not exist, ignore
+            }
+          }
+          
+          // Clear rasterData buffer
+          if (sheet.content?.rasterData) {
+            sheet.content.rasterData = null;
+            clearedBuffers++;
+          }
+          
+          // Clear any base64 image data
+          if (sheet.content?.base64Image) {
+            sheet.content.base64Image = null;
+            clearedBuffers++;
+          }
+        }
+      }
+
+      // Force garbage collection if available
+      if (global.gc) {
+        const beforeMem = process.memoryUsage();
+        global.gc();
+        const afterMem = process.memoryUsage();
+        const freedMB = Math.round((beforeMem.rss - afterMem.rss) / 1024 / 1024);
+        this.logger.log(
+          `🧹 Job cleanup: deleted ${cleanedFiles} temp files, cleared ${clearedBuffers} buffers, freed ${freedMB}MB`
+        );
+      } else {
+        this.logger.log(
+          `🧹 Job cleanup: deleted ${cleanedFiles} temp files, cleared ${clearedBuffers} buffers`
+        );
+      }
+    } catch (error) {
+      this.logger.warn(`Cleanup error: ${error.message}`);
     }
   }
 
