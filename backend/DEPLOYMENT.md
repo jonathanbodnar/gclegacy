@@ -116,16 +116,17 @@ docker compose up -d
 ```bash
 # Push schema to database
 docker exec backend-api-1 npx prisma db push
-
-# Seed material rule sets (REQUIRED - without this, no materials will be generated!)
-docker exec backend-api-1 npm run seed
 ```
 
-**What the seed creates:**
-- `Standard Commercial Rules v1.0` - Rules for rooms, walls, openings, pipes, ducts, fixtures
-- `Residential Rules v1.0` - Similar rules with residential-specific waste factors
+**Seed material rule sets (REQUIRED - without this, no materials will be generated!)**
 
-**Manual seed (if npm run seed fails):**
+> Note: `npm run seed` requires ts-node which isn't in production container. Use the manual SQL below.
+
+**What needs to be seeded:**
+- `Standard Commercial Rules v1.0` - Rules for commercial buildings (metal studs, ACT ceiling, VCT flooring)
+- `Residential Rules v1.0` - Rules for residential (wood studs, drywall ceiling, hardwood flooring)
+
+**Manual seed (recommended):**
 ```bash
 docker exec backend-postgres-1 psql -U plantakeoff -d plantakeoff -c "
 INSERT INTO materials_rule_sets (id, name, version, rules, \"createdAt\", \"updatedAt\")
@@ -184,6 +185,52 @@ VALUES (
   NOW()
 ) ON CONFLICT (id) DO NOTHING;
 "
+
+# Seed Residential Rules
+docker exec backend-postgres-1 psql -U plantakeoff -d plantakeoff -c "
+INSERT INTO materials_rule_sets (id, name, version, rules, \"createdAt\", \"updatedAt\")
+VALUES (
+  'residential-rules-v1',
+  'Residential Rules',
+  '1.0',
+  '{
+    \"version\": 1,
+    \"units\": {\"linear\": \"ft\", \"area\": \"ft2\"},
+    \"vars\": {\"wall_height\": 8, \"perimeter_ratio\": 0.35, \"waste_floor\": 1.05, \"waste_paint\": 1.10, \"waste_ceiling\": 1.03},
+    \"rules\": [
+      {\"when\": {\"feature\": \"room\"}, \"materials\": [
+        {\"sku\": \"HARDWOOD-OAK\", \"qty\": \"area * waste_floor\", \"uom\": \"SF\", \"description\": \"Oak Hardwood Flooring\"},
+        {\"sku\": \"INT-PAINT-FLAT\", \"qty\": \"area * perimeter_ratio * waste_paint\", \"uom\": \"SF\", \"description\": \"Interior Flat Paint\"},
+        {\"sku\": \"DRYWALL-CEILING\", \"qty\": \"area * waste_ceiling\", \"uom\": \"SF\", \"description\": \"Drywall Ceiling\"},
+        {\"sku\": \"WOOD-BASE-3IN\", \"qty\": \"area * perimeter_ratio\", \"uom\": \"LF\", \"description\": \"Wood Base Molding\"}
+      ]},
+      {\"when\": {\"feature\": \"wall\"}, \"materials\": [
+        {\"sku\": \"STUD-WOOD-2X4\", \"qty\": \"length * 0.75\", \"uom\": \"LF\", \"description\": \"Wood Studs 2x4 @ 16 OC\"},
+        {\"sku\": \"GWB-12-REG\", \"qty\": \"length * wall_height * 2 / 32\", \"uom\": \"SHT\", \"description\": \"1/2 Regular Drywall\"}
+      ]},
+      {\"when\": {\"feature\": \"opening\"}, \"materials\": [
+        {\"sku\": \"DOOR-FRAME-WOOD\", \"qty\": \"count\", \"uom\": \"EA\", \"description\": \"Wood Door Frame\"},
+        {\"sku\": \"DOOR-HOLLOW\", \"qty\": \"count\", \"uom\": \"EA\", \"description\": \"Hollow Core Door\"},
+        {\"sku\": \"HARDWARE-RES\", \"qty\": \"count\", \"uom\": \"SET\", \"description\": \"Residential Hardware\"}
+      ]},
+      {\"when\": {\"feature\": \"pipe\"}, \"materials\": [
+        {\"sku\": \"PEX-PIPE\", \"qty\": \"length\", \"uom\": \"LF\", \"description\": \"PEX Pipe\"},
+        {\"sku\": \"PEX-FITTING\", \"qty\": \"length * 0.08\", \"uom\": \"EA\", \"description\": \"PEX Fittings\"}
+      ]},
+      {\"when\": {\"feature\": \"duct\"}, \"materials\": [
+        {\"sku\": \"FLEX-DUCT\", \"qty\": \"length\", \"uom\": \"LF\", \"description\": \"Flexible Ductwork\"},
+        {\"sku\": \"DUCT-STRAP\", \"qty\": \"length / 3\", \"uom\": \"EA\", \"description\": \"Duct Straps\"}
+      ]},
+      {\"when\": {\"feature\": \"fixture\"}, \"materials\": [
+        {\"sku\": \"FIXTURE-RES\", \"qty\": \"count\", \"uom\": \"EA\", \"description\": \"Residential Fixture\"},
+        {\"sku\": \"FIXTURE-SUPPLY\", \"qty\": \"count\", \"uom\": \"EA\", \"description\": \"Supply Lines\"}
+      ]}
+    ]
+  }'::jsonb,
+  NOW(),
+  NOW()
+) ON CONFLICT (id) DO NOTHING;
+"
 ```
 
 ### Verify Database Setup
@@ -193,9 +240,10 @@ VALUES (
 docker exec backend-postgres-1 psql -U plantakeoff -d plantakeoff -c "SELECT id, name, version FROM materials_rule_sets;"
 
 # Expected output:
-#        id        |           name            | version
-# -----------------+---------------------------+---------
-# default-rules-v1 | Standard Commercial Rules | 1.0
+#          id          |           name            | version
+# ---------------------+---------------------------+---------
+# default-rules-v1     | Standard Commercial Rules | 1.0
+# residential-rules-v1 | Residential Rules         | 1.0
 ```
 
 ### 6. Verify
