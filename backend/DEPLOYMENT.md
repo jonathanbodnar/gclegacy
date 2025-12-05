@@ -111,11 +111,91 @@ ENVEOF
 docker compose up -d
 ```
 
-### 5. Seed Database (First Time Only)
+### 5. Initialize Database (First Time Only)
 
 ```bash
+# Push schema to database
 docker exec backend-api-1 npx prisma db push
+
+# Seed material rule sets (REQUIRED - without this, no materials will be generated!)
 docker exec backend-api-1 npm run seed
+```
+
+**What the seed creates:**
+- `Standard Commercial Rules v1.0` - Rules for rooms, walls, openings, pipes, ducts, fixtures
+- `Residential Rules v1.0` - Similar rules with residential-specific waste factors
+
+**Manual seed (if npm run seed fails):**
+```bash
+docker exec backend-postgres-1 psql -U plantakeoff -d plantakeoff -c "
+INSERT INTO materials_rule_sets (id, name, version, rules, \"createdAt\", \"updatedAt\")
+VALUES (
+  'default-rules-v1',
+  'Standard Commercial Rules',
+  '1.0',
+  '{
+    \"version\": 1,
+    \"units\": {\"linear\": \"ft\", \"area\": \"ft2\"},
+    \"vars\": {
+      \"wall_height\": 9,
+      \"perimeter_ratio\": 0.4,
+      \"waste_floor\": 1.07,
+      \"waste_paint\": 1.15,
+      \"waste_ceiling\": 1.05
+    },
+    \"rules\": [
+      {\"when\": {\"feature\": \"room\"}, \"materials\": [
+        {\"sku\": \"ARM-EXCELON-51910\", \"qty\": \"area * waste_floor\", \"uom\": \"SF\", \"description\": \"Armstrong Excelon VCT Flooring\"},
+        {\"sku\": \"SW-7006-PAINT\", \"qty\": \"area * perimeter_ratio * waste_paint\", \"uom\": \"SF\", \"description\": \"Interior Paint\"},
+        {\"sku\": \"ARM-CIRRUS-ACT\", \"qty\": \"area * waste_ceiling\", \"uom\": \"SF\", \"description\": \"ACT Ceiling Tiles\"},
+        {\"sku\": \"RUBBER-BASE-4IN\", \"qty\": \"area * perimeter_ratio\", \"uom\": \"LF\", \"description\": \"Rubber Base Molding\"}
+      ]},
+      {\"when\": {\"feature\": \"wall\"}, \"materials\": [
+        {\"sku\": \"STUD-362-20GA\", \"qty\": \"length * 0.75\", \"uom\": \"LF\", \"description\": \"Metal Studs 3-5/8 20GA\"},
+        {\"sku\": \"GWB-58-TYPEX\", \"qty\": \"length * wall_height * 2 / 32\", \"uom\": \"SHT\", \"description\": \"5/8 Type X Gypsum Board\"},
+        {\"sku\": \"JOINT-COMPOUND\", \"qty\": \"length * wall_height * 0.05\", \"uom\": \"GAL\", \"description\": \"Joint Compound\"},
+        {\"sku\": \"DRYWALL-TAPE\", \"qty\": \"length * 1.1\", \"uom\": \"LF\", \"description\": \"Drywall Tape\"}
+      ]},
+      {\"when\": {\"feature\": \"opening\"}, \"materials\": [
+        {\"sku\": \"DOOR-FRAME-HM\", \"qty\": \"count\", \"uom\": \"EA\", \"description\": \"Hollow Metal Door Frame\"},
+        {\"sku\": \"DOOR-SOLID-SC\", \"qty\": \"count\", \"uom\": \"EA\", \"description\": \"Solid Core Door\"},
+        {\"sku\": \"HARDWARE-SET\", \"qty\": \"count\", \"uom\": \"SET\", \"description\": \"Door Hardware Set\"}
+      ]},
+      {\"when\": {\"feature\": \"pipe\"}, \"materials\": [
+        {\"sku\": \"PIPE-COPPER-L\", \"qty\": \"length\", \"uom\": \"LF\", \"description\": \"Copper Pipe Type L\"},
+        {\"sku\": \"PIPE-FITTING\", \"qty\": \"length * 0.1\", \"uom\": \"EA\", \"description\": \"Pipe Fittings\"},
+        {\"sku\": \"PIPE-HANGER\", \"qty\": \"length / 4\", \"uom\": \"EA\", \"description\": \"Pipe Hangers\"},
+        {\"sku\": \"PIPE-INSUL\", \"qty\": \"length\", \"uom\": \"LF\", \"description\": \"Pipe Insulation\"}
+      ]},
+      {\"when\": {\"feature\": \"duct\"}, \"materials\": [
+        {\"sku\": \"DUCT-GALV-RECT\", \"qty\": \"length\", \"uom\": \"LF\", \"description\": \"Galvanized Ductwork\"},
+        {\"sku\": \"DUCT-FITTING\", \"qty\": \"length * 0.15\", \"uom\": \"EA\", \"description\": \"Duct Fittings\"},
+        {\"sku\": \"DUCT-HANGER\", \"qty\": \"length / 5\", \"uom\": \"EA\", \"description\": \"Duct Hangers\"},
+        {\"sku\": \"DUCT-INSUL\", \"qty\": \"length * 2\", \"uom\": \"SF\", \"description\": \"Duct Insulation\"}
+      ]},
+      {\"when\": {\"feature\": \"fixture\"}, \"materials\": [
+        {\"sku\": \"FIXTURE-UNIT\", \"qty\": \"count\", \"uom\": \"EA\", \"description\": \"Plumbing/Electrical Fixture\"},
+        {\"sku\": \"FIXTURE-CONN\", \"qty\": \"count * 2\", \"uom\": \"EA\", \"description\": \"Fixture Connections\"},
+        {\"sku\": \"FIXTURE-MOUNT\", \"qty\": \"count\", \"uom\": \"EA\", \"description\": \"Mounting Hardware\"}
+      ]}
+    ]
+  }'::jsonb,
+  NOW(),
+  NOW()
+) ON CONFLICT (id) DO NOTHING;
+"
+```
+
+### Verify Database Setup
+
+```bash
+# Check rule sets exist
+docker exec backend-postgres-1 psql -U plantakeoff -d plantakeoff -c "SELECT id, name, version FROM materials_rule_sets;"
+
+# Expected output:
+#        id        |           name            | version
+# -----------------+---------------------------+---------
+# default-rules-v1 | Standard Commercial Rules | 1.0
 ```
 
 ### 6. Verify
@@ -327,3 +407,41 @@ docker exec backend-postgres-1 pg_isready -U plantakeoff
 # Restart postgres
 docker compose restart postgres
 ```
+
+### No Materials Generated (Jobs Complete but Empty Materials)
+This happens when material rule sets are not seeded.
+
+```bash
+# Check if rule sets exist
+docker exec backend-postgres-1 psql -U plantakeoff -d plantakeoff -c "SELECT COUNT(*) FROM materials_rule_sets;"
+
+# If count is 0, run the seed
+docker exec backend-api-1 npm run seed
+
+# Or manually insert rules (see "Initialize Database" section above)
+```
+
+### Materials Not Applied to Existing Jobs
+If jobs completed before rules were seeded, materials won't exist. Re-apply rules:
+
+```bash
+# Check features exist for a job
+docker exec backend-postgres-1 psql -U plantakeoff -d plantakeoff -c "SELECT type, COUNT(*) FROM features WHERE \"jobId\" = 'YOUR_JOB_ID' GROUP BY type;"
+
+# If features exist but materials don't, you need to re-process the job
+# or manually trigger the rules engine (requires code changes)
+```
+
+---
+
+## Quick Reference: What Gets Seeded
+
+| Table | Seeded Data | Purpose |
+|-------|-------------|---------|
+| `materials_rule_sets` | Standard Commercial Rules v1.0 | Converts features → materials |
+| `materials_rule_sets` | Residential Rules v1.0 | Alternative rule set |
+
+**Without these seeds, jobs will:**
+- ✅ Extract features (rooms, walls, pipes, etc.)
+- ❌ Generate zero materials
+- ❌ Show empty materials list in frontend
