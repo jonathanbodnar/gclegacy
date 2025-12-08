@@ -106,7 +106,7 @@ class ApiService {
       return text ? JSON.parse(text) : null;
     }
 
-    return response.text();
+    return await response.text();
   }
 
   async uploadFile(file: File, projectId?: string) {
