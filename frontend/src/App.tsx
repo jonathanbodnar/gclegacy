@@ -124,7 +124,11 @@ function App() {
           if (failureCount >= MAX_FAILURES) {
             console.log(`Failed to poll job status ${MAX_FAILURES} times, resetting...`);
             clearInterval(pollInterval);
-            localStorage.clear();
+            // Only clear current job state, preserve jobHistory
+            localStorage.removeItem('currentJobId');
+            localStorage.removeItem('currentFileId');
+            localStorage.removeItem('currentStep');
+            // ✅ jobHistory is preserved!
             setCurrentStep('upload');
             setJobId(null);
             setJobStatus(null);
