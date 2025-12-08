@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  DROPLET_IP: 165.22.162.176
+  DROPLET_IP: 144.202.5.179
   DROPLET_USER: root
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
             sleep 30
             
             # Verify deployment
-            if curl -sf http://localhost:3000/health > /dev/null; then
+            if curl -sf http://localhost:10000/health > /dev/null; then
               echo "✅ Deployment successful! API is healthy."
             else
               echo "❌ Deployment failed! API health check failed."
