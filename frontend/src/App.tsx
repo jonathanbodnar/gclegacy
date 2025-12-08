@@ -32,6 +32,7 @@ function App() {
   const [jobStatus, setJobStatus] = useState<any>(null);
   const [takeoffData, setTakeoffData] = useState<any>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isStartingAnalysis, setIsStartingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiHealth, setApiHealth] = useState<any>(null);
   const [showJobQueueModal, setShowJobQueueModal] = useState(false);
@@ -171,6 +172,15 @@ function App() {
 
   const handleStartAnalysis = async () => {
     if (!fileId) return;
+    
+    // Prevent double-clicking - disable button if already starting
+    if (isStartingAnalysis || currentStep === "processing") {
+      return;
+    }
+
+    setIsStartingAnalysis(true);
+    setError(null);
+    let jobCreated = false;
 
     try {
       const response = await apiService.createJob({
@@ -180,6 +190,7 @@ function App() {
         options: jobConfig.options,
       });
 
+      jobCreated = true;
       setJobId(response.jobId);
       setCurrentStep("processing");
       
@@ -202,6 +213,16 @@ function App() {
       setError(
         error instanceof Error ? error.message : "Failed to start analysis"
       );
+      // Reset on error so user can retry
+      setIsStartingAnalysis(false);
+    } finally {
+      // Reset after a short delay to prevent rapid clicking
+      // But keep disabled if we successfully started processing
+      if (!jobCreated) {
+        setTimeout(() => setIsStartingAnalysis(false), 500);
+      } else {
+        setIsStartingAnalysis(false);
+      }
     }
   };
 
@@ -510,9 +531,14 @@ function App() {
               <div className="text-center">
                 <button
                   onClick={handleStartAnalysis}
-                  className="px-8 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                  disabled={isStartingAnalysis || !fileId}
+                  className={`px-8 py-3 text-white font-medium rounded-lg transition-colors ${
+                    isStartingAnalysis || !fileId
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
                 >
-                  Start Analysis
+                  {isStartingAnalysis ? 'Starting Analysis...' : 'Start Analysis'}
                 </button>
               </div>
             </div>

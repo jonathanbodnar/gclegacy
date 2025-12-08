@@ -97,7 +97,8 @@ export class JobProcessor {
     if (existingJob.status === JobStatus.COMPLETED || 
         existingJob.status === JobStatus.FAILED || 
         existingJob.status === JobStatus.CANCELLED ||
-        existingJob.status === JobStatus.CANCELLING) {
+        existingJob.status === JobStatus.CANCELLING ||
+        existingJob.status === JobStatus.PROCESSING) {
       this.logger.log(`✅ Job ${jobId} already ${existingJob.status} - skipping reprocessing`);
       return;
     }
