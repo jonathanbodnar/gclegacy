@@ -3,7 +3,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Job } from "bull";
 import { JobStatus } from "@prisma/client";
 
-import { JobsService } from "./jobs.service";
+import { JobsService, JobCancellationError } from "./jobs.service";
 import { PrismaService } from "@/common/prisma/prisma.service";
 import { IngestService } from "../ingest/ingest.service";
 import { RulesEngineService } from "../rules-engine/rules-engine.service";
@@ -94,13 +94,19 @@ export class JobProcessor {
       return;
     }
 
-    if (existingJob.status === JobStatus.COMPLETED || existingJob.status === JobStatus.FAILED) {
+    if (existingJob.status === JobStatus.COMPLETED || 
+        existingJob.status === JobStatus.FAILED || 
+        existingJob.status === JobStatus.CANCELLED ||
+        existingJob.status === JobStatus.CANCELLING) {
       this.logger.log(`✅ Job ${jobId} already ${existingJob.status} - skipping reprocessing`);
       return;
     }
 
-    // Create a progress reporter that uses Bull job
+    // Create a progress reporter that uses Bull job AND checks for cancellation
     const progressReporter = async (percent: number) => {
+      // Check cancellation at every progress update
+      this.jobsService.checkCancellation(jobId);
+      
       try {
         await job.progress(percent);
         await this.jobsService.updateJobStatus(
@@ -125,6 +131,15 @@ export class JobProcessor {
       this.logger.log(`✅ Successfully processed job ${jobId}`);
       return result;
     } catch (error) {
+      // Handle cancellation gracefully
+      if (error instanceof JobCancellationError) {
+        this.logger.log(`⏹️ Job ${jobId} cancelled successfully`);
+        // Update status to CANCELLED
+        await this.jobsService.updateJobStatus(jobId, JobStatus.CANCELLED);
+        // Clean up cancellation flag
+        this.jobsService.clearCancellation(jobId);
+        return;
+      }
       this.logger.error(`❌ Failed to process job ${jobId}:`, error.message);
       throw error;
     }
@@ -146,34 +161,50 @@ export class JobProcessor {
     }
 
     try {
+      // 🔥 CHECKPOINT: Check cancellation before starting
+      this.jobsService.checkCancellation(jobId);
+      
       // Update job status to processing
       this.logger.log(`📊 [Job ${jobId}] Step 0/10: Initializing job processing`);
       await this.jobsService.updateJobStatus(jobId, JobStatus.PROCESSING, 0);
 
       // Step 1: Ingest and parse file (20% progress)
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`📊 [Job ${jobId}] Step 1/10: Starting file ingestion (progress: 10%)`);
       await progressReporter(10);
+      
+      // Create cancellation check callback for deep service calls
+      const cancellationCheck = () => this.jobsService.checkCancellation(jobId);
+      
       const ingestResult = await this.ingestService.ingestFile(
         fileId,
         disciplines,
-        options
+        options,
+        cancellationCheck, // Pass cancellation check
+        jobId // Pass jobId for tracking
       );
+      
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT after ingestion
       this.logger.log(`📊 [Job ${jobId}] Step 1/10: File ingestion complete - ${ingestResult.sheets?.length || 0} sheets found (progress: 20%)`);
       await progressReporter(20);
 
       // Stage 1: classify sheets using GPT (know which pages drive which prompts)
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`📊 [Job ${jobId}] Step 2/10: Starting sheet classification`);
       let sheetClassifications: any[] = [];
       try {
         sheetClassifications =
           await this.sheetClassificationService.classifySheets(
-            ingestResult.sheets || []
+            ingestResult.sheets || [],
+            cancellationCheck
           );
         await this.jobsService.mergeJobOptions(jobId, {
           sheetClassifications,
         });
         this.logger.log(`📊 [Job ${jobId}] Step 2/10: Sheet classification completed - ${sheetClassifications.length} sheets classified`);
       } catch (classificationError) {
+        // Re-throw cancellation errors to stop the job
+        if (classificationError instanceof JobCancellationError) throw classificationError;
         this.logger.error(
           `📊 [Job ${jobId}] Step 2/10: ❌ Sheet classification failed: ${classificationError.message}`,
           classificationError.stack
@@ -181,64 +212,78 @@ export class JobProcessor {
       }
 
       // Stage 2: extract generic spaces from plan sheets
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`Starting space extraction for job ${jobId}`);
       let spaces: SpaceDefinition[] = [];
       try {
         spaces = await this.spaceExtractionService.extractSpaces(
-          ingestResult.sheets || []
+          ingestResult.sheets || [],
+          cancellationCheck
         );
         if (spaces.length) {
           await this.jobsService.mergeJobOptions(jobId, { spaces });
         }
         this.logger.log(`Space extraction completed for job ${jobId}: ${spaces.length} spaces extracted`);
       } catch (spaceError) {
+        // Re-throw cancellation errors to stop the job
+        if (spaceError instanceof JobCancellationError) throw spaceError;
         this.logger.warn(
           `Space extraction failed for job ${jobId}: ${spaceError.message}`
         );
       }
 
       // Stage 2B: finishes/materials extraction for materials sheets
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`Starting materials extraction for job ${jobId}`);
       let spaceFinishes: SpaceFinishDefinition[] = [];
       try {
         spaceFinishes = await this.materialsExtractionService.extractFinishes(
-          ingestResult.sheets || []
+          ingestResult.sheets || [],
+          cancellationCheck
         );
         if (spaceFinishes.length) {
           await this.jobsService.mergeJobOptions(jobId, { spaceFinishes });
         }
         this.logger.log(`Materials extraction completed for job ${jobId}: ${spaceFinishes.length} finishes extracted`);
       } catch (materialsError) {
+        // Re-throw cancellation errors to stop the job
+        if (materialsError instanceof JobCancellationError) throw materialsError;
         this.logger.warn(
           `Materials extraction failed for job ${jobId}: ${materialsError.message}`
         );
       }
 
       // Stage 2A: extract room schedules from text
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`Starting room schedule extraction for job ${jobId}`);
       let roomSchedules: any[] = [];
       try {
         roomSchedules =
           await this.roomScheduleExtractionService.extractRoomSchedules(
-            ingestResult.sheets || []
+            ingestResult.sheets || [],
+            cancellationCheck
           );
         if (roomSchedules.length) {
           await this.jobsService.mergeJobOptions(jobId, { roomSchedules });
         }
         this.logger.log(`Room schedule extraction completed for job ${jobId}: ${roomSchedules.length} schedules extracted`);
       } catch (scheduleError) {
+        // Re-throw cancellation errors to stop the job
+        if (scheduleError instanceof JobCancellationError) throw scheduleError;
         this.logger.warn(
           `Room schedule extraction failed for job ${jobId}: ${scheduleError.message}`
         );
       }
 
       // Stage 2B: map rooms on floor plans using schedule context
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`Starting room spatial mapping for job ${jobId}`);
       let roomSpatialMappings: any[] = [];
       try {
         roomSpatialMappings = await this.roomSpatialMappingService.mapRooms(
           roomSchedules,
-          ingestResult.sheets || []
+          ingestResult.sheets || [],
+          cancellationCheck
         );
         if (roomSpatialMappings.length) {
           await this.jobsService.mergeJobOptions(jobId, {
@@ -247,49 +292,60 @@ export class JobProcessor {
         }
         this.logger.log(`Room spatial mapping completed for job ${jobId}: ${roomSpatialMappings.length} mappings created`);
       } catch (spatialError) {
+        // Re-throw cancellation errors to stop the job
+        if (spatialError instanceof JobCancellationError) throw spatialError;
         this.logger.warn(
           `Room spatial mapping failed for job ${jobId}: ${spatialError.message}`
         );
       }
 
       // Stage 3A: extract partition type definitions
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`Starting partition type extraction for job ${jobId}`);
       let partitionTypes: any[] = [];
       try {
         partitionTypes =
           await this.partitionTypeExtractionService.extractPartitionTypes(
-            ingestResult.sheets || []
+            ingestResult.sheets || [],
+            cancellationCheck
           );
         if (partitionTypes.length) {
           await this.jobsService.mergeJobOptions(jobId, { partitionTypes });
         }
         this.logger.log(`Partition type extraction completed for job ${jobId}: ${partitionTypes.length} types extracted`);
       } catch (partitionError) {
+        // Re-throw cancellation errors to stop the job
+        if (partitionError instanceof JobCancellationError) throw partitionError;
         this.logger.warn(
           `Partition type extraction failed for job ${jobId}: ${partitionError.message}`
         );
       }
 
       // Stage 3B: wall run extraction using floor plan imagery
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`Starting wall run extraction for job ${jobId}`);
       let wallRuns: any[] = [];
       try {
         wallRuns = await this.wallRunExtractionService.extractWallRuns(
           ingestResult.sheets || [],
           partitionTypes,
-          spaces
+          spaces,
+          cancellationCheck
         );
         if (wallRuns.length) {
           await this.jobsService.mergeJobOptions(jobId, { wallRuns });
         }
         this.logger.log(`Wall run extraction completed for job ${jobId}: ${wallRuns.length} wall runs extracted`);
       } catch (wallError) {
+        // Re-throw cancellation errors to stop the job
+        if (wallError instanceof JobCancellationError) throw wallError;
         this.logger.warn(
           `Wall run extraction failed for job ${jobId}: ${wallError.message}`
         );
       }
 
       // Stage 4: ceiling heights from reflected ceiling plans
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`Starting ceiling height extraction for job ${jobId}`);
       let ceilingHeights: any[] = [];
       try {
@@ -297,36 +353,44 @@ export class JobProcessor {
           await this.ceilingHeightExtractionService.extractHeights(
             ingestResult.sheets || [],
             roomSpatialMappings || [],
-            spaces || []
+            spaces || [],
+            cancellationCheck
           );
         if (ceilingHeights.length) {
           await this.jobsService.mergeJobOptions(jobId, { ceilingHeights });
         }
         this.logger.log(`Ceiling height extraction completed for job ${jobId}: ${ceilingHeights.length} heights extracted`);
       } catch (ceilingError) {
+        // Re-throw cancellation errors to stop the job
+        if (ceilingError instanceof JobCancellationError) throw ceilingError;
         this.logger.warn(
           `Ceiling height extraction failed for job ${jobId}: ${ceilingError.message}`
         );
       }
 
       // Stage 5: extract sheet/viewport scale annotations
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`Starting scale extraction for job ${jobId}`);
       let scaleAnnotations: ScaleAnnotation[] = [];
       try {
         scaleAnnotations = await this.scaleExtractionService.extractScales(
-          ingestResult.sheets || []
+          ingestResult.sheets || [],
+          cancellationCheck
         );
         if (scaleAnnotations.length) {
           await this.jobsService.mergeJobOptions(jobId, { scaleAnnotations });
         }
         this.logger.log(`Scale extraction completed for job ${jobId}: ${scaleAnnotations.length} scales extracted`);
       } catch (scaleError) {
+        // Re-throw cancellation errors to stop the job
+        if (scaleError instanceof JobCancellationError) throw scaleError;
         this.logger.warn(
           `Scale extraction failed for job ${jobId}: ${scaleError.message}`
         );
       }
 
       // Stage 6: fuse room/wall data for final aggregation
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       this.logger.log(`Starting final data fusion for job ${jobId}`);
       let fusionData: any;
       try {
@@ -346,15 +410,19 @@ export class JobProcessor {
         }
         this.logger.log(`Final data fusion completed for job ${jobId}`);
       } catch (fusionError) {
+        // Re-throw cancellation errors to stop the job
+        if (fusionError instanceof JobCancellationError) throw fusionError;
         this.logger.warn(
           `Final data fusion failed for job ${jobId}: ${fusionError.message}`
         );
       }
 
       // Step 2: Real plan analysis with OpenAI Vision (25% -> 60% progress)
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT before OpenAI analysis
       await progressReporter(25);
 
       // Get the actual uploaded file
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT before file download
       const fileBuffer = await this.filesService.getFileBuffer(fileId);
       const file = await this.filesService.getFile(fileId);
 
@@ -373,6 +441,7 @@ export class JobProcessor {
       }));
       
       // Use OpenAI Vision to analyze the actual plan with progress reporting
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT before OpenAI analysis
       const analysisResult = await this.planAnalysisService.analyzePlanFile(
         fileBuffer,
         file.filename,
@@ -384,6 +453,8 @@ export class JobProcessor {
         },
         // Progress callback: Map pages analyzed to 25%-60% range
         async (currentPage: number, totalPages: number, message: string) => {
+          // Check cancellation during progress updates
+          this.jobsService.checkCancellation(jobId);
           const analysisProgress = currentPage / totalPages;
           const overallProgress = 25 + analysisProgress * 35; // 25% + up to 35% = 60% max
           await progressReporter(Math.round(overallProgress));
@@ -394,11 +465,15 @@ export class JobProcessor {
         }
       );
 
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT after OpenAI analysis
       await progressReporter(60);
 
       // Extract features from analysis results
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT before feature extraction
       const features = [];
       for (const pageResult of analysisResult.pages) {
+        // Check cancellation before processing each page
+        this.jobsService.checkCancellation(jobId);
         // Log what OpenAI returned for this page
         const rawFeatures = pageResult.features;
         if (rawFeatures) {
@@ -433,10 +508,12 @@ export class JobProcessor {
         features.push(...pageFeatures);
       }
 
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT after feature extraction
       await progressReporter(75);
 
       // Step 3: Features are already saved by extractFeatures, ensure we have features with IDs
       // If features array is empty or doesn't have IDs, fetch from database
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT
       let featuresToUse = features;
       if (features.length === 0 || features.some((f) => !f.id)) {
         if (process.env.NODE_ENV !== "production") {
@@ -460,6 +537,7 @@ export class JobProcessor {
       await progressReporter(80);
 
       // Scope diagnosis upgrade - capture CSI divisions, vertical context, fittings
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT before scope diagnosis
       let scopeDiagnosis: any = undefined;
       try {
         scopeDiagnosis = await this.scopeDiagnosisService.diagnoseScope({
@@ -475,11 +553,14 @@ export class JobProcessor {
           scopeDiagnosis,
         });
       } catch (scopeError) {
+        // Re-throw cancellation errors to stop the job
+        if (scopeError instanceof JobCancellationError) throw scopeError;
         this.logger.warn(
           `Scope diagnosis failed for job ${jobId}: ${scopeError.message}`
         );
       }
 
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT before takeoff
       await this.generateSchemaTakeoff(
         jobId,
         analysisResult.pages || [],
@@ -490,6 +571,7 @@ export class JobProcessor {
 
       // Step 4: Apply materials rules (95% progress)
       // Use provided rule set or default to "Standard Commercial Rules"
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT before rules
       const ruleSetIdToUse =
         materialsRuleSetId || (await this.getDefaultRuleSetId());
       if (ruleSetIdToUse) {
@@ -510,6 +592,8 @@ export class JobProcessor {
             );
           }
         } catch (rulesError) {
+          // Re-throw cancellation errors to stop the job
+          if (rulesError instanceof JobCancellationError) throw rulesError;
           this.logger.warn(
             `Materials rules application failed for job ${jobId}: ${rulesError.message}`
           );
@@ -519,6 +603,7 @@ export class JobProcessor {
           `No materials rule set available for job ${jobId}. Materials will not be generated.`
         );
       }
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT before cost intelligence
       await progressReporter(95);
 
       // Cost intelligence & labor modeling snapshot
@@ -542,12 +627,15 @@ export class JobProcessor {
           laborModel,
         });
       } catch (costError) {
+        // Re-throw cancellation errors to stop the job
+        if (costError instanceof JobCancellationError) throw costError;
         this.logger.warn(
           `Cost/labor modeling failed for job ${jobId}: ${costError.message}`
         );
       }
 
       // Step 5: Generate artifacts and complete (100% progress)
+      this.jobsService.checkCancellation(jobId); // 🔥 CHECKPOINT before artifacts
       await this.generateArtifacts(jobId, ingestResult, featuresToUse);
       await progressReporter(100);
 
@@ -561,6 +649,16 @@ export class JobProcessor {
         this.logger.log(`Job completed successfully: ${jobId}`);
       }
     } catch (error) {
+      // Handle cancellation gracefully - don't mark as failed
+      if (error instanceof JobCancellationError) {
+        this.logger.log(`⏹️ Job ${jobId} cancelled successfully`);
+        // Update status to CANCELLED
+        await this.jobsService.updateJobStatus(jobId, JobStatus.CANCELLED);
+        // Clean up cancellation flag
+        this.jobsService.clearCancellation(jobId);
+        return;
+      }
+      
       this.logger.error(`Job failed: ${jobId}`, error.stack);
       await this.jobsService.updateJobStatus(
         jobId,

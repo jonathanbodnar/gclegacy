@@ -94,7 +94,19 @@ class ApiService {
       throw new Error(error.message || `HTTP ${response.status}`);
     }
 
-    return response.json();
+    // Handle 204 No Content responses (no body to parse)
+    if (response.status === 204) {
+      return;
+    }
+
+    // Check if response has content to parse
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      const text = await response.text();
+      return text ? JSON.parse(text) : null;
+    }
+
+    return response.text();
   }
 
   async uploadFile(file: File, projectId?: string) {
@@ -139,6 +151,12 @@ class ApiService {
 
   async getJobStatus(jobId: string) {
     return this.request(`/jobs/${jobId}`);
+  }
+
+  async cancelJob(jobId: string) {
+    return this.request(`/jobs/${jobId}`, {
+      method: 'DELETE',
+    });
   }
 
   async getTakeoffResults(jobId: string) {

@@ -86,19 +86,50 @@ export class MaterialsExtractionService {
 
   /**
    * Process items in parallel with controlled concurrency
+   * @param cancellationCheck Optional callback to check for job cancellation
    */
   private async processInParallel<T, R>(
     items: T[],
     processor: (item: T, index: number) => Promise<R>,
-    concurrencyLimit: number
+    concurrencyLimit: number,
+    cancellationCheck?: () => void
   ): Promise<R[]> {
     const results: R[] = new Array(items.length);
     let currentIndex = 0;
+    let cancelled = false;
+    let cancellationError: Error | null = null;
 
     const worker = async () => {
-      while (currentIndex < items.length) {
+      while (currentIndex < items.length && !cancelled) {
+        try {
+          cancellationCheck?.();
+        } catch (e) {
+          cancelled = true;
+          cancellationError = e as Error;
+          this.logger.log(`⏹️ Worker detected cancellation - stopping new work`);
+          throw e;
+        }
+        if (cancelled) break;
         const index = currentIndex++;
-        results[index] = await processor(items[index], index);
+        if (index >= items.length) break;
+        try {
+          results[index] = await processor(items[index], index);
+          try {
+            cancellationCheck?.();
+          } catch (e) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+        } catch (e) {
+          if ((e as Error).name === 'JobCancellationError' || 
+              (e as Error).message?.includes('cancelled')) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+          throw e;
+        }
       }
     };
 
@@ -106,11 +137,19 @@ export class MaterialsExtractionService {
       .fill(null)
       .map(() => worker());
 
-    await Promise.all(workers);
+    const settledResults = await Promise.allSettled(workers);
+    if (cancellationError) {
+      this.logger.log(`⏹️ Parallel processing aborted due to cancellation`);
+      throw cancellationError;
+    }
+    const firstRejection = settledResults.find(r => r.status === 'rejected');
+    if (firstRejection && firstRejection.status === 'rejected') {
+      throw firstRejection.reason;
+    }
     return results;
   }
 
-  async extractFinishes(sheets: SheetData[]): Promise<SpaceFinishDefinition[]> {
+  async extractFinishes(sheets: SheetData[], cancellationCheck?: () => void): Promise<SpaceFinishDefinition[]> {
     if (!this.openai) {
       return [];
     }
@@ -134,6 +173,7 @@ export class MaterialsExtractionService {
     const sheetResults = await this.processInParallel(
       finishSheets,
       async (sheet, i) => {
+        cancellationCheck?.(); // Check before processing each sheet
         try {
           this.logger.log(`  🔍 Materials extraction sheet ${i + 1}/${finishSheets.length}: ${sheet.name || sheet.index}`);
           const parsed = await this.extractFromSheet(sheet);
@@ -155,7 +195,8 @@ export class MaterialsExtractionService {
           return [];
         }
       },
-      effectiveLimit
+      effectiveLimit,
+      cancellationCheck
     );
 
     // Flatten results

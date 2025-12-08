@@ -88,19 +88,57 @@ export class SpaceExtractionService {
 
   /**
    * Process items in parallel with controlled concurrency
+   * @param cancellationCheck Optional callback to check for job cancellation
    */
   private async processInParallel<T, R>(
     items: T[],
     processor: (item: T, index: number) => Promise<R>,
-    concurrencyLimit: number
+    concurrencyLimit: number,
+    cancellationCheck?: () => void
   ): Promise<R[]> {
     const results: R[] = new Array(items.length);
     let currentIndex = 0;
+    let cancelled = false;
+    let cancellationError: Error | null = null;
 
     const worker = async () => {
-      while (currentIndex < items.length) {
+      while (currentIndex < items.length && !cancelled) {
+        // Check for cancellation before processing each item
+        try {
+          cancellationCheck?.();
+        } catch (e) {
+          cancelled = true;
+          cancellationError = e as Error;
+          this.logger.log(`⏹️ Worker detected cancellation - stopping new work`);
+          throw e;
+        }
+        
+        // Double-check cancelled flag
+        if (cancelled) break;
+        
         const index = currentIndex++;
-        results[index] = await processor(items[index], index);
+        if (index >= items.length) break;
+        
+        try {
+          results[index] = await processor(items[index], index);
+          
+          // Check cancellation AFTER processing too
+          try {
+            cancellationCheck?.();
+          } catch (e) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+        } catch (e) {
+          if ((e as Error).name === 'JobCancellationError' || 
+              (e as Error).message?.includes('cancelled')) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+          throw e;
+        }
       }
     };
 
@@ -108,11 +146,22 @@ export class SpaceExtractionService {
       .fill(null)
       .map(() => worker());
 
-    await Promise.all(workers);
+    const settledResults = await Promise.allSettled(workers);
+    
+    if (cancellationError) {
+      this.logger.log(`⏹️ Parallel processing aborted due to cancellation`);
+      throw cancellationError;
+    }
+    
+    const firstRejection = settledResults.find(r => r.status === 'rejected');
+    if (firstRejection && firstRejection.status === 'rejected') {
+      throw firstRejection.reason;
+    }
+
     return results;
   }
 
-  async extractSpaces(sheets: SheetData[]): Promise<SpaceDefinition[]> {
+  async extractSpaces(sheets: SheetData[], cancellationCheck?: () => void): Promise<SpaceDefinition[]> {
     if (!this.openai) {
       return [];
     }
@@ -142,6 +191,8 @@ export class SpaceExtractionService {
     const sheetResults = await this.processInParallel(
       targetSheets,
       async (sheet, i) => {
+        // Check cancellation before processing each sheet
+        cancellationCheck?.();
         try {
           this.logger.log(
             `  🔍 Space extraction sheet ${i + 1}/${targetSheets.length}: ${sheet.name || sheet.index}, ` +
@@ -179,7 +230,8 @@ export class SpaceExtractionService {
           return [];
         }
       },
-      effectiveLimit
+      effectiveLimit,
+      cancellationCheck
     );
 
     // Flatten results

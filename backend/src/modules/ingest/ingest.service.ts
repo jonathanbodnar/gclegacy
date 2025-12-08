@@ -89,18 +89,29 @@ export class IngestService {
     fileId: string,
     disciplines: string[],
     options?: any,
+    cancellationCheck?: () => void,
+    jobId?: string
   ): Promise<IngestResult> {
     this.logger.log(`🚀 Starting file ingest: ${fileId}`);
+    
+    // Check cancellation before starting
+    cancellationCheck?.();
 
     // Get file information
     this.logger.log(`📋 Fetching file metadata from database...`);
     const file = await this.filesService.getFile(fileId);
     this.logger.log(`📋 File info: ${file.filename}, mime=${file.mime}, size=${file.size} bytes`);
     
+    // Check cancellation before download
+    cancellationCheck?.();
+    
     this.logger.log(`📥 Downloading file buffer from storage...`);
     const downloadStart = Date.now();
     const fileBuffer = await this.filesService.getFileBuffer(fileId);
     this.logger.log(`✅ File buffer downloaded: ${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB in ${Date.now() - downloadStart}ms`);
+    
+    // Check cancellation after download
+    cancellationCheck?.();
 
     // Route to appropriate ingest service based on MIME type
     let result: IngestResult;
