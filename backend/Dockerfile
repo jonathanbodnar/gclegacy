@@ -40,6 +40,9 @@ COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
 COPY --from=builder --chown=nestjs:nodejs /app/package*.json ./
 COPY --chown=nestjs:nodejs prisma/ prisma/
 
+# Ensure writable temp upload directory
+RUN mkdir -p /app/temp/uploads && chown -R nestjs:nodejs /app/temp
+
 # Generate Prisma client for production
 RUN npx prisma generate
 
