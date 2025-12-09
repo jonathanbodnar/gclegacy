@@ -85,7 +85,8 @@ export class RoomScheduleExtractionService {
   }
 
   async extractRoomSchedules(
-    sheets: SheetData[]
+    sheets: SheetData[],
+    cancellationCheck?: () => void
   ): Promise<RoomScheduleEntry[]> {
     if (!this.openai) {
       return [];
@@ -100,6 +101,7 @@ export class RoomScheduleExtractionService {
     );
 
     for (const sheet of relevantSheets) {
+      cancellationCheck?.(); // Check before processing each sheet
       try {
         const sheetEntries = await this.extractFromSheet(sheet);
         for (const entry of sheetEntries) {
@@ -111,6 +113,10 @@ export class RoomScheduleExtractionService {
           });
         }
       } catch (error: any) {
+        // Re-throw cancellation errors
+        if (error.name === 'JobCancellationError' || error.message?.includes('cancelled')) {
+          throw error;
+        }
         this.logger.warn(
           `Room schedule extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
         );

@@ -46,11 +46,25 @@ export interface JobStatusResponse {
   finishedAt?: Date;
 }
 
+/**
+ * Custom error for job cancellation - allows instant detection
+ */
+export class JobCancellationError extends Error {
+  constructor(jobId: string) {
+    super(`Job ${jobId} was cancelled`);
+    this.name = 'JobCancellationError';
+  }
+}
+
 @Injectable()
 export class JobsService {
   private readonly logger = new Logger(JobsService.name);
 
   private jobProcessor: any; // Use any to avoid circular dependency
+  
+  // Set of cancelled job IDs for instant cancellation detection
+  // Jobs check this set at every checkpoint and throw immediately if found
+  private cancelledJobs = new Set<string>();
 
   constructor(
     private prisma: PrismaService,
@@ -71,6 +85,34 @@ export class JobsService {
   // Set job processor after construction to avoid circular dependency
   setJobProcessor(processor: any) {
     this.jobProcessor = processor;
+  }
+
+  /**
+   * Check if a job has been cancelled - call this at every processing checkpoint
+   * Throws JobCancellationError immediately if job is cancelled
+   */
+  checkCancellation(jobId: string): void {
+    if (this.cancelledJobs.has(jobId)) {
+      this.logger.log(`⏹️ Job ${jobId} cancellation detected at checkpoint`);
+      throw new JobCancellationError(jobId);
+    }
+  }
+
+  /**
+   * Check if a job is in the cancelled set (non-throwing version)
+   */
+  isJobCancelled(jobId: string): boolean {
+    return this.cancelledJobs.has(jobId);
+  }
+
+  /**
+   * Clear a job from the cancelled set after processing is fully stopped
+   */
+  clearCancellation(jobId: string): void {
+    if (this.cancelledJobs.has(jobId)) {
+      this.cancelledJobs.delete(jobId);
+      this.logger.log(`🧹 Cleared cancellation flag for job ${jobId}`);
+    }
   }
 
   async createJob(
@@ -342,7 +384,7 @@ export class JobsService {
       updateData.startedAt = new Date();
     }
 
-    if (status === JobStatus.COMPLETED || status === JobStatus.FAILED) {
+    if (status === JobStatus.COMPLETED || status === JobStatus.FAILED || status === JobStatus.CANCELLED) {
       updateData.finishedAt = new Date();
     }
 
@@ -364,7 +406,7 @@ export class JobsService {
           this.logger.warn(
             `Job ${jobId} not found while updating status - job may have been deleted. Skipping update.`
           );
-          // Don't throw - job was likely deleted intentionally (e.g., via clearAllJobs)
+          // Don't throw - job was likely deleted intentionally
           return;
         }
 
@@ -398,22 +440,35 @@ export class JobsService {
 
       if (
         job.status === JobStatus.COMPLETED ||
-        job.status === JobStatus.FAILED
+        job.status === JobStatus.FAILED ||
+        job.status === JobStatus.CANCELLED
       ) {
-        throw new BadRequestException("Cannot cancel completed or failed job");
+        throw new BadRequestException("Cannot cancel completed, failed, or already cancelled job");
       }
 
-      // Update job status
-      await this.updateJobStatus(jobId, JobStatus.CANCELLED);
+      // Step 1: Mark job as CANCELLING (shows in UI immediately)
+      await this.updateJobStatus(jobId, JobStatus.CANCELLING);
+      this.logger.log(`⏹️ Job ${jobId} marked as CANCELLING`);
 
-      // Remove from queue if still queued and queue is available
+      // Step 2: Add to cancelled set for instant detection by processor
+      this.cancelledJobs.add(jobId);
+      this.logger.log(`⏹️ Job ${jobId} added to cancellation set`);
+
+      // Step 3: Remove from queue if still queued
       if (job.status === JobStatus.QUEUED && this.jobQueue) {
         const jobs = await this.jobQueue.getJobs(["waiting", "active"]);
-        const queueJob = jobs.find((j) => j.data.jobId === jobId);
+        const queueJob = jobs.find((j) => j.data?.jobId === jobId);
         if (queueJob) {
-          await queueJob.remove();
+          try {
+            await queueJob.remove();
+            this.logger.log(`🗑️ Removed job ${jobId} from queue`);
+          } catch (e) {
+            this.logger.warn(`Failed to remove job ${jobId} from queue: ${e.message}`);
+          }
         }
       }
+
+      // Note: Status will be changed to CANCELLED by the processor when it detects cancellation
     } catch (error) {
       if (
         error instanceof NotFoundException ||
@@ -551,134 +606,6 @@ export class JobsService {
   }
 
   /**
-   * Clear all jobs from the Bull queue and delete them from the database
-   * This will:
-   * 1. Remove all waiting, active, and delayed jobs from the queue
-   * 2. Delete QUEUED and PROCESSING jobs from the database (cascade deletes related data)
-   * @returns Object with counts of jobs cleared
-   */
-  async clearAllJobs(): Promise<{
-    queueJobsRemoved: number;
-    databaseJobsDeleted: number;
-  }> {
-    let queueJobsRemoved = 0;
-    let databaseJobsDeleted = 0;
-
-    try {
-      // Step 1: Clear all jobs from Bull queue if available
-      if (this.jobQueue) {
-        try {
-          // Get all jobs in various states
-          const waitingJobs = await this.jobQueue.getJobs(["waiting"]);
-          const activeJobs = await this.jobQueue.getJobs(["active"]);
-          const delayedJobs = await this.jobQueue.getJobs(["delayed"]);
-
-          // Remove all jobs from queue
-          for (const job of [...waitingJobs, ...activeJobs, ...delayedJobs]) {
-            try {
-              await job.remove();
-              queueJobsRemoved++;
-              this.logger.log(
-                `Removed job ${job.id} from queue (jobId: ${job.data?.jobId || "unknown"})`
-              );
-            } catch (error: any) {
-              this.logger.warn(
-                `Failed to remove job ${job.id} from queue:`,
-                error?.message || String(error)
-              );
-            }
-          }
-
-          // Also clear the entire queue using empty() method
-          await this.jobQueue.empty();
-          this.logger.log(
-            `Emptied job queue: ${queueJobsRemoved} jobs removed`
-          );
-        } catch (error: any) {
-          this.logger.error(
-            "Error clearing queue:",
-            error?.message || String(error)
-          );
-          // Continue to database cleanup even if queue clearing fails
-        }
-      } else {
-        this.logger.warn("Job queue not available - skipping queue cleanup");
-      }
-
-      // Step 2: Delete QUEUED and PROCESSING jobs from database
-      // This will cascade delete related sheets, features, and materials
-      try {
-        // First, get count of jobs to be deleted for logging
-        const jobsToDelete = await this.prisma.job.findMany({
-          where: {
-            status: {
-              in: [JobStatus.QUEUED, JobStatus.PROCESSING],
-            },
-          },
-          select: { id: true },
-        });
-
-        const jobIds = jobsToDelete.map((j) => j.id);
-        this.logger.log(
-          `Found ${jobIds.length} jobs to delete: ${jobIds.join(", ")}`
-        );
-
-        // Delete jobs (cascade will handle related data)
-        const result = await this.prisma.job.deleteMany({
-          where: {
-            status: {
-              in: [JobStatus.QUEUED, JobStatus.PROCESSING],
-            },
-          },
-        });
-
-        databaseJobsDeleted = result.count;
-        this.logger.log(`Deleted ${databaseJobsDeleted} jobs from database`);
-
-        if (databaseJobsDeleted === 0) {
-          this.logger.warn(
-            "No QUEUED or PROCESSING jobs found to delete. Jobs may already be completed, failed, or cancelled."
-          );
-        }
-      } catch (error: any) {
-        if (
-          error instanceof PrismaClientKnownRequestError ||
-          error instanceof Error
-        ) {
-          if (
-            error.message?.includes("Can't reach database server") ||
-            error.message?.includes("database server")
-          ) {
-            this.logger.error("Database connection failed:", error.message);
-            throw new ServiceUnavailableException(
-              "Database service is currently unavailable. Please try again later."
-            );
-          }
-        }
-        this.logger.error(
-          "Error deleting jobs from database:",
-          error?.message || String(error)
-        );
-        throw error;
-      }
-
-      return {
-        queueJobsRemoved,
-        databaseJobsDeleted,
-      };
-    } catch (error: any) {
-      if (error instanceof ServiceUnavailableException) {
-        throw error;
-      }
-      this.logger.error(
-        "Error clearing all jobs:",
-        error?.message || String(error)
-      );
-      throw error;
-    }
-  }
-
-  /**
    * Process job directly without Bull queue (fallback when Redis is not available)
    */
   private async processJobDirectly(jobData: {
@@ -693,13 +620,26 @@ export class JobsService {
       throw new Error("Job processor not available");
     }
 
-    // Create a simple progress reporter that updates job status
+    // Create a simple progress reporter that updates job status AND checks cancellation
     const progressReporter = async (percent: number) => {
+      // Check cancellation at every progress update
+      this.checkCancellation(jobData.jobId);
       await this.updateJobStatus(jobData.jobId, JobStatus.PROCESSING, percent);
     };
 
-    // Call the processor's processJobData method
-    await this.jobProcessor.processJobData(jobData, progressReporter);
+    try {
+      // Call the processor's processJobData method
+      await this.jobProcessor.processJobData(jobData, progressReporter);
+    } catch (error) {
+      // Handle cancellation gracefully
+      if (error instanceof JobCancellationError) {
+        this.logger.log(`⏹️ Job ${jobData.jobId} cancelled in direct processing`);
+        // Status already updated to CANCELLED by processor
+        this.clearCancellation(jobData.jobId);
+        return;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -769,6 +709,98 @@ export class JobsService {
   }
 
   /**
+   * Clear all jobs from the Bull queue (Redis)
+   * This removes all waiting, active, delayed, and completed jobs from the queue
+   * Useful for clearing stale jobs after restart
+   */
+  async clearQueue(): Promise<{
+    waiting: number;
+    active: number;
+    delayed: number;
+    completed: number;
+    failed: number;
+  }> {
+    const result = {
+      waiting: 0,
+      active: 0,
+      delayed: 0,
+      completed: 0,
+      failed: 0,
+    };
+
+    if (!this.jobQueue) {
+      this.logger.warn("Job queue not available - cannot clear queue");
+      return result;
+    }
+
+    try {
+      // Get all jobs in various states
+      const waitingJobs = await this.jobQueue.getJobs(["waiting"]);
+      const activeJobs = await this.jobQueue.getJobs(["active"]);
+      const delayedJobs = await this.jobQueue.getJobs(["delayed"]);
+      const completedJobs = await this.jobQueue.getJobs(["completed"]);
+      const failedJobs = await this.jobQueue.getJobs(["failed"]);
+
+      // Remove all jobs
+      for (const job of waitingJobs) {
+        try {
+          await job.remove();
+          result.waiting++;
+        } catch (error: any) {
+          this.logger.warn(`Failed to remove waiting job ${job.id}: ${error.message}`);
+        }
+      }
+
+      for (const job of activeJobs) {
+        try {
+          await job.remove();
+          result.active++;
+        } catch (error: any) {
+          this.logger.warn(`Failed to remove active job ${job.id}: ${error.message}`);
+        }
+      }
+
+      for (const job of delayedJobs) {
+        try {
+          await job.remove();
+          result.delayed++;
+        } catch (error: any) {
+          this.logger.warn(`Failed to remove delayed job ${job.id}: ${error.message}`);
+        }
+      }
+
+      for (const job of completedJobs) {
+        try {
+          await job.remove();
+          result.completed++;
+        } catch (error: any) {
+          this.logger.warn(`Failed to remove completed job ${job.id}: ${error.message}`);
+        }
+      }
+
+      for (const job of failedJobs) {
+        try {
+          await job.remove();
+          result.failed++;
+        } catch (error: any) {
+          this.logger.warn(`Failed to remove failed job ${job.id}: ${error.message}`);
+        }
+      }
+
+      // Also empty the queue completely
+      await this.jobQueue.empty();
+
+      const total = result.waiting + result.active + result.delayed + result.completed + result.failed;
+      this.logger.log(`✅ Cleared ${total} jobs from queue (waiting: ${result.waiting}, active: ${result.active}, delayed: ${result.delayed}, completed: ${result.completed}, failed: ${result.failed})`);
+
+      return result;
+    } catch (error: any) {
+      this.logger.error(`Error clearing queue: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Reset stuck PROCESSING jobs back to QUEUED after server restart
    * This handles jobs that were interrupted by crashes/SIGTERM
    */
@@ -796,41 +828,21 @@ export class JobsService {
         `Found ${stuckJobs.length} stuck PROCESSING jobs - resetting to QUEUED`
       );
 
-      // Reset all stuck jobs back to QUEUED
+      // Cancel stuck jobs instead of re-queuing them
+      // This prevents old jobs from being processed after restart
       const result = await this.prisma.job.updateMany({
         where: {
           id: { in: stuckJobs.map((j) => j.id) },
         },
         data: {
-          status: JobStatus.QUEUED,
+          status: JobStatus.CANCELLED,
           progress: 0,
-          error: "Job was interrupted by server restart - will retry",
-          startedAt: null,
-          finishedAt: null,
+          error: "Job was interrupted by server restart - cancelled",
+          finishedAt: new Date(),
         },
       });
 
-      // If using Bull queue, re-add these jobs to the queue
-      if (this.jobQueue) {
-        for (const job of stuckJobs) {
-          try {
-            await this.jobQueue.add("process-job", {
-              jobId: job.id,
-              fileId: job.fileId,
-              disciplines: job.disciplines,
-              targets: job.targets,
-              materialsRuleSetId: job.materialsRuleSetId,
-              options: job.options,
-            });
-            this.logger.log(`Re-queued stuck job ${job.id}`);
-          } catch (error) {
-            this.logger.error(
-              `Failed to re-queue stuck job ${job.id}:`,
-              error.message
-            );
-          }
-        }
-      }
+      this.logger.log(`Cancelled ${result.count} stuck PROCESSING job(s) instead of re-queuing`);
 
       return result.count;
     } catch (error) {

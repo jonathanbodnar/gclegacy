@@ -12,6 +12,7 @@ import {
 } from "@prisma/client/runtime/library";
 import * as crypto from "crypto";
 import * as pdfParse from "pdf-parse";
+import * as fs from "fs";
 
 export interface FileUploadResult {
   fileId: string;
@@ -36,14 +37,28 @@ export class FilesService {
     tags?: string[]
   ): Promise<FileUploadResult> {
     // Validate file
-    if (!file || !file.buffer) {
+    if (!file) {
       throw new BadRequestException("No file provided");
+    }
+
+    // Read file from disk if using diskStorage, or use buffer if memoryStorage
+    let fileBuffer: Buffer;
+    if (file.path) {
+      // Using diskStorage - read from disk
+      fileBuffer = fs.readFileSync(file.path);
+      this.logger.log(`📁 Reading file from disk: ${file.path} (${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+    } else if (file.buffer) {
+      // Using memoryStorage - use buffer directly (fallback for compatibility)
+      fileBuffer = file.buffer;
+      this.logger.log(`💾 Using file buffer from memory (${(fileBuffer.length / 1024 / 1024).toFixed(2)} MB)`);
+    } else {
+      throw new BadRequestException("No file data provided");
     }
 
     // Calculate checksum
     const checksum = crypto
       .createHash("sha256")
-      .update(file.buffer)
+      .update(fileBuffer)
       .digest("hex");
 
     // Check if file already exists
@@ -72,6 +87,16 @@ export class FilesService {
     }
 
     if (existingFile) {
+      // Clean up temp file if it exists (file already in storage, no need to keep temp)
+      if (file.path && fs.existsSync(file.path)) {
+        try {
+          fs.unlinkSync(file.path);
+          this.logger.log(`🗑️ Cleaned up temp file (duplicate): ${file.path}`);
+        } catch (e: any) {
+          // Ignore cleanup errors for duplicates
+        }
+      }
+      
       return {
         fileId: existingFile.id,
         pages: existingFile.pages,
@@ -84,7 +109,7 @@ export class FilesService {
     let pages: number | undefined;
     if (file.mimetype === "application/pdf") {
       try {
-        const pdfData = await pdfParse(file.buffer);
+        const pdfData = await pdfParse(fileBuffer);
         console.log("PDF data:", pdfData);
         pages = pdfData.numpages;
       } catch (error) {
@@ -96,9 +121,21 @@ export class FilesService {
     const storageKey = `files/${checksum}`;
     const storageUrl = await this.storageService.uploadFile(
       storageKey,
-      file.buffer,
+      fileBuffer,
       file.mimetype
     );
+
+    // CRITICAL: Delete temp file immediately after upload to S3
+    // This frees up disk space and prevents accumulation of temp files
+    if (file.path && fs.existsSync(file.path)) {
+      try {
+        fs.unlinkSync(file.path);
+        this.logger.log(`🗑️ Cleaned up temp file: ${file.path}`);
+      } catch (e: any) {
+        this.logger.warn(`Failed to delete temp file ${file.path}: ${e.message}`);
+        // Don't throw - file is already uploaded to S3, cleanup failure is non-critical
+      }
+    }
 
     // Save file record
     let savedFile;

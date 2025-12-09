@@ -218,37 +218,6 @@ export class JobsController {
     return this.jobsService.cancelJob(jobId);
   }
 
-  @Delete()
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: "Clear all running jobs",
-    description:
-      "Stop and delete all running, queued, and active jobs from both the queue and database. This will permanently delete all QUEUED and PROCESSING jobs (cascade deletes related sheets, features, and materials).",
-  })
-  @ApiResponse({
-    status: 200,
-    description: "All jobs cleared successfully",
-    schema: {
-      type: "object",
-      properties: {
-        queueJobsRemoved: {
-          type: "number",
-          description: "Number of jobs removed from queue",
-        },
-        databaseJobsDeleted: {
-          type: "number",
-          description: "Number of jobs deleted from database",
-        },
-      },
-    },
-  })
-  async clearAllJobs(): Promise<{
-    queueJobsRemoved: number;
-    databaseJobsDeleted: number;
-  }> {
-    return this.jobsService.clearAllJobs();
-  }
-
   @Post("process-queued")
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth("JWT-auth")
@@ -274,5 +243,38 @@ export class JobsController {
   async processQueuedJobs(): Promise<{ jobsProcessed: number }> {
     const count = await this.jobsService.processQueuedJobs();
     return { jobsProcessed: count };
+  }
+
+  @Post("clear-queue")
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth("JWT-auth")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Clear all jobs from Bull queue",
+    description:
+      "Remove all jobs (waiting, active, delayed, completed, failed) from the Redis/Bull queue. Useful for clearing stale jobs after restart.",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "Queue cleared successfully",
+    schema: {
+      type: "object",
+      properties: {
+        waiting: { type: "number" },
+        active: { type: "number" },
+        delayed: { type: "number" },
+        completed: { type: "number" },
+        failed: { type: "number" },
+      },
+    },
+  })
+  async clearQueue(): Promise<{
+    waiting: number;
+    active: number;
+    delayed: number;
+    completed: number;
+    failed: number;
+  }> {
+    return this.jobsService.clearQueue();
   }
 }

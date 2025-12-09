@@ -65,7 +65,8 @@ export class PartitionTypeExtractionService {
   }
 
   async extractPartitionTypes(
-    sheets: SheetData[]
+    sheets: SheetData[],
+    cancellationCheck?: () => void
   ): Promise<PartitionTypeDefinition[]> {
     if (!this.openai) return [];
 
@@ -76,6 +77,7 @@ export class PartitionTypeExtractionService {
     });
 
     for (const sheet of candidateSheets) {
+      cancellationCheck?.(); // Check before processing each sheet
       try {
         const entries = await this.extractFromSheet(sheet);
         for (const entry of entries) {
@@ -86,6 +88,10 @@ export class PartitionTypeExtractionService {
           });
         }
       } catch (error: any) {
+        // Re-throw cancellation errors
+        if (error.name === 'JobCancellationError' || error.message?.includes('cancelled')) {
+          throw error;
+        }
         this.logger.warn(
           `Partition type extraction failed for sheet ${sheet.name || sheet.index}: ${error.message}`
         );

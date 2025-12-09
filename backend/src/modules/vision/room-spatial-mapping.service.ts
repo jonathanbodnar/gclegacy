@@ -86,7 +86,8 @@ export class RoomSpatialMappingService {
 
   async mapRooms(
     scheduleEntries: RoomScheduleEntry[],
-    sheets: SheetData[]
+    sheets: SheetData[],
+    cancellationCheck?: () => void
   ): Promise<RoomSpatialMapping[]> {
     if (!this.openai || !scheduleEntries.length) {
       return [];
@@ -121,6 +122,7 @@ export class RoomSpatialMappingService {
     const results: RoomSpatialMapping[] = [];
 
     for (const sheet of floorPlanSheets) {
+      cancellationCheck?.(); // Check before processing each sheet
       try {
         const sheetMappings = await this.mapSheet(sheet, scheduleContext);
         const entries = Array.isArray(sheetMappings?.mappings)
@@ -134,6 +136,10 @@ export class RoomSpatialMappingService {
           });
         }
       } catch (error: any) {
+        // Re-throw cancellation errors
+        if (error.name === 'JobCancellationError' || error.message?.includes('cancelled')) {
+          throw error;
+        }
         this.logger.warn(
           `Room spatial mapping failed for sheet ${sheet.name || sheet.index}: ${error.message}`
         );

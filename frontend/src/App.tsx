@@ -3,6 +3,7 @@ import { PlanUpload } from "./components/PlanUpload";
 import { JobConfiguration } from "./components/JobConfiguration";
 import { JobProgress } from "./components/JobProgress";
 import { TakeoffResults } from "./components/TakeoffResults";
+import { JobQueue } from "./components/JobQueue";
 import { apiService } from "./services/api";
 import "./App.css";
 
@@ -31,8 +32,10 @@ function App() {
   const [jobStatus, setJobStatus] = useState<any>(null);
   const [takeoffData, setTakeoffData] = useState<any>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isStartingAnalysis, setIsStartingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiHealth, setApiHealth] = useState<any>(null);
+  const [showJobQueueModal, setShowJobQueueModal] = useState(false);
 
   useEffect(() => {
     // Check API health on startup
@@ -103,6 +106,15 @@ function App() {
             clearInterval(pollInterval);
             setError(status.error || "Job processing failed");
             // Keep in localStorage so user can see the error after refresh
+          } else if (status.status === "CANCELLED") {
+            // Job was cancelled - stop polling
+            clearInterval(pollInterval);
+            // Clear any error message - status badge already shows "CANCELLED"
+            setError(null);
+          } else if (status.status === "CANCELLING") {
+            // Job is being cancelled - keep polling until it becomes CANCELLED
+            // Don't stop polling yet, just update the status
+            setJobStatus(status);
           }
         } catch (error) {
           console.error("Error polling job status:", error);
@@ -112,7 +124,11 @@ function App() {
           if (failureCount >= MAX_FAILURES) {
             console.log(`Failed to poll job status ${MAX_FAILURES} times, resetting...`);
             clearInterval(pollInterval);
-            localStorage.clear();
+            // Only clear current job state, preserve jobHistory
+            localStorage.removeItem('currentJobId');
+            localStorage.removeItem('currentFileId');
+            localStorage.removeItem('currentStep');
+            // ✅ jobHistory is preserved!
             setCurrentStep('upload');
             setJobId(null);
             setJobStatus(null);
@@ -160,6 +176,15 @@ function App() {
 
   const handleStartAnalysis = async () => {
     if (!fileId) return;
+    
+    // Prevent double-clicking - disable button if already starting
+    if (isStartingAnalysis || currentStep === "processing") {
+      return;
+    }
+
+    setIsStartingAnalysis(true);
+    setError(null);
+    let jobCreated = false;
 
     try {
       const response = await apiService.createJob({
@@ -169,6 +194,7 @@ function App() {
         options: jobConfig.options,
       });
 
+      jobCreated = true;
       setJobId(response.jobId);
       setCurrentStep("processing");
       
@@ -176,18 +202,40 @@ function App() {
       localStorage.setItem('currentJobId', response.jobId);
       localStorage.setItem('currentFileId', fileId);
       localStorage.setItem('currentStep', 'processing');
+      
+      // Add to job history
+      const jobHistory = JSON.parse(localStorage.getItem('jobHistory') || '[]');
+      if (!jobHistory.includes(response.jobId)) {
+        jobHistory.push(response.jobId);
+        // Keep only last 50 jobs
+        if (jobHistory.length > 50) {
+          jobHistory.shift();
+        }
+        localStorage.setItem('jobHistory', JSON.stringify(jobHistory));
+      }
     } catch (error) {
       setError(
         error instanceof Error ? error.message : "Failed to start analysis"
       );
+      // Reset on error so user can retry
+      setIsStartingAnalysis(false);
+    } finally {
+      // Reset after a short delay to prevent rapid clicking
+      // But keep disabled if we successfully started processing
+      if (!jobCreated) {
+        setTimeout(() => setIsStartingAnalysis(false), 500);
+      } else {
+        setIsStartingAnalysis(false);
+      }
     }
   };
 
-  const loadResults = async () => {
-    if (!jobId) return;
+  const loadResults = async (jobIdToLoad?: string) => {
+    const targetJobId = jobIdToLoad || jobId;
+    if (!targetJobId) return;
 
     try {
-      const results = await apiService.getTakeoffResults(jobId);
+      const results = await apiService.getTakeoffResults(targetJobId);
       setTakeoffData(results);
     } catch (error) {
       setError(
@@ -311,8 +359,8 @@ function App() {
             lists.
           </p>
 
-          {/* API Status */}
-          <div className="mt-4 flex justify-center">
+          {/* API Status and Job Queue */}
+          <div className="mt-4 flex justify-center items-center gap-3">
             <div
               className={`
               inline-flex items-center px-3 py-1 rounded-full text-xs font-medium
@@ -330,14 +378,33 @@ function App() {
               ></div>
               API {apiHealth?.status === "ok" ? "Connected" : "Disconnected"}
             </div>
+            <button
+              onClick={() => setShowJobQueueModal(true)}
+              className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 hover:bg-blue-200 transition-colors"
+            >
+              <svg
+                className="w-4 h-4 mr-2"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                />
+              </svg>
+              Job Queue
+            </button>
           </div>
         </header>
 
         {/* Step Indicator */}
         {renderStepIndicator()}
 
-        {/* Error Display */}
-        {error && (
+        {/* Error Display - Don't show for cancelled jobs */}
+        {error && jobStatus?.status !== 'CANCELLED' && (
           <div className="max-w-4xl mx-auto mb-8">
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <div className="flex items-start space-x-3">
@@ -377,6 +444,68 @@ function App() {
           </div>
         )}
 
+        {/* Job Queue Modal */}
+        {showJobQueueModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col">
+              <div className="flex justify-between items-center p-6 border-b">
+                <h2 className="text-xl font-semibold">Job Queue</h2>
+                <button
+                  onClick={() => setShowJobQueueModal(false)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <div className="overflow-y-auto flex-1 p-6">
+                <JobQueue
+                  onJobSelect={(selectedJobId) => {
+                    setJobId(selectedJobId);
+                    localStorage.setItem('currentJobId', selectedJobId);
+                    setShowJobQueueModal(false);
+                    // Fetch status and navigate to appropriate step
+                    apiService.getJobStatus(selectedJobId)
+                      .then((status) => {
+                        setJobStatus(status);
+                        if (status.status === 'COMPLETED') {
+                          setCurrentStep('results');
+                          localStorage.setItem('currentStep', 'results');
+                          // Pass selectedJobId directly to avoid race condition with state update
+                          loadResults(selectedJobId);
+                        } else if (status.status === 'FAILED') {
+                          setCurrentStep('upload');
+                          setError(status.error || 'Job processing failed');
+                        } else if (status.status === 'CANCELLED') {
+                          setCurrentStep('upload');
+                          // Don't show error - status badge already shows "CANCELLED"
+                        } else {
+                          setCurrentStep('processing');
+                          localStorage.setItem('currentStep', 'processing');
+                        }
+                      })
+                      .catch((err) => {
+                        console.error('Failed to load job:', err);
+                        setError('Failed to load job status');
+                      });
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Step Content */}
         <main className="space-y-8">
           {currentStep === "upload" && (
@@ -406,9 +535,14 @@ function App() {
               <div className="text-center">
                 <button
                   onClick={handleStartAnalysis}
-                  className="px-8 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                  disabled={isStartingAnalysis || !fileId}
+                  className={`px-8 py-3 text-white font-medium rounded-lg transition-colors ${
+                    isStartingAnalysis || !fileId
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  }`}
                 >
-                  Start Analysis
+                  {isStartingAnalysis ? 'Starting Analysis...' : 'Start Analysis'}
                 </button>
               </div>
             </div>

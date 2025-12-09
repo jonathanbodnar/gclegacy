@@ -108,19 +108,49 @@ export class WallRunExtractionService {
 
   /**
    * Process items in parallel with controlled concurrency
+   * @param cancellationCheck Optional callback to check for job cancellation
    */
   private async processInParallel<T, R>(
     items: T[],
     processor: (item: T, index: number) => Promise<R>,
-    concurrencyLimit: number
+    concurrencyLimit: number,
+    cancellationCheck?: () => void
   ): Promise<R[]> {
     const results: R[] = new Array(items.length);
     let currentIndex = 0;
+    let cancelled = false;
+    let cancellationError: Error | null = null;
 
     const worker = async () => {
-      while (currentIndex < items.length) {
+      while (currentIndex < items.length && !cancelled) {
+        try {
+          cancellationCheck?.();
+        } catch (e) {
+          cancelled = true;
+          cancellationError = e as Error;
+          throw e;
+        }
+        if (cancelled) break;
         const index = currentIndex++;
-        results[index] = await processor(items[index], index);
+        if (index >= items.length) break;
+        try {
+          results[index] = await processor(items[index], index);
+          try {
+            cancellationCheck?.();
+          } catch (e) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+        } catch (e) {
+          if ((e as Error).name === 'JobCancellationError' || 
+              (e as Error).message?.includes('cancelled')) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+          throw e;
+        }
       }
     };
 
@@ -128,14 +158,20 @@ export class WallRunExtractionService {
       .fill(null)
       .map(() => worker());
 
-    await Promise.all(workers);
+    const settledResults = await Promise.allSettled(workers);
+    if (cancellationError) throw cancellationError;
+    const firstRejection = settledResults.find(r => r.status === 'rejected');
+    if (firstRejection && firstRejection.status === 'rejected') {
+      throw firstRejection.reason;
+    }
     return results;
   }
 
   async extractWallRuns(
     sheets: SheetData[],
     partitionTypes: PartitionTypeDefinition[],
-    spaces: SpaceDefinition[] = []
+    spaces: SpaceDefinition[] = [],
+    cancellationCheck?: () => void
   ): Promise<WallRunSegment[]> {
     if (!this.openai) return [];
 
@@ -176,6 +212,7 @@ export class WallRunExtractionService {
     const sheetResults = await this.processInParallel(
       floorPlanSheets,
       async (sheet, i) => {
+        cancellationCheck?.(); // Check before processing each sheet
         const sheetSpaces = spaces.filter(
           (space) => space.sheetIndex === sheet.index
         );
@@ -201,7 +238,8 @@ export class WallRunExtractionService {
           return [];
         }
       },
-      effectiveLimit
+      effectiveLimit,
+      cancellationCheck
     );
 
     // Flatten results

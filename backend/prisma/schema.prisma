@@ -156,6 +156,7 @@ model MaterialsRuleSet {
 enum JobStatus {
   QUEUED
   PROCESSING
+  CANCELLING
   COMPLETED
   FAILED
   CANCELLED

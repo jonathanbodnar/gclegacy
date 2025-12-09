@@ -112,36 +112,68 @@ export class SheetClassificationService {
 
   /**
    * Process items in parallel with controlled concurrency
-   * @param items Array of items to process
-   * @param processor Function to process each item
-   * @param concurrencyLimit Max concurrent operations
+   * @param cancellationCheck Optional callback to check for job cancellation
    */
   private async processInParallel<T, R>(
     items: T[],
     processor: (item: T, index: number) => Promise<R>,
-    concurrencyLimit: number
+    concurrencyLimit: number,
+    cancellationCheck?: () => void
   ): Promise<R[]> {
     const results: R[] = new Array(items.length);
     let currentIndex = 0;
+    let cancelled = false;
+    let cancellationError: Error | null = null;
 
     const worker = async () => {
-      while (currentIndex < items.length) {
+      while (currentIndex < items.length && !cancelled) {
+        try {
+          cancellationCheck?.();
+        } catch (e) {
+          cancelled = true;
+          cancellationError = e as Error;
+          throw e;
+        }
+        if (cancelled) break;
         const index = currentIndex++;
-        results[index] = await processor(items[index], index);
+        if (index >= items.length) break;
+        try {
+          results[index] = await processor(items[index], index);
+          try {
+            cancellationCheck?.();
+          } catch (e) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+        } catch (e) {
+          if ((e as Error).name === 'JobCancellationError' || 
+              (e as Error).message?.includes('cancelled')) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+          throw e;
+        }
       }
     };
 
-    // Create workers up to the concurrency limit
     const workers = Array(Math.min(concurrencyLimit, items.length))
       .fill(null)
       .map(() => worker());
 
-    await Promise.all(workers);
+    const settledResults = await Promise.allSettled(workers);
+    if (cancellationError) throw cancellationError;
+    const firstRejection = settledResults.find(r => r.status === 'rejected');
+    if (firstRejection && firstRejection.status === 'rejected') {
+      throw firstRejection.reason;
+    }
     return results;
   }
 
   async classifySheets(
-    sheets: SheetData[]
+    sheets: SheetData[],
+    cancellationCheck?: () => void
   ): Promise<SheetClassificationMetadata[]> {
     if (!this.openai) {
       this.logger.warn('OpenAI not configured - skipping sheet classification');
@@ -165,6 +197,7 @@ export class SheetClassificationService {
     const results = await this.processInParallel(
       sheets,
       async (sheet, i) => {
+        cancellationCheck?.(); // Check before processing each sheet
         try {
           this.logger.log(`  🔍 Classifying sheet ${i + 1}/${sheets.length} (index: ${sheet.index}, name: ${sheet.name})`);
           const classification = await this.classifySingleSheet(sheet);

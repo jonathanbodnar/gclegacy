@@ -97,19 +97,49 @@ export class ScaleExtractionService {
 
   /**
    * Process items in parallel with controlled concurrency
+   * @param cancellationCheck Optional callback to check for job cancellation
    */
   private async processInParallel<T, R>(
     items: T[],
     processor: (item: T, index: number) => Promise<R>,
-    concurrencyLimit: number
+    concurrencyLimit: number,
+    cancellationCheck?: () => void
   ): Promise<R[]> {
     const results: R[] = new Array(items.length);
     let currentIndex = 0;
+    let cancelled = false;
+    let cancellationError: Error | null = null;
 
     const worker = async () => {
-      while (currentIndex < items.length) {
+      while (currentIndex < items.length && !cancelled) {
+        try {
+          cancellationCheck?.();
+        } catch (e) {
+          cancelled = true;
+          cancellationError = e as Error;
+          throw e;
+        }
+        if (cancelled) break;
         const index = currentIndex++;
-        results[index] = await processor(items[index], index);
+        if (index >= items.length) break;
+        try {
+          results[index] = await processor(items[index], index);
+          try {
+            cancellationCheck?.();
+          } catch (e) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+        } catch (e) {
+          if ((e as Error).name === 'JobCancellationError' || 
+              (e as Error).message?.includes('cancelled')) {
+            cancelled = true;
+            cancellationError = e as Error;
+            throw e;
+          }
+          throw e;
+        }
       }
     };
 
@@ -117,11 +147,16 @@ export class ScaleExtractionService {
       .fill(null)
       .map(() => worker());
 
-    await Promise.all(workers);
+    const settledResults = await Promise.allSettled(workers);
+    if (cancellationError) throw cancellationError;
+    const firstRejection = settledResults.find(r => r.status === 'rejected');
+    if (firstRejection && firstRejection.status === 'rejected') {
+      throw firstRejection.reason;
+    }
     return results;
   }
 
-  async extractScales(sheets: SheetData[]): Promise<ScaleAnnotation[]> {
+  async extractScales(sheets: SheetData[], cancellationCheck?: () => void): Promise<ScaleAnnotation[]> {
     if (!this.openai) {
       return [];
     }
@@ -146,6 +181,7 @@ export class ScaleExtractionService {
     const sheetResults = await this.processInParallel(
       validSheets,
       async (sheet, i) => {
+        cancellationCheck?.(); // Check before processing each sheet
         const text = sheet.content?.textData || sheet.text || "";
         try {
           this.logger.log(`  🔍 Scale extraction sheet ${i + 1}/${validSheets.length}: ${sheet.name || sheet.index}`);
@@ -162,7 +198,8 @@ export class ScaleExtractionService {
           return [];
         }
       },
-      effectiveLimit
+      effectiveLimit,
+      cancellationCheck
     );
 
     // Flatten results
